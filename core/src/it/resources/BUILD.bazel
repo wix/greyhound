@@ -1,0 +1,8 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@wix_oss_infra//:macros.bzl", "resources")
+
+resources(
+    name = "resources",
+    testonly = 1,
+)
