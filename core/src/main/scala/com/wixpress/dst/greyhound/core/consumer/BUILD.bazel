@@ -1,0 +1,16 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+scala_library(
+    name = "consumer",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/serialization",
+        "@dev_zio_zio_2_12",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)

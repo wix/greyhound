@@ -1,0 +1,4 @@
+Manifest-Version: 1.0
+Implementation-Version: fixed.version-SNAPSHOT
+Implementation-Vendor-Id: com.wixpress.dst
+Implementation-ArtifactId: greyhound-core

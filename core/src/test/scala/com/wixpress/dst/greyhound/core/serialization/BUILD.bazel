@@ -1,0 +1,14 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+specs2_unit_test(
+    name = "serialization",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/serialization",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)

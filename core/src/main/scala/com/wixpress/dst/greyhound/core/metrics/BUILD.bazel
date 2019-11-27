@@ -1,0 +1,13 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+scala_library(
+    name = "metrics",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "@dev_zio_zio_2_12",
+    ],
+)

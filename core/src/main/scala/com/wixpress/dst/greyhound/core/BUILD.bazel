@@ -1,0 +1,14 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+scala_library(
+    name = "core",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "@dev_zio_zio_2_12",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)

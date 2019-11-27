@@ -1,0 +1,8 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@core_server_build_tools//:macros.bzl", "resources")
+
+resources(
+    name = "resources",
+    testonly = 1,
+)
