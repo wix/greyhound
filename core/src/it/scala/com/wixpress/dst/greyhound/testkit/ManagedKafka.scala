@@ -5,9 +5,9 @@ import java.util.Properties
 import com.wixpress.dst.greyhound.core.TopicConfig
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
-import zio.{RIO, ZManaged}
 import zio.blocking.{Blocking, effectBlocking}
 import zio.console.{Console, putStrLn}
+import zio.{RIO, ZManaged}
 
 import scala.reflect.io.Directory
 
@@ -26,7 +26,7 @@ object ManagedKafka {
   } yield new ManagedKafka {
     private val adminZkClient = kafka.apis.adminZkClient
 
-    override def bootstrapServers: Set[String] =
+    override val bootstrapServers: Set[String] =
       Set(s"localhost:${config.kafkaPort}")
 
     override def createTopic(config: TopicConfig): RIO[Blocking, Unit] = effectBlocking {
