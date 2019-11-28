@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.Record
 import com.wixpress.dst.greyhound.core.consumer.Consumer.{Key, Value}
 import zio.blocking.Blocking
 import zio.console.Console
@@ -20,7 +21,9 @@ object Consumers {
           case (consumer, handler) =>
             consumer.subscribe(topicSpecs.keySet) *>
               consumer.poll(100.millis).flatMap { records =>
-                ZIO.foreach_(records.asScala)(handler.handle)
+                ZIO.foreach_(records.asScala) { record =>
+                  handler.handle(Record(record))
+                }
               }.forever
         }
     } *> ZIO.never
