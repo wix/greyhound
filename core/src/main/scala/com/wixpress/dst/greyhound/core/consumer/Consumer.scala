@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.Properties
 
+import com.wixpress.dst.greyhound.core.TopicName
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
@@ -12,7 +13,7 @@ import zio.{RIO, Semaphore, ZManaged}
 import scala.collection.JavaConverters._
 
 trait Consumer {
-  def subscribe(topics: Set[String]): RIO[Blocking, Unit]
+  def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit]
 
   def poll(timeout: Duration): RIO[Blocking, Records]
 }
@@ -28,7 +29,7 @@ object Consumer {
   def make(config: ConsumerConfig): ZManaged[Blocking, Throwable, Consumer] =
     (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>
       new Consumer {
-        override def subscribe(topics: Set[String]): RIO[Blocking, Unit] =
+        override def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit] =
           withConsumer(_.subscribe(topics.asJava))
 
         override def poll(timeout: Duration): RIO[Blocking, Records] =
