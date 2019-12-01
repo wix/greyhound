@@ -3,7 +3,6 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core.Record
 import zio.ZIO
 
-// TODO check if this can be replaced with ZIO[ConsumerRecord[K, V], E, _]
 trait RecordHandler[-R, +E, K, V] {
   def handle(record: Record[K, V]): ZIO[R, E, _]
 
@@ -18,7 +17,10 @@ trait RecordHandler[-R, +E, K, V] {
 
   // TODO test
   def filter(f: Record[K, V] => Boolean): RecordHandler[R, E, K, V] =
-    (record: Record[K, V]) => if (f(record)) handle(record) else ZIO.unit
+    (record: Record[K, V]) => ZIO.when(f(record))(handle(record))
+
+  def par[R1 <: R, E1 >: E](other: RecordHandler[R1, E1, K, V]): RecordHandler[R1, E1, K, V] =
+    (record: Record[K, V]) => handle(record) &> other.handle(record)
 
   def *>[R1 <: R, E1 >: E](other: RecordHandler[R1, E1, K, V]): RecordHandler[R1, E1, K, V] =
     (record: Record[K, V]) => handle(record) *> other.handle(record)

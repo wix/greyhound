@@ -25,9 +25,7 @@ object ProduceTarget {
 }
 
 object Producer {
-  type Key = Array[Byte]
-  type Value = Array[Byte]
-  type Record = ProducerRecord[Key, Value]
+  type Record = ProducerRecord[Array[Byte], Array[Byte]]
 
   private val serializer = new ByteArraySerializer
 

@@ -1,19 +1,19 @@
 package com.wixpress.dst.greyhound.core.serialization
 
 import com.wixpress.dst.greyhound.core.Headers
+import com.wixpress.dst.greyhound.core.testkit.BaseTest
 import org.apache.kafka.common.serialization.{IntegerDeserializer, IntegerSerializer, StringDeserializer, StringSerializer}
-import org.specs2.mutable.SpecificationWithJUnit
-import zio.{DefaultRuntime, ZIO}
+import zio.{Managed, ZIO}
 
-class DeserializerTest
-  extends SpecificationWithJUnit
-    with DefaultRuntime {
+class DeserializerTest extends BaseTest[Any] {
+
+  override def env: Managed[Nothing, Any] = Managed.unit
 
   val topic = "topic"
   val headers = Headers.Empty
 
   "map" should {
-    "transform the deserialized value" in unsafeRun {
+    "transform the deserialized value" in {
       val intSerializer = new IntegerSerializer
       val intDeserializer = Deserializer(new IntegerDeserializer)
       val stringDeserializer = intDeserializer.map(_.toString)
@@ -24,7 +24,7 @@ class DeserializerTest
   }
 
   "zip" should {
-    "combine 2 deserialized values into a tuple" in unsafeRun {
+    "combine 2 deserialized values into a tuple" in {
       val stringSerializer = new StringSerializer
       val stringDeserializer = Deserializer(new StringDeserializer)
       val topicDeserializer = Deserializer((topic, _, _) => ZIO.succeed(topic))

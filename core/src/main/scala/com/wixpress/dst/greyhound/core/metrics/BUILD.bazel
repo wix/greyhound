@@ -8,6 +8,8 @@ scala_library(
         ":sources",
     ],
     deps = [
+        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core",
         "@dev_zio_zio_2_12",
+        "@org_slf4j_slf4j_api",
     ],
 )

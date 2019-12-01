@@ -9,6 +9,7 @@ specs2_unit_test(
     ],
     deps = [
         "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/serialization",
+        "//data-streams/greyhound/core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@org_apache_kafka_kafka_clients",
     ],
 )
