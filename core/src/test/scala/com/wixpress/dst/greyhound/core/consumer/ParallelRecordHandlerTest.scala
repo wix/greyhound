@@ -47,8 +47,7 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
         keyDeserializer = stringDeserializer,
         valueDeserializer = stringDeserializer.map(Bar))
 
-      handlers = Map(topic1.name -> List(spec1), topic2.name -> List(spec2))
-      result <- ParallelRecordHandler.make(handlers).use {
+      result <- ParallelRecordHandler.make(spec1, spec2).use {
         case (_, handler) =>
           handler.handle(Record(topic1.name, 0, 0L, headers, key, value1.bytes)) *>
             handler.handle(Record(topic2.name, 0, 0L, headers, key, value2.bytes)) *>
@@ -80,8 +79,7 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
         keyDeserializer = stringDeserializer,
         valueDeserializer = stringDeserializer)
 
-      specs = Map(topic.name -> List(spec1, spec2))
-      result <- ParallelRecordHandler.make(specs).use {
+      result <- ParallelRecordHandler.make(spec1, spec2).use {
         case (_, handler) =>
           handler.handle(Record(topic.name, 0, 0L, headers, key, value.getBytes)) *>
             (sink1.firstMessage zipPar sink2.firstMessage)
@@ -107,8 +105,7 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
         valueDeserializer = stringDeserializer,
         parallelism = partitions)
 
-      specs = Map(topic.name -> List(spec))
-      handleResult <- ParallelRecordHandler.make(specs).use {
+      handleResult <- ParallelRecordHandler.make(spec).use {
         case (_, handler) =>
           produceToPartitions(handler, topic.name, partitions) *>
             sink.messages.run(collectAllToSetN[Record[String, String]](partitions))
@@ -129,8 +126,8 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
         keyDeserializer = stringDeserializer,
         valueDeserializer = stringDeserializer,
         parallelism = partitions)
-      specs = Map(topic.name -> List(spec))
-      result <- ParallelRecordHandler.make(specs).use {
+
+      result <- ParallelRecordHandler.make(spec).use {
         case (offsets, handler) =>
           produceToPartitions(handler, topic.name, partitions) *>
             offsets.get.doWhile(_.size < partitions).timeout(1.second)
@@ -140,6 +137,27 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
       new TopicPartition(topic.name, 1) -> 0L,
       new TopicPartition(topic.name, 2) -> 0L,
       new TopicPartition(topic.name, 3) -> 0L))
+  }
+
+  "update offsets map with larger offset" in {
+    for {
+      spec <- ConsumerSpec.make[Any, String, String](
+        topic = topic,
+        group = group,
+        handler = RecordHandler(_ => ZIO.unit),
+        keyDeserializer = stringDeserializer,
+        valueDeserializer = stringDeserializer)
+
+      result <- ParallelRecordHandler.make(spec).use {
+        case (offsets, handler) =>
+          handler.handle(Record(topic.name, 0, 1L, headers, key, "bar".getBytes)) *>
+            handler.handle(Record(topic.name, 0, 0L, headers, key, "foo".getBytes)) *>
+            handler.handle(Record(topic.name, 1, 0L, headers, key, "baz".getBytes)) *>
+            offsets.get.doWhile(_.size < 2).timeout(1.second)
+      }
+    } yield result must beSome(Map(
+      new TopicPartition(topic.name, 0) -> 1L,
+      new TopicPartition(topic.name, 1) -> 0L))
   }
 
   private def produceToPartitions(handler: ParallelRecordHandler.Handler,

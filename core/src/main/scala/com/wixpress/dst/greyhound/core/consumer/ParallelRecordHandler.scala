@@ -12,6 +12,9 @@ object ParallelRecordHandler {
   type Handler = RecordHandler[GreyhoundMetrics, Nothing, Key, Value]
   type OffsetsMap = Ref[Map[TopicPartition, Offset]]
 
+  def make(specs: ConsumerSpec*): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] =
+    make(specs.groupBy(_.topic))
+
   def make(specs: Map[TopicName, Seq[ConsumerSpec]]): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = for {
     offsets <- Ref.make(Map.empty[TopicPartition, Offset]).toManaged_
     handlers <- createHandlers(specs, updateOffsets(offsets))
@@ -32,8 +35,13 @@ object ParallelRecordHandler {
 
   private def updateOffsets(offsets: OffsetsMap): Handler = RecordHandler { record =>
     val topicPartition = new TopicPartition(record.topic, record.partition)
-    // TODO use the larger offsets if key exists
-    offsets.update(_ + (topicPartition -> record.offset))
+    offsets.update { map =>
+      val offset = map.get(topicPartition) match {
+        case Some(existing) => record.offset max existing
+        case None => record.offset
+      }
+      map + (topicPartition -> offset)
+    }
   }
 
 }
