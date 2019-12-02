@@ -40,8 +40,8 @@ object Consumer {
           withConsumer(_.poll(timeout.toMillis))
 
         override def commit(offsets: Map[TopicPartition, Offset]): Task[Unit] =
+          // TODO the semaphore is blocked until the async operation is complete. is this needed?
           semaphore.withPermit {
-            // TODO the semaphore is blocked until the async operation is complete. is this needed?
             ZIO.effectAsync { cb =>
               consumer.commitAsync(offsets.mapValues(new OffsetAndMetadata(_)).asJava, new OffsetCommitCallback {
                 override def onComplete(offsets: util.Map[TopicPartition, OffsetAndMetadata], exception: Exception): Unit =
