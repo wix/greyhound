@@ -1,14 +1,16 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.util
 import java.util.Properties
 
-import com.wixpress.dst.greyhound.core.TopicName
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
+import com.wixpress.dst.greyhound.core.{Offset, TopicName}
+import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, OffsetCommitCallback, ConsumerConfig => KafkaConsumerConfig}
+import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
-import zio.{RIO, Semaphore, ZManaged}
+import zio.{RIO, Semaphore, Task, ZIO, ZManaged}
 
 import scala.collection.JavaConverters._
 
@@ -16,6 +18,8 @@ trait Consumer {
   def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit]
 
   def poll(timeout: Duration): RIO[Blocking, Records]
+
+  def commit(offsets: Map[TopicPartition, Offset]): Task[Unit]
 }
 
 object Consumer {
@@ -34,6 +38,18 @@ object Consumer {
 
         override def poll(timeout: Duration): RIO[Blocking, Records] =
           withConsumer(_.poll(timeout.toMillis))
+
+        override def commit(offsets: Map[TopicPartition, Offset]): Task[Unit] =
+          semaphore.withPermit {
+            // TODO the semaphore is blocked until the async operation is complete. is this needed?
+            ZIO.effectAsync { cb =>
+              consumer.commitAsync(offsets.mapValues(new OffsetAndMetadata(_)).asJava, new OffsetCommitCallback {
+                override def onComplete(offsets: util.Map[TopicPartition, OffsetAndMetadata], exception: Exception): Unit =
+                  if (exception != null) cb(ZIO.fail(exception))
+                  else cb(ZIO.unit)
+              })
+            }
+          }
 
         private def withConsumer[A](f: KafkaConsumer[Key, Value] => A): RIO[Blocking, A] =
           semaphore.withPermit(effectBlocking(f(consumer)))
@@ -57,6 +73,7 @@ case class ConsumerConfig(bootstrapServers: Set[String],
     props.setProperty(KafkaConsumerConfig.GROUP_ID_CONFIG, groupId)
     props.setProperty(KafkaConsumerConfig.CLIENT_ID_CONFIG, clientId)
     props.setProperty(KafkaConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
+    props.setProperty(KafkaConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
     props
   }
 

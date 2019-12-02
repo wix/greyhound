@@ -10,6 +10,8 @@ import zio.blocking.{Blocking, effectBlocking}
 import zio.{Task, ZIO, ZManaged}
 
 trait Producer[K, V] {
+  // TODO don't expose `RecordMetadata` directly
+  // TODO refine errors (don't use `Task`)
   def produce(topic: Topic[K, V], value: V, target: ProduceTarget[K] = ProduceTarget.None): Task[RecordMetadata]
 
   def produce(topic: Topic[K, V], key: K, value: V): Task[RecordMetadata] =

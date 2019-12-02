@@ -1,8 +1,8 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.Record
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{Metrics, Subscribing}
+import com.wixpress.dst.greyhound.core.metrics.{CommittingOffsets, Metrics, Subscribing}
+import com.wixpress.dst.greyhound.core.{Record, TopicName}
 import zio.ZIO
 import zio.blocking.Blocking
 import zio.duration._
@@ -20,14 +20,27 @@ object Consumers {
         val makeConsumer = Consumer.make(ConsumerConfig(bootstrapServers, group, clientId))
         (makeConsumer zip ParallelRecordHandler.make(topicSpecs)).use {
           case (consumer, (offsets, handler)) =>
-            val topics = topicSpecs.keySet
-            Metrics.report(Subscribing(topics)) *>
-              consumer.subscribe(topics) *>
-              consumer.poll(pollTimeout).flatMap { records =>
-                ZIO.foreach_(records.asScala) { record =>
-                  handler.handle(Record(record))
-                }
-              }.forever
+            subscribe(consumer, topicSpecs.keySet) *>
+              (pollAndHandle(consumer, handler) *>
+                commitOffsets(consumer, offsets)).forever
         }
     } *> ZIO.never
+
+  private def subscribe(consumer: Consumer, topics: Set[TopicName]) =
+    Metrics.report(Subscribing(topics)) *> consumer.subscribe(topics)
+
+  private def pollAndHandle(consumer: Consumer, handler: ParallelRecordHandler.Handler) =
+    consumer.poll(pollTimeout).flatMap { records =>
+      ZIO.foreach_(records.asScala) { record =>
+        handler.handle(Record(record))
+      }
+    }
+
+  private def commitOffsets(consumer: Consumer, offsets: ParallelRecordHandler.OffsetsMap) =
+    offsets.modify(current => (current, Map.empty)).flatMap { current =>
+      ZIO.when(current.nonEmpty) {
+        Metrics.report(CommittingOffsets(current)) *>
+          consumer.commit(current)
+      }
+    }
 }
