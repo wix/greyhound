@@ -14,26 +14,26 @@ object ParallelRecordHandler {
 
   def make(specs: Map[TopicName, Seq[ConsumerSpec]]): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = for {
     offsets <- Ref.make(Map.empty[TopicPartition, Offset]).toManaged_
-    updateOffsets = RecordHandler[Any, Nothing, Key, Value] { record =>
-      val topicPartition = new TopicPartition(record.topic, record.partition)
-      // TODO use the larger offsets if key exists
-      offsets.update(_ + (topicPartition -> record.offset))
+    handlers <- createHandlers(specs, updateOffsets(offsets))
+    handler = RecordHandler { record: Record[Key, Value] =>
+      handlers(record.topic).handle(record)
     }
-    handlers <- ZManaged.foreach(specs) {
+  } yield (offsets, handler)
+
+  private def createHandlers(specs: Map[TopicName, Seq[ConsumerSpec]],
+                             updateOffsets: Handler): ZManaged[GreyhoundMetrics, Nothing, Map[TopicName, Handler]] =
+    ZManaged.foreach(specs) {
       case (topic, topicSpecs) =>
-        ZManaged.foreach(topicSpecs) { spec =>
-          val handler = spec.handler *> updateOffsets
-          ParallelizeByPartition.make(handler, spec.parallelism)
-        }.map { parallelTopicSpecs =>
-          topic -> parallelTopicSpecs.reduce(_ par _)
+        ZManaged.foreach(topicSpecs)(ParallelizeByPartition.make).map { handlers =>
+          val handler = handlers.reduce(_ par _) *> updateOffsets
+          topic -> handler
         }
-    }
-  } yield {
-    val handlersByTopic = handlers.toMap
-    val handler: Handler = RecordHandler { record =>
-      handlersByTopic(record.topic).handle(record)
-    }
-    (offsets, handler)
+    }.map(_.toMap)
+
+  private def updateOffsets(offsets: OffsetsMap): Handler = RecordHandler { record =>
+    val topicPartition = new TopicPartition(record.topic, record.partition)
+    // TODO use the larger offsets if key exists
+    offsets.update(_ + (topicPartition -> record.offset))
   }
 
 }
@@ -42,6 +42,9 @@ object ParallelizeByPartition {
   type Handler[K, V] = RecordHandler[GreyhoundMetrics, Nothing, K, V]
 
   private val capacity = 128 // TODO should this be configurable?
+
+  def make(spec: ConsumerSpec): ZManaged[GreyhoundMetrics, Nothing, Handler[Key, Value]] =
+    make(spec.handler, spec.parallelism)
 
   def make[R, K, V](handler: RecordHandler[R, Nothing, K, V], parallelism: Int): ZManaged[R with GreyhoundMetrics, Nothing, Handler[K, V]] =
     ZManaged.foreach(0 until parallelism)(makeQueue(handler, _)).map { queues =>

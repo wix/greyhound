@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.serialization.Deserializer
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers.beRecordWithValue
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, MessagesSink}
@@ -15,12 +15,8 @@ import zio.stream.ZSink.collectAllToSetN
 
 class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
 
-  override val env: Managed[Nothing, GreyhoundMetrics with Clock] = Managed.succeed {
-    new GreyhoundMetrics with Clock.Live {
-      override val metrics: Metrics.Service[GreyhoundMetric] =
-        Metrics.Live()
-    }
-  }
+  override val env: Managed[Nothing, GreyhoundMetrics with Clock] =
+    Managed.succeed(new GreyhoundMetric.Live with Clock.Live)
 
   val stringDeserializer = Deserializer(new StringDeserializer)
   val topic = Topic[String, String]("some-topic")
