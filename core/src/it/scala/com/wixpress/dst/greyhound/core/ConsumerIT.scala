@@ -2,8 +2,8 @@ package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.ConsumerIT._
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerSpec, Consumers}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig}
 import com.wixpress.dst.greyhound.core.serialization.{Deserializer, Serializer}
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
@@ -17,12 +17,8 @@ import zio.duration._
 
 class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console] {
 
-  override def env: Managed[Nothing, GreyhoundMetrics with Blocking with Console] = Managed.succeed {
-    new GreyhoundMetrics with Blocking.Live with Console.Live {
-      override val metrics: Metrics.Service[GreyhoundMetric] =
-        Metrics.Live()
-    }
-  }
+  override def env: Managed[Nothing, GreyhoundMetrics with Blocking with Console] =
+    Managed.succeed(new GreyhoundMetric.Live with Blocking.Live with Console.Live)
 
   "Greyhound consumer" should {
     "produce and consume a single message" in {
