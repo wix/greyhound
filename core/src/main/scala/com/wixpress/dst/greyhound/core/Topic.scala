@@ -28,6 +28,7 @@ case class TopicConfig(name: String,
 
 sealed trait CleanupPolicy
 
+
 object CleanupPolicy {
   case class Delete(retention: Duration) extends CleanupPolicy
   case object Compact extends CleanupPolicy
