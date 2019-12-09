@@ -16,11 +16,11 @@ object Consumers {
   def start(bootstrapServers: Set[String], specs: ConsumerSpec*): ZIO[GreyhoundMetrics with Blocking, Throwable, Nothing] =
     ZIO.foreachPar(specs.groupBy(_.group)) {
       case (group, groupSpecs) =>
-        val topicSpecs = groupSpecs.groupBy(_.topic)
+        val topics = groupSpecs.flatMap(_.topics).toSet
         val makeConsumer = Consumer.make(ConsumerConfig(bootstrapServers, group, clientId))
-        (makeConsumer zip ParallelRecordHandler.make(topicSpecs)).use {
+        (makeConsumer zip ParallelRecordHandler.make(groupSpecs: _*)).use {
           case (consumer, (offsets, handler)) =>
-            subscribe(consumer, topicSpecs.keySet) *>
+            subscribe(consumer, topics) *>
               (pollAndHandle(consumer, handler) *>
                 commitOffsets(consumer, offsets)).forever
         }

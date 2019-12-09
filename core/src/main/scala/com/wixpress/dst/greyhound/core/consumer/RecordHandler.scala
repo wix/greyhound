@@ -9,6 +9,10 @@ trait RecordHandler[-R, +E, K, V] {
   def contramapM[R1 <: R, E1 >: E, K1, V1](f: Record[K1, V1] => ZIO[R1, E1, Record[K, V]]): RecordHandler[R1, E1, K1, V1] =
     (record: Record[K1, V1]) => f(record).flatMap(handle)
 
+  // TODO name?
+  def flatMapError[R1 <: R, E1 >: E](f: E => RecordHandler[R1, E1, K, V]): RecordHandler[R1, E1, K, V] =
+    (record: Record[K, V]) => handle(record).catchAll(e => f(e).handle(record))
+
   def withErrorHandler[R1 <: R, E1](f: E => ZIO[R1, E1, _]): RecordHandler[R1, E1, K, V] =
     (record: Record[K, V]) => handle(record).catchAll[R1, E1, Any](f)
 

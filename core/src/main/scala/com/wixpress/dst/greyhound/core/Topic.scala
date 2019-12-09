@@ -4,7 +4,7 @@ import java.util.Properties
 
 import zio.duration.Duration
 
-case class Topic[K, V](name: String) extends AnyVal
+case class Topic[+K, +V](name: String) extends AnyVal
 
 case class TopicConfig(name: String,
                        partitions: Int,
