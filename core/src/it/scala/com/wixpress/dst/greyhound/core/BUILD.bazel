@@ -11,10 +11,10 @@ specs2_ite2e_test(
     deps = [
         "//data-streams/greyhound/core/src/it/resources",
         "//data-streams/greyhound/core/src/it/scala/com/wixpress/dst/greyhound/testkit",
+        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "//data-streams/greyhound/core/src/test/scala/com/wixpress/dst/greyhound/core/consumer",
-        "//data-streams/greyhound/core/src/test/scala/com/wixpress/dst/greyhound/core/serialization",
         "//data-streams/greyhound/core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@ch_qos_logback_logback_classic",
         "@dev_zio_zio_2_12",

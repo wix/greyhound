@@ -1,16 +1,15 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.util
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.{Offset, TopicName}
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, OffsetCommitCallback, ConsumerConfig => KafkaConsumerConfig}
+import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
-import zio.{RIO, Semaphore, Task, ZIO, ZManaged}
+import zio.{RIO, Semaphore, ZManaged}
 
 import scala.collection.JavaConverters._
 
@@ -19,7 +18,7 @@ trait Consumer {
 
   def poll(timeout: Duration): RIO[Blocking, Records]
 
-  def commit(offsets: Map[TopicPartition, Offset]): Task[Unit]
+  def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit]
 }
 
 object Consumer {
@@ -39,17 +38,8 @@ object Consumer {
         override def poll(timeout: Duration): RIO[Blocking, Records] =
           withConsumer(_.poll(timeout.toMillis))
 
-        override def commit(offsets: Map[TopicPartition, Offset]): Task[Unit] =
-          // TODO the semaphore is blocked until the async operation is complete. is this needed?
-          semaphore.withPermit {
-            ZIO.effectAsync { cb =>
-              consumer.commitAsync(offsets.mapValues(new OffsetAndMetadata(_)).asJava, new OffsetCommitCallback {
-                override def onComplete(offsets: util.Map[TopicPartition, OffsetAndMetadata], exception: Exception): Unit =
-                  if (exception != null) cb(ZIO.fail(exception))
-                  else cb(ZIO.unit)
-              })
-            }
-          }
+        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
+          withConsumer(_.commitSync(offsets.mapValues(new OffsetAndMetadata(_)).asJava))
 
         private def withConsumer[A](f: KafkaConsumer[Key, Value] => A): RIO[Blocking, A] =
           semaphore.withPermit(effectBlocking(f(consumer)))

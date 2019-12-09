@@ -34,23 +34,32 @@ object ManagedKafka {
     }
   }
 
-  private def tempDirectory(path: String): ZManaged[Blocking with Console, Throwable, Directory] = {
+  private def tempDirectory(path: String) = {
     val acquire = putStrLn(s"Creating $path") *> effectBlocking(Directory(path))
-    ZManaged.make(acquire)(dir => putStrLn(s"Deleting $path") *> effectBlocking(dir.deleteRecursively()).ignore)
+    ZManaged.make(acquire) { dir =>
+      putStrLn(s"Deleting $path") *>
+        effectBlocking(dir.deleteRecursively()).ignore
+    }
   }
 
-  private def embeddedZooKeeper(port: Int): ZManaged[Blocking with Console, Throwable, TestingServer] = {
+  private def embeddedZooKeeper(port: Int) = {
     val acquire = putStrLn("Starting ZooKeeper") *> effectBlocking(new TestingServer(port))
-    ZManaged.make(acquire)(server => putStrLn("Stopping ZooKeeper") *> effectBlocking(server.stop()).ignore)
+    ZManaged.make(acquire) { server =>
+      putStrLn("Stopping ZooKeeper") *>
+        effectBlocking(server.stop()).ignore
+    }
   }
 
-  private def embeddedKafka(config: KafkaServerConfig): ZManaged[Blocking with Console, Throwable, KafkaServer] = {
+  private def embeddedKafka(config: KafkaServerConfig) = {
     val acquire = for {
       _ <- putStrLn("Starting Kafka")
       server <- effectBlocking(new KafkaServer(config.toKafkaConfig))
       _ <- effectBlocking(server.startup())
     } yield server
-    ZManaged.make(acquire)(server => putStrLn("Stopping Kafka") *> effectBlocking(server.shutdown()).ignore)
+    ZManaged.make(acquire) { server =>
+      putStrLn("Stopping Kafka") *>
+        effectBlocking(server.shutdown()).ignore
+    }
   }
 
 }

@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.serialization
 
-import com.wixpress.dst.greyhound.core.Headers
 import com.wixpress.dst.greyhound.core.testkit.BaseTest
+import com.wixpress.dst.greyhound.core.{Deserializer, Headers}
 import org.apache.kafka.common.serialization.{IntegerDeserializer, IntegerSerializer, StringDeserializer, StringSerializer}
 import zio.{Managed, ZIO}
 
