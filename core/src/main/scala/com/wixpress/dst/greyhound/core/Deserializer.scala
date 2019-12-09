@@ -1,6 +1,5 @@
-package com.wixpress.dst.greyhound.core.serialization
+package com.wixpress.dst.greyhound.core
 
-import com.wixpress.dst.greyhound.core.{Headers, TopicName}
 import org.apache.kafka.common.serialization.{Deserializer => KafkaDeserializer}
 import zio.Task
 

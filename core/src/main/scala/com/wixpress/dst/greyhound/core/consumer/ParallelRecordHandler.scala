@@ -12,8 +12,13 @@ object ParallelRecordHandler {
   type Handler = RecordHandler[GreyhoundMetrics, Nothing, Key, Value]
   type OffsetsMap = Ref[Map[TopicPartition, Offset]]
 
-  def make(specs: ConsumerSpec*): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] =
-    make(specs.groupBy(_.topic))
+  def make(specs: ConsumerSpec*): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = make {
+    specs.foldLeft(Map.empty[TopicName, List[ConsumerSpec]]) { (acc, spec) =>
+      spec.topics.foldLeft(acc) { (acc1, topic) =>
+        acc1 + (topic -> (spec :: acc1.getOrElse(topic, Nil)))
+      }
+    }
+  }
 
   def make(specs: Map[TopicName, Seq[ConsumerSpec]]): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = for {
     offsets <- Ref.make(Map.empty[TopicPartition, Offset]).toManaged_

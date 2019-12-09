@@ -2,10 +2,9 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.serialization.Deserializer
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers.beRecordWithValue
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, MessagesSink}
-import com.wixpress.dst.greyhound.core.{Headers, Record, Topic, TopicName}
+import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.StringDeserializer
 import zio._
@@ -119,7 +118,7 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
     val partitions = 4
 
     for {
-      spec <- ConsumerSpec.make[Any, String, String](
+      spec <- ConsumerSpec.make[Any, Nothing, String, String](
         topic = topic,
         group = group,
         handler = RecordHandler(_ => ZIO.unit),
@@ -141,7 +140,7 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
 
   "update offsets map with larger offset" in {
     for {
-      spec <- ConsumerSpec.make[Any, String, String](
+      spec <- ConsumerSpec.make[Any, Nothing, String, String](
         topic = topic,
         group = group,
         handler = RecordHandler(_ => ZIO.unit),
