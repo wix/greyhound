@@ -20,7 +20,7 @@ object ParallelRecordHandler {
     }
   }
 
-  def make(specs: Map[TopicName, Seq[ConsumerSpec]]): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = for {
+  def make(specs: Map[TopicName, List[ConsumerSpec]]): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = for {
     offsets <- Ref.make(Map.empty[TopicPartition, Offset]).toManaged_
     handlers <- createHandlers(specs, updateOffsets(offsets))
     handler = RecordHandler { record: Record[Key, Value] =>
