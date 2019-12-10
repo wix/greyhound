@@ -30,7 +30,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
       val test1 = for {
         sink <- MessagesSink.make[String, String]()
         spec <- ConsumerSpec.make(topic, "group-1", sink.handler, deserializer, deserializer)
-        _ <- Consumers.start(kafka.bootstrapServers, spec).fork
+        _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork
         _ <- producer.produce(topic, "foo", "bar", serializer, serializer)
         message <- sink.firstMessage
       } yield "produce and consume a single message" in {
@@ -57,7 +57,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
           valueDeserializer = deserializer,
           retryPolicy = Vector(1.second, 2.seconds, 3.seconds),
           producer = producer)
-        _ <- Consumers.start(kafka.bootstrapServers, spec).fork
+        _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork
         _ <- producer.produce(topic, "foo", "bar", serializer, serializer)
         success <- promise.await.timeout(8.seconds)
       } yield "configure a handler with retry policy" in {
