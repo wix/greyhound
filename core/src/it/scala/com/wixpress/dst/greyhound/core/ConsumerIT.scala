@@ -30,7 +30,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
       val test1 = for {
         sink <- MessagesSink.make[String, String]()
         spec <- ConsumerSpec.make(topic, "group-1", sink.handler, deserializer, deserializer)
-        _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork
+        _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork // TODO when is consumer ready?
         _ <- producer.produce(topic, "foo", "bar", serializer, serializer)
         message <- sink.firstMessage
       } yield "produce and consume a single message" in {

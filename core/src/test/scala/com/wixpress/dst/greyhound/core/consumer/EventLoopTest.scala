@@ -116,6 +116,38 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
     } yield currentOffsets must beEmpty
   }
 
+  "pause partitions" in {
+    val partitions = Set(new TopicPartition(topic, 0))
+
+    for {
+      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
+      promise <- Promise.make[Nothing, Set[TopicPartition]]
+      consumer = new EmptyConsumer {
+        override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+          promise.succeed(partitions).unit
+      }
+      paused <- EventLoop.make(consumer, offsets, updateOffsets(offsets), Set(topic)).use { eventLoop =>
+        eventLoop.pause(partitions) *> promise.await
+      }
+    } yield paused must equalTo(partitions)
+  }
+
+  "resume partitions" in {
+    val partitions = Set(new TopicPartition(topic, 0))
+
+    for {
+      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
+      promise <- Promise.make[Nothing, Set[TopicPartition]]
+      consumer = new EmptyConsumer {
+        override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+          promise.succeed(partitions).unit
+      }
+      resumed <- EventLoop.make(consumer, offsets, updateOffsets(offsets), Set(topic)).use { eventLoop =>
+        eventLoop.resume(partitions) *> promise.await
+      }
+    } yield resumed must equalTo(partitions)
+  }
+
 }
 
 object EventLoopTest {
@@ -139,6 +171,12 @@ trait EmptyConsumer extends Consumer {
     ZIO.succeed(ConsumerRecords.empty())
 
   override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
+    ZIO.unit
+
+  override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+    ZIO.unit
+
+  override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
     ZIO.unit
 
   def recordsFrom(records: Consumer.Record*): UIO[Consumer.Records] = ZIO.succeed {
