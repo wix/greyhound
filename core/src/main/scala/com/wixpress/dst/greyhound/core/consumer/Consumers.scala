@@ -5,6 +5,7 @@ import com.wixpress.dst.greyhound.core.{GroupName, TopicName}
 import zio.ZManaged
 import zio.blocking.Blocking
 
+// TODO rename ConsumersRunner?
 object Consumers {
   private val clientId = "greyhound-consumers"
 
