@@ -63,7 +63,7 @@ object ConsumerSpec {
                 val retryTopic = Topic(s"${topic.name}-retry-$nextRetryAttempt")
                 val target = record.key.fold[ProduceTarget[Key]](ProduceTarget.None)(ProduceTarget.Key(_, serializer))
                 val backoff = retryPolicy(nextRetryAttempt)
-                clock.sleep(backoff) *> producer.produce[Key, Value](retryTopic, record.value, serializer, target)
+                clock.sleep(backoff) *> producer.produce(retryTopic, record.value, serializer, target)
               } else {
                 ZIO.fail(e)
               }

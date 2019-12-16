@@ -19,6 +19,10 @@ trait Consumer {
   def poll(timeout: Duration): RIO[Blocking, Records]
 
   def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit]
+
+  def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit]
+
+  def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit]
 }
 
 object Consumer {
@@ -40,6 +44,12 @@ object Consumer {
 
         override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
           withConsumer(_.commitSync(offsets.mapValues(new OffsetAndMetadata(_)).asJava))
+
+        override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+          withConsumer(_.pause(partitions.asJava))
+
+        override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+          withConsumer(_.resume(partitions.asJava))
 
         private def withConsumer[A](f: KafkaConsumer[Key, Value] => A): RIO[Blocking, A] =
           semaphore.withPermit(effectBlocking(f(consumer)))
