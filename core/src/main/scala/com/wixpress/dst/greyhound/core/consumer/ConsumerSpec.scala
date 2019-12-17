@@ -82,7 +82,7 @@ object ConsumerSpec {
 
   def deserialize[K, V](keyDeserializer: Deserializer[K], valueDeserializer: Deserializer[V])
                        (record: Record[Consumer.Key, Consumer.Value]): Task[Record[K, V]] = for {
-    key <- ZIO.traverse(record.key)(keyDeserializer.deserialize(record.topic, record.headers, _))
+    key <- ZIO.foreach(record.key)(keyDeserializer.deserialize(record.topic, record.headers, _))
     value <- valueDeserializer.deserialize(record.topic, record.headers, record.value)
   } yield Record(
     topic = record.topic,
