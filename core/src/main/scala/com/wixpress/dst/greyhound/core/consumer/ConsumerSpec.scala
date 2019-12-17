@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer.{Key, Value}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSpec.Handler
-import com.wixpress.dst.greyhound.core.producer.{ProduceTarget, Producer}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerRecord}
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import zio.clock.Clock
 import zio.duration.Duration
@@ -61,9 +61,9 @@ object ConsumerSpec {
               val nextRetryAttempt = retryAttempt + 1
               if (nextRetryAttempt < retryPolicy.length) {
                 val retryTopic = Topic(s"${topic.name}-retry-$nextRetryAttempt")
-                val target = record.key.fold[ProduceTarget[Key]](ProduceTarget.None)(ProduceTarget.Key(_, serializer))
                 val backoff = retryPolicy(nextRetryAttempt)
-                clock.sleep(backoff) *> producer.produce(retryTopic, record.value, serializer, target)
+                val producerRecord = ProducerRecord(retryTopic, record.value, record.key, headers = record.headers)
+                clock.sleep(backoff) *> producer.produce(producerRecord, serializer, serializer)
               } else {
                 ZIO.fail(e)
               }
@@ -88,7 +88,7 @@ object ConsumerSpec {
     topic = record.topic,
     partition = record.partition,
     offset = record.offset,
-    headers = Headers(),
+    headers = record.headers,
     key = key.headOption,
     value = value)
 

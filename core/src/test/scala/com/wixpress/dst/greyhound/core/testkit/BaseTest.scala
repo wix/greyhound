@@ -11,7 +11,7 @@ trait BaseTest[R]
 
   def env: Managed[Nothing, R]
 
-  def run[R1 >: R, E, A](zio: ZIO[R1, E, Fragments]): Fragments =
+  def run[R1 >: R, E, A](zio: ZIO[R1, E, A]): A =
     unsafeRun(env.use(zio.provide))
 
   def all[R1 >: R, E](fragments: ZIO[R1, E, Fragment]*): ZIO[R1, E, Fragments] =
