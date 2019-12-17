@@ -1,29 +1,21 @@
 package com.wixpress.dst.greyhound.core.producer
 
 import java.util.Properties
-import java.util.concurrent.{ScheduledExecutorService, TimeUnit}
 
 import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerConfig => KafkaProducerConfig, ProducerRecord => KafkaProducerRecord, RecordMetadata => KafkaRecordMetadata}
+import org.apache.kafka.common.header.Header
+import org.apache.kafka.common.header.internals.RecordHeader
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{IO, Task, ZIO, ZManaged}
+import zio.{IO, ZIO, ZManaged}
 
-import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.collection.JavaConverters._
 
 trait Producer {
-  def produce[K, V](topic: Topic[K, V],
-                    value: V,
-                    serializer: Serializer[V],
-                    target: ProduceTarget[K] = ProduceTarget.None,
-                    headers: Headers = Headers.Empty): IO[ProducerError, RecordMetadata]
-
-  def produce[K, V](topic: Topic[K, V],
-                    key: K,
-                    value: V,
+  def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V]): IO[ProducerError, RecordMetadata] =
-    produce(topic, value, valueSerializer, ProduceTarget.Key(key, keySerializer))
+                    valueSerializer: Serializer[V]): IO[ProducerError, RecordMetadata]
 }
 
 object Producer {
@@ -35,12 +27,10 @@ object Producer {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
       new Producer {
-        override def produce[K, V](topic: Topic[K, V],
-                                   value: V,
-                                   serializer: Serializer[V],
-                                   target: ProduceTarget[K],
-                                   headers: Headers): IO[ProducerError, RecordMetadata] =
-          recordFrom(topic, value, target, serializer).flatMap { record =>
+        override def produce[K, V](record: ProducerRecord[K, V],
+                                   keySerializer: Serializer[K],
+                                   valueSerializer: Serializer[V]): IO[ProducerError, RecordMetadata] = {
+          recordFrom(record, keySerializer, valueSerializer).flatMap { record =>
             ZIO.effectAsync[Any, ProducerError, RecordMetadata] { cb =>
               producer.send(record, new Callback {
                 override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit =
@@ -49,53 +39,37 @@ object Producer {
               })
             }
           }
-
-        private def recordFrom[K, V](topic: Topic[K, V],
-                                     value: V,
-                                     target: ProduceTarget[K],
-                                     valueSerializer: Serializer[V]): IO[ProducerError, Record] = {
-          val record: Task[Record] = target match {
-            case ProduceTarget.None =>
-              valueSerializer.serialize(topic.name, value).map { valueBytes =>
-                new KafkaProducerRecord(topic.name, valueBytes)
-              }
-
-            case ProduceTarget.Partition(partition) =>
-              valueSerializer.serialize(topic.name, value).map { valueBytes =>
-                new KafkaProducerRecord(topic.name, partition, null, valueBytes)
-              }
-
-            case ProduceTarget.Key(key, keySerializer) => for {
-              keyBytes <- keySerializer.asInstanceOf[Serializer[K]].serialize(topic.name, key)
-              valueBytes <- valueSerializer.serialize(topic.name, value)
-            } yield new KafkaProducerRecord(topic.name, keyBytes, valueBytes)
-          }
-
-          record.mapError(SerializationError)
         }
+
+        private def recordFrom[K, V](record: ProducerRecord[K, V],
+                                     keySerializer: Serializer[K],
+                                     valueSerializer: Serializer[V]): IO[ProducerError, Record] =
+          (for {
+            keyBytes <- ZIO.foreach(record.key)(keySerializer.serialize(record.topic.name, _))
+            valueBytes <- valueSerializer.serialize(record.topic.name, record.value)
+          } yield new KafkaProducerRecord(
+            record.topic.name,
+            record.partition.fold[Integer](null)(Integer.valueOf),
+            keyBytes.headOption.orNull,
+            valueBytes,
+            headersFrom(record.headers).asJava)).mapError(SerializationError)
+
+        private def headersFrom(headers: Headers): Iterable[Header] =
+          headers.headers.map {
+            case (key, value) =>
+              new RecordHeader(key, value)
+          }
       }
     }
   }
 }
 
-case class ProducerRecord[+K, +V](topic: TopicName,
+// TODO rename consumer's `Record`?
+case class ProducerRecord[+K, +V](topic: Topic[K, V],
                                   value: V,
                                   key: Option[K] = None,
                                   partition: Option[Partition] = None,
                                   headers: Headers = Headers.Empty)
-
-object ProducerRecord {
-
-  def from[K, V](topic: Topic[K, V],
-                 key: K,
-                 value: V,
-                 keySerializer: Serializer[K],
-                 valueSerializer: Serializer[V]): Task[ProducerRecord[Array[Byte], Array[Byte]]] = for {
-    keyBytes <- keySerializer.asInstanceOf[Serializer[K]].serialize(topic.name, key)
-    valueBytes <- valueSerializer.serialize(topic.name, value)
-  } yield ProducerRecord(topic.name, valueBytes, Some(keyBytes))
-
-}
 
 case class ProducerConfig(bootstrapServers: Set[String]) {
 

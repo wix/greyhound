@@ -1,5 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
+import java.nio.charset.StandardCharsets.UTF_8
+
 import com.wixpress.dst.greyhound.core.Headers.Header
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.header.{Header => KafkaHeader, Headers => KafkaHeaders}
@@ -41,6 +43,9 @@ object Headers {
   type Header = String
 
   val Empty: Headers = Headers()
+
+  def fromStrings(headers: Map[Header, String]): Headers =
+    Headers(headers.mapValues(_.getBytes(UTF_8)))
 
   def apply(headers: (Header, Array[Byte])*): Headers =
     Headers(headers.toMap)
