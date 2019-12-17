@@ -4,7 +4,7 @@ import com.wixpress.dst.greyhound.core.ConsumerIT.{serializer, _}
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerSpec, Consumers, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, MessagesSink}
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
@@ -31,7 +31,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
         sink <- MessagesSink.make[String, String]()
         spec <- ConsumerSpec.make(topic, "group-1", sink.handler, deserializer, deserializer)
         _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork // TODO when is consumer ready?
-        _ <- producer.produce(topic, "foo", "bar", serializer, serializer)
+        _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), serializer, serializer)
         message <- sink.firstMessage
       } yield "produce and consume a single message" in {
         message must (beRecordWithKey("foo") and beRecordWithValue("bar"))
@@ -58,7 +58,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
           retryPolicy = Vector(1.second, 2.seconds, 3.seconds),
           producer = producer)
         _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork
-        _ <- producer.produce(topic, "foo", "bar", serializer, serializer)
+        _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), serializer, serializer)
         success <- promise.await.timeout(8.seconds)
       } yield "configure a handler with retry policy" in {
         success must beSome
