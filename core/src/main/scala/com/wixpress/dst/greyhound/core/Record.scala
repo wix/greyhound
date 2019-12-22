@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import com.wixpress.dst.greyhound.core.Headers.Header
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.header.{Header => KafkaHeader, Headers => KafkaHeaders}
-import zio.{Task, ZIO}
+import zio.{Chunk, Task, ZIO}
 
 import scala.collection.JavaConverters._
 
@@ -17,6 +17,19 @@ case class Record[+K, +V](topic: TopicName,
                           value: V) {
 
   def id: String = s"$topic:$partition:$offset"
+
+  def bimap[K1, V1](fk: K => K1, fv: V => V1): Record[K1, V1] =
+    Record(
+      topic = topic,
+      partition = partition,
+      offset = offset,
+      headers = headers,
+      key = key.map(fk),
+      value = fv(value))
+
+  def mapKey[K1](f: K => K1): Record[K1, V] = bimap(f, identity)
+
+  def mapValue[V1](f: V => V1): Record[K, V1] = bimap(identity, f)
 
 }
 
@@ -31,9 +44,12 @@ object Record {
       value = record.value)
 }
 
-case class Headers(headers: Map[Header, Array[Byte]] = Map.empty) {
+case class Headers(headers: Map[Header, Chunk[Byte]] = Map.empty) {
   def +(header: KafkaHeader): Headers =
-    copy(headers = headers + (header.key -> header.value))
+    copy(headers = headers + (header.key -> Chunk.fromArray(header.value)))
+
+  def +(header: (String, Chunk[Byte])): Headers =
+    copy(headers = headers + header)
 
   def get[A](header: Header, deserializer: Deserializer[A]): Task[Option[A]] =
     ZIO.foreach(headers.get(header))(deserializer.deserialize("", this, _)).map(_.headOption)
@@ -44,10 +60,13 @@ object Headers {
 
   val Empty: Headers = Headers()
 
-  def fromStrings(headers: Map[Header, String]): Headers =
-    Headers(headers.mapValues(_.getBytes(UTF_8)))
+  def from(headers: Map[Header, String]): Headers =
+    Headers(headers.mapValues(value => Chunk.fromArray(value.getBytes(UTF_8))))
 
-  def apply(headers: (Header, Array[Byte])*): Headers =
+  def from(headers: (Header, String)*): Headers =
+    from(headers.toMap)
+
+  def apply(headers: (Header, Chunk[Byte])*): Headers =
     Headers(headers.toMap)
 
   def apply(headers: KafkaHeaders): Headers =

@@ -4,24 +4,25 @@ import com.wixpress.dst.greyhound.core.Record
 import zio.ZIO
 
 trait RecordHandler[-R, +E, K, V] {
-  def handle(record: Record[K, V]): ZIO[R, E, _]
+  def handle(record: Record[K, V]): ZIO[R, E, Any]
 
-  def contramapM[R1 <: R, E1 >: E, K1, V1](f: Record[K1, V1] => ZIO[R1, E1, Record[K, V]]): RecordHandler[R1, E1, K1, V1] =
-    (record: Record[K1, V1]) => f(record).flatMap(handle)
+  def contramap[K2, V2](f: Record[K2, V2] => Record[K, V]): RecordHandler[R, E, K2, V2] =
+    contramapM(record => ZIO.succeed(f(record)))
 
-  // TODO name?
-  def flatMapError[R1 <: R, E1 >: E](f: E => RecordHandler[R1, E1, K, V]): RecordHandler[R1, E1, K, V] =
+  def contramapM[R1 <: R, E1 >: E, K2, V2](f: Record[K2, V2] => ZIO[R1, E1, Record[K, V]]): RecordHandler[R1, E1, K2, V2] =
+    (record: Record[K2, V2]) => f(record).flatMap(handle)
+
+  def mapError[E2](f: E => E2): RecordHandler[R, E2, K, V] =
+    (record: Record[K, V]) => handle(record).mapError(f)
+
+  def flatMapError[R1 <: R, E2](f: E => RecordHandler[R1, E2, K, V]): RecordHandler[R1, E2, K, V] =
     (record: Record[K, V]) => handle(record).catchAll(e => f(e).handle(record))
 
-  def withErrorHandler[R1 <: R, E1](f: E => ZIO[R1, E1, _]): RecordHandler[R1, E1, K, V] =
-    (record: Record[K, V]) => handle(record).catchAll[R1, E1, Any](f)
+  def withErrorHandler[R1 <: R, E2](f: E => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
+    (record: Record[K, V]) => handle(record).catchAll(f)
 
   def provide(r: R): RecordHandler[Any, E, K, V] =
     (record: Record[K, V]) => handle(record).provide(r)
-
-  // TODO test
-  def filter(f: Record[K, V] => Boolean): RecordHandler[R, E, K, V] =
-    (record: Record[K, V]) => ZIO.when(f(record))(handle(record))
 
   def par[R1 <: R, E1 >: E](other: RecordHandler[R1, E1, K, V]): RecordHandler[R1, E1, K, V] =
     (record: Record[K, V]) => handle(record) &> other.handle(record)
@@ -31,6 +32,6 @@ trait RecordHandler[-R, +E, K, V] {
 }
 
 object RecordHandler {
-  def apply[R, E, K, V](f: Record[K, V] => ZIO[R, E, _]): RecordHandler[R, E, K, V] =
+  def apply[R, E, K, V](f: Record[K, V] => ZIO[R, E, Any]): RecordHandler[R, E, K, V] =
     (record: Record[K, V]) => f(record)
 }

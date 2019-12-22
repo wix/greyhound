@@ -1,15 +1,16 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.util
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.{Offset, TopicName}
 import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.serialization.ByteArrayDeserializer
+import org.apache.kafka.common.serialization.Deserializer
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
-import zio.{RIO, Semaphore, ZManaged}
+import zio.{Chunk, RIO, Semaphore, ZManaged}
 
 import scala.collection.JavaConverters._
 
@@ -26,12 +27,16 @@ trait Consumer {
 }
 
 object Consumer {
-  type Key = Array[Byte]
-  type Value = Array[Byte]
+  type Key = Chunk[Byte]
+  type Value = Chunk[Byte]
   type Record = ConsumerRecord[Key, Value]
   type Records = ConsumerRecords[Key, Value]
 
-  private val deserializer = new ByteArrayDeserializer
+  private val deserializer = new Deserializer[Chunk[Byte]] {
+    override def configure(configs: util.Map[TopicName, _], isKey: Boolean): Unit = ()
+    override def deserialize(topic: TopicName, data: Array[Byte]): Chunk[Byte] = Chunk.fromArray(data)
+    override def close(): Unit = ()
+  }
 
   def make(config: ConsumerConfig): ZManaged[Blocking, Throwable, Consumer] =
     (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>

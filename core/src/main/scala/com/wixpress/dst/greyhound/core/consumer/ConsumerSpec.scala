@@ -1,13 +1,18 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.time.Instant
+import java.util.concurrent.TimeUnit.MILLISECONDS
+
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer.{Key, Value}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSpec.Handler
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerRecord}
-import org.apache.kafka.common.serialization.ByteArraySerializer
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerError, ProducerRecord}
+import org.apache.kafka.common.serialization.StringDeserializer
+import zio._
 import zio.clock.Clock
-import zio.duration.Duration
-import zio.{Task, URIO, ZIO, clock}
+import zio.duration._
 
 case class ConsumerSpec(topics: Set[TopicName],
                         group: GroupName,
@@ -22,74 +27,143 @@ object ConsumerSpec {
                        handler: RecordHandler[R, E, K, V],
                        keyDeserializer: Deserializer[K],
                        valueDeserializer: Deserializer[V],
-                       parallelism: Int = 8): URIO[R, ConsumerSpec] =
-    ZIO.access[R] { r =>
+                       parallelism: Int = 8): URIO[R with GreyhoundMetrics, ConsumerSpec] =
+    ZIO.access[R with GreyhoundMetrics] { r =>
       ConsumerSpec(
         topics = Set(topic.name),
         group = group,
         handler = handler
+          .mapError(RetryUserError(_))
           .contramapM(deserialize(keyDeserializer, valueDeserializer))
-          .withErrorHandler(e => ZIO.unit) // TODO report serialization errors
+          .withErrorHandler(Metrics.report)
           .provide(r),
         parallelism = parallelism)
     }
 
-  private val retryAttemptPattern = """-retry-(\d+)$""".r
-
-  private val serializer = Serializer(new ByteArraySerializer)
-
-  def makeWithRetry[R, K, V](topic: Topic[K, V],
-                             group: GroupName,
-                             handler: RecordHandler[R, Throwable, K, V],
-                             keyDeserializer: Deserializer[K],
-                             valueDeserializer: Deserializer[V],
-                             retryPolicy: Vector[Duration],
-                             producer: Producer,
-                             parallelism: Int = 8): URIO[R with Clock, ConsumerSpec] =
-    ZIO.access[R with Clock] { r =>
-      val handlerWithRetry =
-        handler
-          .contramapM(deserialize(keyDeserializer, valueDeserializer))
-          .flatMapError { e =>
-            record: Record[Key, Value] =>
-              // TODO add visibility
-              // TODO smart sleep
-              val retryAttempt = record.topic match {
-                case retryAttemptPattern(attempt) => attempt.toInt
-                case _ => 0
-              }
-              val nextRetryAttempt = retryAttempt + 1
-              if (nextRetryAttempt < retryPolicy.length) {
-                val retryTopic = Topic(s"${topic.name}-retry-$nextRetryAttempt")
-                val backoff = retryPolicy(nextRetryAttempt)
-                val producerRecord = ProducerRecord(retryTopic, record.value, record.key, headers = record.headers)
-                clock.sleep(backoff) *> producer.produce(producerRecord, serializer, serializer)
-              } else {
-                ZIO.fail(e)
-              }
-          }
-          .withErrorHandler(e => ZIO.unit) // TODO report serialization errors
-          .provide(r)
+  def withRetries[R, E, K, V](topic: Topic[K, V],
+                              group: GroupName,
+                              handler: RecordHandler[R, E, K, V],
+                              keySerde: Serde[K],
+                              valueSerde: Serde[V],
+                              backoffs: Vector[Duration],
+                              producer: Producer,
+                              parallelism: Int = 8): URIO[R with Clock with GreyhoundMetrics, ConsumerSpec] =
+    ZIO.access[R with Clock with GreyhoundMetrics] { r =>
+      val handler1 = handler.contramap[K, (Option[RetryAttempt], V)](_.mapValue(_._2))
+      val retryHandler = BackoffHandler[K, V] *> handler1.flatMapError { error =>
+        RetryErrorHandler(error, topic, group, backoffs, producer, keySerde, valueSerde)
+      }
 
       ConsumerSpec(
-        topics = (1 to retryPolicy.length).foldLeft(Set(topic.name)) { (acc, retryAttempt) =>
-          acc + s"${topic.name}-retry-$retryAttempt"
-        },
+        topics = retryTopics(topic.name, group, backoffs),
         group = group,
-        handler = handlerWithRetry,
+        handler = retryHandler
+          .contramapM(deserialize(keySerde, RetryAttemptDeserializer zip valueSerde))
+          .withErrorHandler(Metrics.report)
+          .provide(r),
         parallelism = parallelism)
     }
 
-  def deserialize[K, V](keyDeserializer: Deserializer[K], valueDeserializer: Deserializer[V])
-                       (record: Record[Consumer.Key, Consumer.Value]): Task[Record[K, V]] = for {
-    key <- ZIO.foreach(record.key)(keyDeserializer.deserialize(record.topic, record.headers, _))
-    value <- valueDeserializer.deserialize(record.topic, record.headers, record.value)
-  } yield Record(
-    topic = record.topic,
-    partition = record.partition,
-    offset = record.offset,
-    headers = record.headers,
-    key = key.headOption,
-    value = value)
+  private def retryTopics(topic: TopicName, group: GroupName, backoffs: Vector[Duration]): Set[TopicName] =
+    backoffs.indices.foldLeft(Set(topic))((acc, index) => acc + s"$topic-$group-retry-$index")
 
+  private def deserialize[K, V](keyDeserializer: Deserializer[K], valueDeserializer: Deserializer[V])
+                               (record: Record[Consumer.Key, Consumer.Value]): IO[RetryHandlerError[Nothing], Record[K, V]] =
+    (for {
+      key <- ZIO.foreach(record.key)(keyDeserializer.deserialize(record.topic, record.headers, _))
+      value <- valueDeserializer.deserialize(record.topic, record.headers, record.value)
+    } yield Record(
+      topic = record.topic,
+      partition = record.partition,
+      offset = record.offset,
+      headers = record.headers,
+      key = key.headOption,
+      value = value)).mapError(RetrySerializationError)
+}
+
+case class RetryAttempt(attempt: Int,
+                        submitted: Instant,
+                        backoff: Duration)
+
+sealed abstract class RetryHandlerError[+E](cause: Throwable = null)
+  extends RuntimeException(cause) with GreyhoundMetric
+
+case class RetrySerializationError(cause: Throwable) extends RetryHandlerError[Nothing](cause)
+case class RetryProducerError(cause: ProducerError) extends RetryHandlerError[Nothing](cause)
+case class RetryUserError[E](cause: E) extends RetryHandlerError[E]
+
+object BackoffHandler {
+  // TODO sleep based on time
+  def apply[K, V]: RecordHandler[Clock, Nothing, K, (Option[RetryAttempt], V)] =
+    RecordHandler(record => ZIO.foreach_(record.value._1)(attempt => clock.sleep(attempt.backoff)))
+}
+
+// ---------------------------------------------------------------------------------
+
+// TODO this is wix specific
+object RetryAttemptDeserializer extends Deserializer[Option[RetryAttempt]] {
+  private val topicPattern = """-retry-(\d+)$""".r.unanchored
+
+  private val submittedHeaderKey = "submitTimestamp"
+
+  private val backoffHeaderKey = "backOffTimeMs"
+
+  private val longDeserializer =
+    Deserializer(new StringDeserializer).flatMap { string =>
+      Deserializer(Task(string.toLong))
+    }
+
+  private val instantDeserializer =
+    longDeserializer.map(Instant.ofEpochMilli)
+
+  private val durationDeserializer =
+    longDeserializer.map(Duration(_, MILLISECONDS))
+
+  override def deserialize(topic: TopicName, headers: Headers, data: Chunk[Byte]): Task[Option[RetryAttempt]] = {
+    val submittedHeader = headers.get(submittedHeaderKey, instantDeserializer)
+    val backoffHeader = headers.get(backoffHeaderKey, durationDeserializer)
+    (submittedHeader zipWith backoffHeader) { (submitted, backoff) =>
+      val attempt = topic match {
+        case topicPattern(attempt) => Some(attempt.toInt)
+        case _ => None
+      }
+      for {
+        a <- attempt
+        s <- submitted
+        b <- backoff
+      } yield RetryAttempt(a, s, b)
+    }
+  }
+}
+
+// TODO this is wix specific
+object RetryErrorHandler {
+  def apply[E, K, V](originalError: E,
+                     topic: Topic[K, V],
+                     group: GroupName,
+                     backoffs: Vector[Duration],
+                     producer: Producer,
+                     keySerializer: Serializer[K],
+                     valueSerializer: Serializer[V]): RecordHandler[Clock, RetryHandlerError[E], K, (Option[RetryAttempt], V)] =
+    RecordHandler { record =>
+      val (retryAttempt, value) = record.value
+      val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
+      if (nextRetryAttempt < backoffs.length) {
+        clock.currentTime(MILLISECONDS).flatMap { now =>
+          producer.produce(
+            record = ProducerRecord(
+              topic = Topic(s"${topic.name}-$group-retry-$nextRetryAttempt"),
+              value = value,
+              key = record.key,
+              partition = None,
+              headers = record.headers +
+                ("submitTimestamp" -> Chunk.fromArray(now.toString.getBytes)) +
+                ("backOffTimeMs" -> Chunk.fromArray(backoffs(nextRetryAttempt).toMillis.toString.getBytes))),
+            keySerializer = keySerializer,
+            valueSerializer = valueSerializer).mapError(RetryProducerError)
+        }
+      } else {
+        ZIO.fail(RetryUserError(originalError))
+      }
+    }
 }
