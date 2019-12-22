@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.time
 import java.time.Instant
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
@@ -82,8 +83,13 @@ object ConsumerSpec {
 }
 
 case class RetryAttempt(attempt: Int,
-                        submitted: Instant,
-                        backoff: Duration)
+                        submittedAt: Instant,
+                        backoff: Duration) {
+
+  def expiresAt: Instant =
+    submittedAt.plusMillis(backoff.toMillis)
+
+}
 
 sealed abstract class RetryHandlerError[+E](cause: Throwable = null)
   extends RuntimeException(cause) with GreyhoundMetric
@@ -92,21 +98,31 @@ case class RetrySerializationError(cause: Throwable) extends RetryHandlerError[N
 case class RetryProducerError(cause: ProducerError) extends RetryHandlerError[Nothing](cause)
 case class RetryUserError[E](cause: E) extends RetryHandlerError[E]
 
+// ---------------------------------------------------------------------------------
+
 object BackoffHandler {
-  // TODO sleep based on time
+  private val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
+
   def apply[K, V]: RecordHandler[Clock, Nothing, K, (Option[RetryAttempt], V)] =
-    RecordHandler(record => ZIO.foreach_(record.value._1)(attempt => clock.sleep(attempt.backoff)))
+    RecordHandler { record =>
+      val (retryAttempt, _) = record.value
+      ZIO.foreach_(retryAttempt) { attempt =>
+        currentTime.flatMap { now =>
+          val sleep = time.Duration.between(now, attempt.expiresAt)
+          clock.sleep(Duration.fromJava(sleep))
+        }
+      }
+    }
 }
 
-// ---------------------------------------------------------------------------------
+object RetryAttemptHeader {
+  val Submitted = "submitTimestamp"
+  val Backoff = "backOffTimeMs"
+}
 
 // TODO this is wix specific
 object RetryAttemptDeserializer extends Deserializer[Option[RetryAttempt]] {
   private val topicPattern = """-retry-(\d+)$""".r.unanchored
-
-  private val submittedHeaderKey = "submitTimestamp"
-
-  private val backoffHeaderKey = "backOffTimeMs"
 
   private val longDeserializer =
     Deserializer(new StringDeserializer).flatMap { string =>
@@ -120,8 +136,8 @@ object RetryAttemptDeserializer extends Deserializer[Option[RetryAttempt]] {
     longDeserializer.map(Duration(_, MILLISECONDS))
 
   override def deserialize(topic: TopicName, headers: Headers, data: Chunk[Byte]): Task[Option[RetryAttempt]] = {
-    val submittedHeader = headers.get(submittedHeaderKey, instantDeserializer)
-    val backoffHeader = headers.get(backoffHeaderKey, durationDeserializer)
+    val submittedHeader = headers.get(RetryAttemptHeader.Submitted, instantDeserializer)
+    val backoffHeader = headers.get(RetryAttemptHeader.Backoff, durationDeserializer)
     (submittedHeader zipWith backoffHeader) { (submitted, backoff) =>
       val attempt = topic match {
         case topicPattern(attempt) => Some(attempt.toInt)
@@ -157,8 +173,8 @@ object RetryErrorHandler {
               key = record.key,
               partition = None,
               headers = record.headers +
-                ("submitTimestamp" -> Chunk.fromArray(now.toString.getBytes)) +
-                ("backOffTimeMs" -> Chunk.fromArray(backoffs(nextRetryAttempt).toMillis.toString.getBytes))),
+                (RetryAttemptHeader.Submitted -> Chunk.fromArray(now.toString.getBytes)) +
+                (RetryAttemptHeader.Backoff -> Chunk.fromArray(backoffs(nextRetryAttempt).toMillis.toString.getBytes))),
             keySerializer = keySerializer,
             valueSerializer = valueSerializer).mapError(RetryProducerError)
         }
