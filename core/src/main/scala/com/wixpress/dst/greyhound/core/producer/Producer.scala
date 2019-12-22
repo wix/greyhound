@@ -1,14 +1,15 @@
 package com.wixpress.dst.greyhound.core.producer
 
+import java.util
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerConfig => KafkaProducerConfig, ProducerRecord => KafkaProducerRecord, RecordMetadata => KafkaRecordMetadata}
 import org.apache.kafka.common.header.Header
 import org.apache.kafka.common.header.internals.RecordHeader
-import org.apache.kafka.common.serialization.ByteArraySerializer
+import org.apache.kafka.common.serialization.{Serializer => KafkaSerializer}
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{IO, ZIO, ZManaged}
+import zio.{Chunk, IO, ZIO, ZManaged}
 
 import scala.collection.JavaConverters._
 
@@ -19,9 +20,13 @@ trait Producer {
 }
 
 object Producer {
-  type Record = KafkaProducerRecord[Array[Byte], Array[Byte]]
+  type Record = KafkaProducerRecord[Chunk[Byte], Chunk[Byte]]
 
-  private val serializer = new ByteArraySerializer
+  val serializer = new KafkaSerializer[Chunk[Byte]] {
+    override def configure(configs: util.Map[GroupName, _], isKey: Boolean): Unit = ()
+    override def serialize(topic: GroupName, data: Chunk[Byte]): Array[Byte] = data.toArray
+    override def close(): Unit = ()
+  }
 
   def make(config: ProducerConfig): ZManaged[Blocking, Throwable, Producer] = {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
@@ -57,7 +62,7 @@ object Producer {
         private def headersFrom(headers: Headers): Iterable[Header] =
           headers.headers.map {
             case (key, value) =>
-              new RecordHeader(key, value)
+              new RecordHeader(key, value.toArray)
           }
       }
     }

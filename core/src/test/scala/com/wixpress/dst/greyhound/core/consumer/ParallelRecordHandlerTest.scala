@@ -1,10 +1,10 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers.beRecordWithValue
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, MessagesSink}
-import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.StringDeserializer
 import zio._
@@ -80,7 +80,7 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
 
       result <- ParallelRecordHandler.make(spec1, spec2).use {
         case (_, handler) =>
-          handler.handle(Record(topic.name, 0, 0L, headers, key, value.getBytes)) *>
+          handler.handle(Record(topic.name, 0, 0L, headers, key, Chunk.fromArray(value.getBytes))) *>
             (sink1.firstMessage zipPar sink2.firstMessage)
       }
 
@@ -149,9 +149,9 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
 
       result <- ParallelRecordHandler.make(spec).use {
         case (offsets, handler) =>
-          handler.handle(Record(topic.name, 0, 1L, headers, key, "bar".getBytes)) *>
-            handler.handle(Record(topic.name, 0, 0L, headers, key, "foo".getBytes)) *>
-            handler.handle(Record(topic.name, 1, 0L, headers, key, "baz".getBytes)) *>
+          handler.handle(Record(topic.name, 0, 1L, headers, key, Chunk.fromArray("bar".getBytes))) *>
+            handler.handle(Record(topic.name, 0, 0L, headers, key, Chunk.fromArray("foo".getBytes))) *>
+            handler.handle(Record(topic.name, 1, 0L, headers, key, Chunk.fromArray("baz".getBytes))) *>
             offsets.get.doWhile(_.size < 2).timeout(1.second)
       }
     } yield result must beSome(Map(
@@ -163,15 +163,17 @@ class ParallelRecordHandlerTest extends BaseTest[GreyhoundMetrics with Clock] {
                                   topic: TopicName,
                                   partitions: Int) =
     ZIO.foreach_(0 until partitions) { partition =>
-      handler.handle(Record(topic, partition, 0L, headers, key, s"message-$partition".getBytes))
+      handler.handle(Record(topic, partition, 0L, headers, key, Chunk.fromArray(s"message-$partition".getBytes)))
     }
 
 }
 
 case class Foo(foo: String) {
-  def bytes: Array[Byte] = foo.getBytes
+  def bytes: Chunk[Byte] =
+    Chunk.fromArray(foo.getBytes)
 }
 
 case class Bar(bar: String) {
-  def bytes: Array[Byte] = bar.getBytes
+  def bytes: Chunk[Byte] =
+    Chunk.fromArray(bar.getBytes)
 }

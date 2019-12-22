@@ -153,7 +153,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
 object EventLoopTest {
   val topic = "topic"
 
-  val bytes = Array.empty[Byte]
+  val bytes = Chunk.empty
 
   val emptyHandler: Handler = RecordHandler(_ => ZIO.unit)
 

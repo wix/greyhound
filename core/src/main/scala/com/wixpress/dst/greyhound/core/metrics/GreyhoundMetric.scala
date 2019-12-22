@@ -5,7 +5,7 @@ import org.apache.kafka.common.TopicPartition
 import org.slf4j.LoggerFactory
 import zio.ZIO
 
-sealed trait GreyhoundMetric extends Product with Serializable
+trait GreyhoundMetric extends Product with Serializable
 
 object GreyhoundMetric {
   type GreyhoundMetrics = Metrics[GreyhoundMetric]
