@@ -160,6 +160,55 @@ class ConsumerSpecTest extends BaseTest[TestRandom with TestClock with TestMetri
     }
   }
 
+  "BackoffHandler" should {
+    "not sleep if retry attempt is empty" in {
+      for {
+        start <- currentTime
+        _ <- BackoffHandler[String, String].handle {
+          Record(topic, partition, offset, Headers.Empty, None, (None, ""))
+        }
+        end <- currentTime
+      } yield start must equalTo(end)
+    }
+
+    "backoff with correct time" in {
+      for {
+        start <- currentTime
+        fiber <- BackoffHandler[String, String].handle {
+          val attempt = RetryAttempt(0, start, 1.second)
+          Record(topic, partition, offset, Headers.Empty, None, (Some(attempt), ""))
+        }.fork
+        _ <- TestClock.adjust(1.second)
+        _ <- fiber.join
+        end <- currentTime
+      } yield end must equalTo(start.plusSeconds(1))
+    }
+
+    "backoff with correct time when current time is different than submission time" in {
+      for {
+        start <- currentTime
+        fiber <- BackoffHandler[String, String].handle {
+          val attempt = RetryAttempt(0, start.minusSeconds(1), 3.seconds)
+          Record(topic, partition, offset, Headers.Empty, None, (Some(attempt), ""))
+        }.fork
+        _ <- TestClock.adjust(2.seconds)
+        _ <- fiber.join
+        end <- currentTime
+      } yield end must equalTo(start.plusSeconds(2))
+    }
+
+    "not sleep if backoff time expired" in {
+      for {
+        start <- currentTime
+        _ <- BackoffHandler[String, String].handle {
+          val attempt = RetryAttempt(0, start.minusSeconds(3), 1.second)
+          Record(topic, partition, offset, Headers.Empty, None, (Some(attempt), ""))
+        }
+        end <- currentTime
+      } yield start must equalTo(end)
+    }
+  }
+
 }
 
 case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]) extends Producer {
