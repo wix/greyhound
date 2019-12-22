@@ -37,35 +37,34 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
         message must (beRecordWithKey("foo") and beRecordWithValue("bar"))
       }
 
-      val test2 = for {
-        _ <- kafka.createTopic(TopicConfig("some-topic-retry-1", partitions, 1, CleanupPolicy.Delete(1.hour)))
-        _ <- kafka.createTopic(TopicConfig("some-topic-retry-2", partitions, 1, CleanupPolicy.Delete(1.hour)))
-        _ <- kafka.createTopic(TopicConfig("some-topic-retry-3", partitions, 1, CleanupPolicy.Delete(1.hour)))
+//      val test2 = for {
+//        _ <- kafka.createTopic(TopicConfig("some-topic-retry-1", partitions, 1, CleanupPolicy.Delete(1.hour)))
+//        _ <- kafka.createTopic(TopicConfig("some-topic-retry-2", partitions, 1, CleanupPolicy.Delete(1.hour)))
+//        _ <- kafka.createTopic(TopicConfig("some-topic-retry-3", partitions, 1, CleanupPolicy.Delete(1.hour)))
+//
+//        invocations <- Ref.make(0)
+//        promise <- Promise.make[Nothing, Unit]
+//        spec <- ConsumerSpec.makeWithRetry[Any, String, String](
+//          topic = Topic("some-topic"),
+//          group = "group-2",
+//          handler = RecordHandler { _ =>
+//            invocations.update(_ + 1).flatMap { n =>
+//              if (n <= 4) ZIO.fail(new RuntimeException("Oops!"))
+//              else promise.succeed(())
+//            }
+//          },
+//          keyDeserializer = deserializer,
+//          valueDeserializer = deserializer,
+//          retryPolicy = Vector(1.second, 2.seconds, 3.seconds),
+//          producer = producer)
+//        _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork
+//        _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), serializer, serializer)
+//        success <- promise.await.timeout(8.seconds)
+//      } yield "configure a handler with retry policy" in {
+//        success must beSome
+//      }
 
-        invocations <- Ref.make(0)
-        promise <- Promise.make[Nothing, Unit]
-        spec <- ConsumerSpec.makeWithRetry[Any, String, String](
-          topic = Topic("some-topic"),
-          group = "group-2",
-          handler = RecordHandler { _ =>
-            invocations.update(_ + 1).flatMap { n =>
-              if (n <= 4) ZIO.fail(new RuntimeException("Oops!"))
-              else promise.succeed(())
-            }
-          },
-          keyDeserializer = deserializer,
-          valueDeserializer = deserializer,
-          retryPolicy = Vector(1.second, 2.seconds, 3.seconds),
-          producer = producer)
-        _ <- Consumers.make(kafka.bootstrapServers, spec).useForever.fork
-        _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), serializer, serializer)
-        success <- promise.await.timeout(8.seconds)
-      } yield "configure a handler with retry policy" in {
-        success must beSome
-      }
-
-      kafka.createTopic(topicConfig) *>
-        all(test1, test2)
+      kafka.createTopic(topicConfig) *> all(test1)
   }
 
   run(tests)
