@@ -10,6 +10,7 @@ trait TestMetrics extends Metrics[GreyhoundMetric] {
 object TestMetrics {
   trait Service extends Metrics.Service[GreyhoundMetric] {
     def queue: Queue[GreyhoundMetric]
+    def reported: UIO[List[GreyhoundMetric]] = queue.takeAll
   }
 
   def make: Managed[Nothing, TestMetrics] =
@@ -21,4 +22,10 @@ object TestMetrics {
         }
       }
     }
+
+  def queue: URIO[TestMetrics, Queue[GreyhoundMetric]] =
+    ZIO.access[TestMetrics](_.metrics.queue)
+
+  def reported: URIO[TestMetrics, List[GreyhoundMetric]] =
+    ZIO.accessM[TestMetrics](_.metrics.reported)
 }

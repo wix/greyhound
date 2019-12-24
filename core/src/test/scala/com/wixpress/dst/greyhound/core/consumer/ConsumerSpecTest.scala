@@ -5,8 +5,9 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerError, ProducerRecord, RecordMetadata}
-import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerSpecTest._
+import com.wixpress.dst.greyhound.core.producer.ProducerRecord
+import com.wixpress.dst.greyhound.core.testkit.{BaseTest, FakeProducer, TestMetrics}
 import org.apache.kafka.common.serialization.Serdes.StringSerde
 import zio._
 import zio.clock.Clock
@@ -25,20 +26,6 @@ class ConsumerSpecTest extends BaseTest[TestRandom with TestClock with TestMetri
         override val metrics: TestMetrics.Service = testMetrics.metrics
       }
     }
-
-  val topic = "some-topic"
-  val group = "some-group"
-  val retryTopic = s"$topic-$group-retry-0"
-  val partition = 0
-  val offset = 0L
-  val bytes = for {
-    size <- nextInt(9)
-    string <- nextString(size + 1)
-  } yield Chunk.fromArray(string.getBytes(UTF_8))
-  val serde = Serde(new StringSerde)
-  val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
-  val failingHandler: RecordHandler[Any, String, String, String] =
-    RecordHandler(_ => ZIO.fail("Oops"))
 
   "withRetries" should {
     "add retry topics" in {
@@ -155,8 +142,26 @@ class ConsumerSpecTest extends BaseTest[TestRandom with TestClock with TestMetri
         headers = Headers.from("submitTimestamp" -> now.toEpochMilli.toString, "backOffTimeMs" -> "10000")
         _ <- spec.handler.handle(Record(retryTopic, partition, offset, headers, Some(key), value)).fork
         _ <- TestClock.adjust(10.seconds)
-        metric <- ZIO.accessM[TestMetrics](_.metrics.queue.take)
-      } yield metric must equalTo(RetryUserError("Oops"))
+        metric <- TestMetrics.queue.flatMap(_.take)
+      } yield metric must equalTo(RetryUserError(error))
+    }
+
+    "report error information when " in {
+      for {
+        producer <- FakeProducer.make
+        spec <- ConsumerSpec.withRetries(
+          topic = Topic(topic),
+          group = group,
+          handler = failingHandler,
+          keySerde = serde,
+          valueSerde = serde,
+          backoffs = Vector(1.second),
+          producer = producer)
+        key <- bytes
+        value <- bytes
+        _ <- spec.handler.handle(Record(topic, partition, offset, Headers.Empty, Some(key), value))
+        metrics <- TestMetrics.reported
+      } yield metrics must contain(RetryUserError(error))
     }
   }
 
@@ -211,26 +216,19 @@ class ConsumerSpecTest extends BaseTest[TestRandom with TestClock with TestMetri
 
 }
 
-case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]) extends Producer {
-
-  override def produce[K, V](record: ProducerRecord[K, V],
-                             keySerializer: Serializer[K],
-                             valueSerializer: Serializer[V]): IO[ProducerError, RecordMetadata] =
-    (for {
-      keyBytes <- ZIO.foreach(record.key)(keySerializer.serialize(record.topic.name, _))
-      valueBytes <- valueSerializer.serialize(record.topic.name, record.value)
-      newRecord = ProducerRecord(
-        topic = Topic(record.topic.name),
-        value = valueBytes,
-        key = keyBytes.headOption,
-        partition = record.partition,
-        headers = record.headers)
-      _ <- records.offer(newRecord)
-    } yield RecordMetadata(record.topic.name, 0, 0)).orDie
-
-}
-
-object FakeProducer {
-  def make: UIO[FakeProducer] =
-    Queue.unbounded[ProducerRecord[Chunk[Byte], Chunk[Byte]]].map(FakeProducer(_))
+object ConsumerSpecTest {
+  val topic = "some-topic"
+  val group = "some-group"
+  val retryTopic = s"$topic-$group-retry-0"
+  val partition = 0
+  val offset = 0L
+  val bytes = for {
+    size <- nextInt(9)
+    string <- nextString(size + 1)
+  } yield Chunk.fromArray(string.getBytes(UTF_8))
+  val serde = Serde(new StringSerde)
+  val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
+  val error = "Oops"
+  val failingHandler: RecordHandler[Any, String, String, String] =
+    RecordHandler(_ => ZIO.fail(error))
 }
