@@ -18,7 +18,7 @@ case class Record[+K, +V](topic: TopicName,
 
   def id: String = s"$topic:$partition:$offset"
 
-  def bimap[K1, V1](fk: K => K1, fv: V => V1): Record[K1, V1] =
+  def bimap[K2, V2](fk: K => K2, fv: V => V2): Record[K2, V2] =
     Record(
       topic = topic,
       partition = partition,
@@ -27,9 +27,9 @@ case class Record[+K, +V](topic: TopicName,
       key = key.map(fk),
       value = fv(value))
 
-  def mapKey[K1](f: K => K1): Record[K1, V] = bimap(f, identity)
+  def mapKey[K2](f: K => K2): Record[K2, V] = bimap(f, identity)
 
-  def mapValue[V1](f: V => V1): Record[K, V1] = bimap(identity, f)
+  def mapValue[V2](f: V => V2): Record[K, V2] = bimap(identity, f)
 
 }
 

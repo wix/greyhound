@@ -160,11 +160,12 @@ object RetryErrorHandler {
                      backoffs: Vector[Duration],
                      producer: Producer,
                      keySerializer: Serializer[K],
-                     valueSerializer: Serializer[V]): RecordHandler[Clock, RetryHandlerError[E], K, (Option[RetryAttempt], V)] =
+                     valueSerializer: Serializer[V]): RecordHandler[Clock with GreyhoundMetrics, RetryHandlerError[E], K, (Option[RetryAttempt], V)] =
     RecordHandler { record =>
       val (retryAttempt, value) = record.value
       val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
-      if (nextRetryAttempt < backoffs.length) {
+      val error = RetryUserError(originalError)
+      val result = if (nextRetryAttempt < backoffs.length) {
         clock.currentTime(MILLISECONDS).flatMap { now =>
           producer.produce(
             record = ProducerRecord(
@@ -173,13 +174,17 @@ object RetryErrorHandler {
               key = record.key,
               partition = None,
               headers = record.headers +
-                (RetryAttemptHeader.Submitted -> Chunk.fromArray(now.toString.getBytes)) +
-                (RetryAttemptHeader.Backoff -> Chunk.fromArray(backoffs(nextRetryAttempt).toMillis.toString.getBytes))),
+                (RetryAttemptHeader.Submitted -> toChunk(now)) +
+                (RetryAttemptHeader.Backoff -> toChunk(backoffs(nextRetryAttempt).toMillis))),
             keySerializer = keySerializer,
             valueSerializer = valueSerializer).mapError(RetryProducerError)
         }
       } else {
-        ZIO.fail(RetryUserError(originalError))
+        ZIO.fail(error)
       }
+      Metrics.report(error) *> result
     }
+
+  private def toChunk(long: Long): Chunk[Byte] =
+    Chunk.fromArray(long.toString.getBytes)
 }
