@@ -25,19 +25,4 @@ class DeserializerTest extends BaseTest[Any] {
     }
   }
 
-  "zip" should {
-    "combine 2 deserialized values into a tuple" in {
-      val stringSerializer = Serializer(new StringSerializer)
-      val stringDeserializer = Deserializer(new StringDeserializer)
-      val topicDeserializer = Deserializer((topic, _, _) => ZIO.succeed(topic))
-      val topicAndValue = topicDeserializer zip stringDeserializer
-      val serialized = stringSerializer.serialize(topic, "foo")
-
-      for {
-        serialized <- stringSerializer.serialize(topic, "foo")
-        deserialized <- topicAndValue.deserialize(topic, headers, serialized)
-      } yield deserialized must equalTo(topic -> "foo")
-    }
-  }
-
 }

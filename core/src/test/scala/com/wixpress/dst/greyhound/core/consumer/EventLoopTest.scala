@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer.{Key, Records, Value}
+import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSpec.Handler
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.consumer.ParallelRecordHandler.OffsetsMap
@@ -39,7 +39,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
   "handle polled records" in {
     for {
       offsets <- Ref.make(Map.empty[TopicPartition, Offset])
-      queue <- Queue.unbounded[Record[Key, Value]]
+      queue <- Queue.unbounded[Record[Chunk[Byte], Chunk[Byte]]]
       handler: Handler = RecordHandler(queue.offer)
       consumer = new EmptyConsumer {
         override def poll(timeout: Duration): RIO[Blocking, Records] =
