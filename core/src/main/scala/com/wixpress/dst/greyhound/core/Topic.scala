@@ -4,6 +4,8 @@ import java.util.Properties
 
 import zio.duration.Duration
 
+import scala.collection.JavaConverters._
+
 case class Topic[+K, +V](name: String) extends AnyVal
 
 case class TopicConfig(name: String,
@@ -11,23 +13,26 @@ case class TopicConfig(name: String,
                        replicationFactor: Int,
                        cleanupPolicy: CleanupPolicy) {
 
-  def properties: Properties = {
-    val props = new Properties
+  def propertiesMap: Map[String, String] =
     cleanupPolicy match {
       case CleanupPolicy.Delete(retention) =>
-        props.setProperty("cleanup.policy", "delete")
-        props.setProperty("retention.ms", retention.toMillis.toString)
+        Map(
+          "retention.ms" -> retention.toMillis.toString,
+          "cleanup.policy" -> "delete")
 
       case CleanupPolicy.Compact =>
-        props.setProperty("cleanup.policy", "compact")
+        Map("cleanup.policy" -> "compact")
     }
+
+  def properties: Properties = {
+    val props = new Properties
+    props.putAll(propertiesMap.asJava)
     props
   }
 
 }
 
 sealed trait CleanupPolicy
-
 
 object CleanupPolicy {
   case class Delete(retention: Duration) extends CleanupPolicy

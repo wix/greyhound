@@ -27,10 +27,8 @@ trait Consumer {
 }
 
 object Consumer {
-  type Key = Chunk[Byte]
-  type Value = Chunk[Byte]
-  type Record = ConsumerRecord[Key, Value]
-  type Records = ConsumerRecords[Key, Value]
+  type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
+  type Records = ConsumerRecords[Chunk[Byte], Chunk[Byte]]
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
     override def configure(configs: util.Map[TopicName, _], isKey: Boolean): Unit = ()
@@ -56,12 +54,12 @@ object Consumer {
         override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
           withConsumer(_.resume(partitions.asJava))
 
-        private def withConsumer[A](f: KafkaConsumer[Key, Value] => A): RIO[Blocking, A] =
+        private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
           semaphore.withPermit(effectBlocking(f(consumer)))
       }
     }
 
-  private def makeConsumer(config: ConsumerConfig): ZManaged[Blocking, Throwable, KafkaConsumer[Key, Value]] = {
+  private def makeConsumer(config: ConsumerConfig): ZManaged[Blocking, Throwable, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
     val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     ZManaged.make(acquire)(consumer => effectBlocking(consumer.close()).ignore)
   }

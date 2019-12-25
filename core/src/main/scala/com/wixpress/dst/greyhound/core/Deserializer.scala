@@ -6,21 +6,13 @@ import zio.{Chunk, Task}
 trait Deserializer[+A] {
   def deserialize(topic: TopicName, headers: Headers, data: Chunk[Byte]): Task[A]
 
-  // TODO does this make sense?
-  def flatMap[B](f: A => Deserializer[B]): Deserializer[B] =
-    (topic: TopicName, headers: Headers, data: Chunk[Byte]) =>
-      deserialize(topic, headers, data).flatMap { a =>
-        f(a).deserialize(topic, headers, data)
-      }
-
   def map[B](f: A => B): Deserializer[B] =
     (topic: TopicName, headers: Headers, data: Chunk[Byte]) =>
       deserialize(topic, headers, data).map(f)
 
-  def zip[B](other: Deserializer[B]): Deserializer[(A, B)] =
+  def mapM[B](f: A => Task[B]): Deserializer[B] =
     (topic: TopicName, headers: Headers, data: Chunk[Byte]) =>
-      deserialize(topic, headers, data) zip
-        other.deserialize(topic, headers, data)
+      deserialize(topic, headers, data).flatMap(f)
 
   def orElse[A1 >: A](other: => Deserializer[A1]): Deserializer[A1] =
     (topic: TopicName, headers: Headers, data: Chunk[Byte]) =>
