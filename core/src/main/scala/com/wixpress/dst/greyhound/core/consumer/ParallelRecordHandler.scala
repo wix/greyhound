@@ -1,15 +1,14 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer.{Key, Value}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics._
 import com.wixpress.dst.greyhound.core.{Offset, Record, TopicName}
 import org.apache.kafka.common.TopicPartition
-import zio.{Queue, Ref, ZManaged}
+import zio.{Chunk, Queue, Ref, ZManaged}
 
 // TODO rename?
 object ParallelRecordHandler {
-  type Handler = RecordHandler[GreyhoundMetrics, Nothing, Key, Value]
+  type Handler = RecordHandler[GreyhoundMetrics, Nothing, Chunk[Byte], Chunk[Byte]]
   type OffsetsMap = Ref[Map[TopicPartition, Offset]]
 
   def make(specs: ConsumerSpec*): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = make {
@@ -23,7 +22,7 @@ object ParallelRecordHandler {
   def make(specs: Map[TopicName, List[ConsumerSpec]]): ZManaged[GreyhoundMetrics, Nothing, (OffsetsMap, Handler)] = for {
     offsets <- Ref.make(Map.empty[TopicPartition, Offset]).toManaged_
     handlers <- createHandlers(specs, updateOffsets(offsets))
-    handler = RecordHandler { record: Record[Key, Value] =>
+    handler = RecordHandler { record: Record[Chunk[Byte], Chunk[Byte]] =>
       handlers(record.topic).handle(record)
     }
   } yield (offsets, handler)
@@ -56,7 +55,7 @@ object ParallelizeByPartition {
 
   private val capacity = 128 // TODO should this be configurable?
 
-  def make(spec: ConsumerSpec): ZManaged[GreyhoundMetrics, Nothing, Handler[Key, Value]] =
+  def make(spec: ConsumerSpec): ZManaged[GreyhoundMetrics, Nothing, Handler[Chunk[Byte], Chunk[Byte]]] =
     make(spec.handler, spec.parallelism)
 
   def make[R, K, V](handler: RecordHandler[R, Nothing, K, V], parallelism: Int): ZManaged[R with GreyhoundMetrics, Nothing, Handler[K, V]] =
