@@ -6,7 +6,7 @@ import zio.duration.Duration
 
 import scala.collection.JavaConverters._
 
-case class TopicConfig(name: TopicName,
+case class TopicConfig(name: Topic,
                        partitions: Int,
                        replicationFactor: Int,
                        cleanupPolicy: CleanupPolicy) {

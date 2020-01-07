@@ -1,13 +1,12 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
-import com.wixpress.dst.greyhound.core.consumer.Consumers.{Handler, OffsetsMap}
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.BaseTest
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers.beRecordWithOffset
-import com.wixpress.dst.greyhound.core.{Offset, Record, TopicName}
+import com.wixpress.dst.greyhound.core.{Offset, Record, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords}
 import org.apache.kafka.common.TopicPartition
 import zio._
@@ -25,10 +24,10 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
 
   "subscribe to topics on startup" in {
     for {
-      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
-      promise <- Promise.make[Nothing, Set[TopicName]]
+      offsets <- Offsets.make
+      promise <- Promise.make[Nothing, Set[Topic]]
       consumer = new EmptyConsumer {
-        override def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit] =
+        override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
           promise.succeed(topics).unit
       }
       subscribed <- EventLoop.make[Env](
@@ -40,7 +39,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
 
   "handle polled records" in {
     for {
-      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
+      offsets <- Offsets.make
       queue <- Queue.unbounded[Record[Chunk[Byte], Chunk[Byte]]]
       consumer = new EmptyConsumer {
         override def poll(timeout: Duration): RIO[Blocking, Records] =
@@ -60,7 +59,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
 
   "commit handled records" in {
     for {
-      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
+      offsets <- Offsets.make
       promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
       consumer = new EmptyConsumer {
         override def poll(timeout: Duration): RIO[Blocking, Records] =
@@ -80,7 +79,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
 
   "don't commit empty offsets map" in {
     for {
-      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
+      offsets <- Offsets.make
       promise <- Promise.make[Unit, Unit]
       currentPoll <- Ref.make(0)
       consumer = new EmptyConsumer {
@@ -99,35 +98,17 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
     } yield result must beRight
   }
 
-  "clear offsets map after commit" in {
-    for {
-      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
-      promise <- Promise.make[Nothing, Unit]
-      currentPoll <- Ref.make(0)
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
-          currentPoll.update(_ + 1).flatMap {
-            case 1 => recordsFrom(new ConsumerRecord(topic, 0, 0L, bytes, bytes))
-            // Release the promise on the second poll
-            case _ => promise.succeed(()) *> recordsFrom()
-          }
-      }
-      _ <- EventLoop.make[Env](consumer, offsets, updateOffsets(topic, offsets)).use_(promise.await)
-      currentOffsets <- offsets.get
-    } yield currentOffsets must beEmpty
-  }
-
   "pause partitions" in {
     val partitions = Set(new TopicPartition(topic, 0))
 
     for {
-      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
+      offsets <- Offsets.make
       promise <- Promise.make[Nothing, Set[TopicPartition]]
       consumer = new EmptyConsumer {
         override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
           promise.succeed(partitions).unit
       }
-      paused <- EventLoop.make[Env](consumer, offsets, updateOffsets(topic, offsets)).use { eventLoop =>
+      paused <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use { eventLoop =>
         eventLoop.pause(partitions) *> promise.await
       }
     } yield paused must equalTo(partitions)
@@ -137,13 +118,13 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
     val partitions = Set(new TopicPartition(topic, 0))
 
     for {
-      offsets <- Ref.make(Map.empty[TopicPartition, Offset])
+      offsets <- Offsets.make
       promise <- Promise.make[Nothing, Set[TopicPartition]]
       consumer = new EmptyConsumer {
         override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
           promise.succeed(partitions).unit
       }
-      resumed <- EventLoop.make[Env](consumer, offsets, updateOffsets(topic, offsets)).use { eventLoop =>
+      resumed <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use { eventLoop =>
         eventLoop.resume(partitions) *> promise.await
       }
     } yield resumed must equalTo(partitions)
@@ -156,18 +137,17 @@ object EventLoopTest {
 
   val bytes = Chunk.empty
 
-  def emptyHandler(topic: TopicName): RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] =
+  def emptyHandler(topic: Topic): RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] =
     RecordHandler(topic)(_ => ZIO.unit)
 
-  def updateOffsets(topic: TopicName, offsets: OffsetsMap): RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] =
+  def updateOffsets(topic: Topic, offsets: Offsets): RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] =
     RecordHandler(topic) { record =>
-      val topicPartition = new TopicPartition(record.topic, record.partition)
-      offsets.update(_ + (topicPartition -> record.offset))
+      offsets.update(new TopicPartition(record.topic, record.partition), record.offset)
     }
 }
 
 trait EmptyConsumer extends Consumer {
-  override def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit] =
+  override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
     ZIO.unit
 
   override def poll(timeout: Duration): RIO[Blocking, Records] =

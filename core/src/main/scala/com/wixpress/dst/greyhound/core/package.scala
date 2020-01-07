@@ -1,8 +1,8 @@
 package com.wixpress.dst.greyhound
 
 package object core {
-  type TopicName = String
-  type GroupName = String
+  type Topic = String
+  type Group = String
   type Partition = Int
   type Offset = Long
 }

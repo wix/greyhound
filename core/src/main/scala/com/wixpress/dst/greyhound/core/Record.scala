@@ -9,7 +9,7 @@ import zio.{Chunk, Task, ZIO}
 
 import scala.collection.JavaConverters._
 
-case class Record[+K, +V](topic: TopicName,
+case class Record[+K, +V](topic: Topic,
                           partition: Partition,
                           offset: Offset,
                           headers: Headers,

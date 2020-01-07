@@ -5,11 +5,12 @@ import com.wixpress.dst.greyhound.core.consumer.retry.RetryPolicy
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerError}
+import org.apache.kafka.common.TopicPartition
 import zio._
 import zio.clock.Clock
 
 trait RecordHandler[-R, +E, K, V] { self =>
-  def topics: Set[TopicName]
+  def topics: Set[Topic]
 
   def handle(record: Record[K, V]): ZIO[R, E, Any]
 
@@ -18,21 +19,21 @@ trait RecordHandler[-R, +E, K, V] { self =>
 
   def contramapM[R1 <: R, E1 >: E, K2, V2](f: Record[K2, V2] => ZIO[R1, E1, Record[K, V]]): RecordHandler[R1, E1, K2, V2] =
     new RecordHandler[R1, E1, K2, V2] {
-      override def topics: Set[TopicName] = self.topics
+      override def topics: Set[Topic] = self.topics
       override def handle(record: Record[K2, V2]): ZIO[R1, E1, Any] =
         f(record).flatMap(self.handle)
     }
 
   def mapError[E2](f: E => E2): RecordHandler[R, E2, K, V] =
     new RecordHandler[R, E2, K, V] {
-      override def topics: Set[TopicName] = self.topics
+      override def topics: Set[Topic] = self.topics
       override def handle(record: Record[K, V]): ZIO[R, E2, Any] =
         self.handle(record).mapError(f)
     }
 
   def withErrorHandler[R1 <: R, E2](f: E => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
     new RecordHandler[R1, E2, K, V] {
-      override def topics: Set[TopicName] = self.topics
+      override def topics: Set[Topic] = self.topics
       override def handle(record: Record[K, V]): ZIO[R1, E2, Any] =
         self.handle(record).catchAll(f)
     }
@@ -42,33 +43,45 @@ trait RecordHandler[-R, +E, K, V] { self =>
 
   def provide(r: R): RecordHandler[Any, E, K, V] =
     new RecordHandler[Any, E, K, V] {
-      override def topics: Set[TopicName] = self.topics
+      override def topics: Set[Topic] = self.topics
       override def handle(record: Record[K, V]): ZIO[Any, E, Any] =
         self.handle(record).provide(r)
     }
 
   def andThen[R1 <: R, E1 >: E](f: Record[K, V] => ZIO[R1, E1, Any]): RecordHandler[R1, E1, K, V] =
     new RecordHandler[R1, E1, K, V] {
-      override def topics: Set[TopicName] = self.topics
+      override def topics: Set[Topic] = self.topics
       override def handle(record: Record[K, V]): ZIO[R1, E1, Any] =
         self.handle(record) *> f(record)
+    }
+
+  def withOffsetsMap: UIO[(Ref[Map[TopicPartition, Offset]], RecordHandler[R, E, K, V])] =
+    Ref.make(Map.empty[TopicPartition, Offset]).map { offsets =>
+      val handler = andThen { record =>
+        val topicPartition = new TopicPartition(record.topic, record.partition)
+        offsets.update { map =>
+          val offset = map.get(topicPartition).foldLeft(record.offset)(_ max _)
+          map + (topicPartition -> offset)
+        }
+      }
+      (offsets, handler)
     }
 
   def combine[R1 <: R, E1 >: E](other: RecordHandler[R1, E1, K, V]): RecordHandler[R1, E1, K, V] =
     new RecordHandler[R1, E1, K, V] {
       type Handler = Record[K, V] => ZIO[R1, E1, Any]
 
-      private val handlerByTopic: Map[TopicName, Handler] =
-        List(self, other).foldLeft(Map.empty[TopicName, Handler]) { (acc, handler) =>
+      private val handlerByTopic: Map[Topic, Handler] =
+        List(self, other).foldLeft(Map.empty[Topic, Handler]) { (acc, handler) =>
           handler.topics.foldLeft(acc) { (acc1, topic) =>
             val newHandler = acc1.get(topic).fold[Handler](handler.handle) { oldHandler =>
-              record => oldHandler(record) &> handler.handle(record)
+              record => oldHandler(record) zipPar handler.handle(record)
             }
             acc1 + (topic -> newHandler)
           }
         }
 
-      override def topics: Set[TopicName] = self.topics union other.topics
+      override def topics: Set[Topic] = self.topics union other.topics
 
       override def handle(record: Record[K, V]): ZIO[R1, E1, Any] =
         handlerByTopic.get(record.topic) match {
@@ -95,7 +108,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
   def withRetries[R2](retryPolicy: RetryPolicy[R2, E], producer: Producer)
                      (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] =
     new RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] {
-      override def topics: Set[TopicName] = for {
+      override def topics: Set[Topic] = for {
         topic <- self.topics
         retryTopic <- retryPolicy.retryTopics(topic)
       } yield retryTopic
@@ -114,7 +127,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
   def parallel(n: Int, queueCapacity: Int = 128): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V]] =
     ZManaged.foreach(0 until n)(makeQueue(queueCapacity)).map { queues =>
       new RecordHandler[R with GreyhoundMetrics, E, K, V] {
-        override def topics: Set[TopicName] = self.topics
+        override def topics: Set[Topic] = self.topics
         override def handle(record: Record[K, V]): ZIO[R with GreyhoundMetrics, E, Any] =
           Metrics.report(SubmittingRecord(record)) *>
             queues(record.partition % queues.length).offer(record)
@@ -142,10 +155,10 @@ trait RecordHandler[-R, +E, K, V] { self =>
 case class SerializationError(cause: Throwable) extends RuntimeException(cause)
 
 object RecordHandler {
-  def apply[R, E, K, V](topics: TopicName*)(f: Record[K, V] => ZIO[R, E, Any]): RecordHandler[R, E, K, V] = {
+  def apply[R, E, K, V](topics: Topic*)(f: Record[K, V] => ZIO[R, E, Any]): RecordHandler[R, E, K, V] = {
     val topics1 = topics.toSet
     new RecordHandler[R, E, K, V] {
-      override def topics: Set[TopicName] = topics1
+      override def topics: Set[Topic] = topics1
       override def handle(record: Record[K, V]): ZIO[R, E, Any] = f(record)
     }
   }
