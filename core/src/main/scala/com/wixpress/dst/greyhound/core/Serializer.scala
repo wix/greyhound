@@ -6,7 +6,7 @@ import zio.{Chunk, Task}
 trait Serializer[-A] {
   def serialize(topic: String, value: A): Task[Chunk[Byte]]
 
-  def contraMap[B](f: B => A): Serializer[B] =
+  def contramap[B](f: B => A): Serializer[B] =
     (topic: String, value: B) => serialize(topic, f(value))
 }
 

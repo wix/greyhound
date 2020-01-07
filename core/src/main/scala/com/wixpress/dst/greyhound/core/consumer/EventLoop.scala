@@ -1,9 +1,9 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.ParallelRecordHandler.{Handler, OffsetsMap}
+import com.wixpress.dst.greyhound.core.consumer.Consumers.{Handler, OffsetsMap}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{CommittingOffsets, Metrics, Subscribing}
-import com.wixpress.dst.greyhound.core.{Record, TopicName}
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
+import com.wixpress.dst.greyhound.core.{Offset, Record, TopicName}
 import org.apache.kafka.common.TopicPartition
 import zio._
 import zio.blocking.Blocking
@@ -19,12 +19,11 @@ trait EventLoop {
 object EventLoop {
   private val pollTimeout = 100.millis
 
-  def make(consumer: Consumer,
-           offsets: OffsetsMap,
-           handler: Handler,
-           topics: Set[TopicName]): ZManaged[Blocking with GreyhoundMetrics, Throwable, EventLoop] =
+  def make[R](consumer: Consumer,
+              offsets: OffsetsMap,
+              handler: Handler[R]): RManaged[R with Blocking with GreyhoundMetrics, EventLoop] =
     for {
-      _ <- subscribe(consumer, topics).toManaged_
+      _ <- subscribe(consumer, handler.topics).toManaged_
       _ <- run(consumer, handler, offsets).forever.toManaged_.fork
     } yield new EventLoop {
       override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
@@ -37,10 +36,10 @@ object EventLoop {
   private def subscribe(consumer: Consumer, topics: Set[TopicName]) =
     Metrics.report(Subscribing(topics)) *> consumer.subscribe(topics)
 
-  private def run(consumer: Consumer, handler: Handler, offsets: OffsetsMap) =
+  private def run[R](consumer: Consumer, handler: Handler[R], offsets: OffsetsMap) =
     pollAndHandle(consumer, handler) *> commitOffsets(consumer, offsets)
 
-  private def pollAndHandle(consumer: Consumer, handler: Handler) =
+  private def pollAndHandle[R](consumer: Consumer, handler: Handler[R]) =
     consumer.poll(pollTimeout).flatMap { records =>
       ZIO.foreach_(records.asScala) { record =>
         handler.handle(Record(record))
@@ -55,3 +54,7 @@ object EventLoop {
       }
     }
 }
+
+sealed trait EventLoopMetric extends GreyhoundMetric
+case class Subscribing(topics: Set[TopicName]) extends EventLoopMetric
+case class CommittingOffsets(offsets: Map[TopicPartition, Offset]) extends EventLoopMetric

@@ -5,7 +5,7 @@ import java.util.Properties
 import com.wixpress.dst.greyhound.core.TopicConfig
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{RIO, ZIO, ZManaged}
+import zio.{RIO, RManaged, ZIO, ZManaged}
 
 import scala.collection.JavaConverters._
 
@@ -14,7 +14,7 @@ trait AdminClient {
 }
 
 object AdminClient {
-  def make(config: AdminClientConfig): ZManaged[Blocking, Throwable, AdminClient] = {
+  def make(config: AdminClientConfig): RManaged[Blocking, AdminClient] = {
     val acquire = effectBlocking(KafkaAdminClient.create(config.properties))
     ZManaged.make(acquire)(client => effectBlocking(client.close()).ignore).map { client =>
       new AdminClient {
