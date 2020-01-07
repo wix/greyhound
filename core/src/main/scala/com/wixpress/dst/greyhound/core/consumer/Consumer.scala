@@ -4,18 +4,18 @@ import java.util
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
-import com.wixpress.dst.greyhound.core.{Offset, TopicName}
+import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.Deserializer
+import zio._
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
-import zio._
 
 import scala.collection.JavaConverters._
 
 trait Consumer {
-  def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit]
+  def subscribe(topics: Set[Topic]): RIO[Blocking, Unit]
 
   def poll(timeout: Duration): RIO[Blocking, Records]
 
@@ -31,15 +31,15 @@ object Consumer {
   type Records = ConsumerRecords[Chunk[Byte], Chunk[Byte]]
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
-    override def configure(configs: util.Map[TopicName, _], isKey: Boolean): Unit = ()
-    override def deserialize(topic: TopicName, data: Array[Byte]): Chunk[Byte] = Chunk.fromArray(data)
+    override def configure(configs: util.Map[Topic, _], isKey: Boolean): Unit = ()
+    override def deserialize(topic: Topic, data: Array[Byte]): Chunk[Byte] = Chunk.fromArray(data)
     override def close(): Unit = ()
   }
 
   def make(config: ConsumerConfig): RManaged[Blocking, Consumer] =
     (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>
       new Consumer {
-        override def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit] =
+        override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
           withConsumer(_.subscribe(topics.asJava))
 
         override def poll(timeout: Duration): RIO[Blocking, Records] =
