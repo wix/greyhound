@@ -69,7 +69,7 @@ object Producer {
 }
 
 // TODO rename consumer's `Record`?
-case class ProducerRecord[+K, +V](topic: TopicName,
+case class ProducerRecord[+K, +V](topic: Topic,
                                   value: V,
                                   key: Option[K] = None,
                                   partition: Option[Partition] = None,

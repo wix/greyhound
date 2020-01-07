@@ -13,13 +13,13 @@ import zio.clock.Clock
 import zio.duration._
 import zio.{Chunk, URIO, ZIO, clock}
 
-case class FakeRetryPolicy(topic: TopicName)
+case class FakeRetryPolicy(topic: Topic)
   extends RetryPolicy[Clock, HandlerError] {
 
-  override def retryTopics(originalTopic: TopicName): Set[TopicName] =
+  override def retryTopics(originalTopic: Topic): Set[Topic] =
     Set(originalTopic, s"$originalTopic-retry")
 
-  override def retryAttempt(topic: TopicName, headers: Headers): URIO[Clock, Option[RetryAttempt]] =
+  override def retryAttempt(topic: Topic, headers: Headers): URIO[Clock, Option[RetryAttempt]] =
     (for {
       attempt <- headers.get(Header.Attempt, intSerde)
       submittedAt <- headers.get(Header.SubmittedAt, instantSerde)
