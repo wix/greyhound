@@ -7,7 +7,7 @@ import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
 import zio.console.{Console, putStrLn}
-import zio.{RIO, ZManaged}
+import zio.{RIO, RManaged, ZManaged}
 
 import scala.reflect.io.Directory
 
@@ -19,7 +19,7 @@ trait ManagedKafka {
 
 object ManagedKafka {
 
-  def make(config: ManagedKafkaConfig): ZManaged[Blocking with Console, Throwable, ManagedKafka] = for {
+  def make(config: ManagedKafkaConfig): RManaged[Blocking with Console, ManagedKafka] = for {
     _ <- embeddedZooKeeper(config.zooKeeperPort)
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
     kafka <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir))

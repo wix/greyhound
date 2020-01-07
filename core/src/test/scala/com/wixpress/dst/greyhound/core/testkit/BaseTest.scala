@@ -3,13 +3,13 @@ package com.wixpress.dst.greyhound.core.testkit
 import org.specs2.execute.{AsResult, Error, Result}
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.core.{Fragment, Fragments}
-import zio.{DefaultRuntime, FiberFailure, Managed, ZIO}
+import zio.{DefaultRuntime, FiberFailure, UManaged, ZIO}
 
 trait BaseTest[R]
   extends SpecificationWithJUnit
     with DefaultRuntime {
 
-  def env: Managed[Nothing, R]
+  def env: UManaged[R]
 
   def run[R1 >: R, E, A](zio: ZIO[R1, E, A]): A =
     unsafeRun(env.use(zio.provide))

@@ -6,9 +6,7 @@ import zio.duration.Duration
 
 import scala.collection.JavaConverters._
 
-case class Topic[+K, +V](name: String) extends AnyVal
-
-case class TopicConfig(name: String,
+case class TopicConfig(name: TopicName,
                        partitions: Int,
                        replicationFactor: Int,
                        cleanupPolicy: CleanupPolicy) {

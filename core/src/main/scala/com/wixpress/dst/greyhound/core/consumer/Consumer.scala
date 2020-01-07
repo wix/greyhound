@@ -10,7 +10,7 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.Deserializer
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
-import zio.{Chunk, RIO, Semaphore, ZManaged}
+import zio._
 
 import scala.collection.JavaConverters._
 
@@ -36,7 +36,7 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(config: ConsumerConfig): ZManaged[Blocking, Throwable, Consumer] =
+  def make(config: ConsumerConfig): RManaged[Blocking, Consumer] =
     (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>
       new Consumer {
         override def subscribe(topics: Set[TopicName]): RIO[Blocking, Unit] =
@@ -59,7 +59,7 @@ object Consumer {
       }
     }
 
-  private def makeConsumer(config: ConsumerConfig): ZManaged[Blocking, Throwable, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
+  private def makeConsumer(config: ConsumerConfig): RManaged[Blocking, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
     val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     ZManaged.make(acquire)(consumer => effectBlocking(consumer.close()).ignore)
   }
@@ -68,16 +68,26 @@ object Consumer {
 
 case class ConsumerConfig(bootstrapServers: Set[String],
                           groupId: String,
-                          clientId: String) {
+                          clientId: String,
+                          offsetReset: OffsetReset = OffsetReset.Earliest) {
 
   def properties: Properties = {
     val props = new Properties
     props.setProperty(KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers.mkString(","))
     props.setProperty(KafkaConsumerConfig.GROUP_ID_CONFIG, groupId)
     props.setProperty(KafkaConsumerConfig.CLIENT_ID_CONFIG, clientId)
-    props.setProperty(KafkaConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
+    props.setProperty(KafkaConsumerConfig.AUTO_OFFSET_RESET_CONFIG, offsetReset match {
+      case OffsetReset.Earliest => "earliest"
+      case OffsetReset.Latest => "latest"
+    })
     props.setProperty(KafkaConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
     props
   }
 
+}
+
+sealed trait OffsetReset
+object OffsetReset {
+  case object Earliest extends OffsetReset
+  case object Latest extends OffsetReset
 }

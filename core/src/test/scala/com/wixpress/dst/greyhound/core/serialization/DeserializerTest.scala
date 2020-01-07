@@ -2,12 +2,12 @@ package com.wixpress.dst.greyhound.core.serialization
 
 import com.wixpress.dst.greyhound.core.testkit.BaseTest
 import com.wixpress.dst.greyhound.core.{Deserializer, Headers, Serializer}
-import org.apache.kafka.common.serialization.{IntegerDeserializer, IntegerSerializer, StringDeserializer, StringSerializer}
-import zio.{Managed, ZIO}
+import org.apache.kafka.common.serialization.{IntegerDeserializer, IntegerSerializer}
+import zio.{Managed, UManaged}
 
 class DeserializerTest extends BaseTest[Any] {
 
-  override def env: Managed[Nothing, Any] = Managed.unit
+  override def env: UManaged[Any] = Managed.unit
 
   val topic = "topic"
   val headers = Headers.Empty
