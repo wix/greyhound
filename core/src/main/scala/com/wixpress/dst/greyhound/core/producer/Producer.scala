@@ -7,8 +7,8 @@ import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerConfi
 import org.apache.kafka.common.header.Header
 import org.apache.kafka.common.header.internals.RecordHeader
 import org.apache.kafka.common.serialization.ByteArraySerializer
+import zio._
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{Chunk, IO, ZIO, ZManaged}
 
 import scala.collection.JavaConverters._
 
@@ -19,10 +19,10 @@ trait Producer {
                     keySerializer: Serializer[K],
                     valueSerializer: Serializer[V]): IO[ProducerError, RecordMetadata] = {
     val serializedRecord = for {
-      keyBytes <- ZIO.foreach(record.key)(keySerializer.serialize(record.topic.name, _))
-      valueBytes <- valueSerializer.serialize(record.topic.name, record.value)
+      keyBytes <- ZIO.foreach(record.key)(keySerializer.serialize(record.topic, _))
+      valueBytes <- valueSerializer.serialize(record.topic, record.value)
     } yield ProducerRecord(
-      topic = Topic(record.topic.name),
+      topic = record.topic,
       value = valueBytes,
       key = keyBytes.headOption,
       partition = record.partition,
@@ -37,7 +37,7 @@ trait Producer {
 object Producer {
   private val serializer = new ByteArraySerializer
 
-  def make(config: ProducerConfig): ZManaged[Blocking, Throwable, Producer] = {
+  def make(config: ProducerConfig): RManaged[Blocking, Producer] = {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
       new Producer {
@@ -52,7 +52,7 @@ object Producer {
 
         private def recordFrom(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) =
           new KafkaProducerRecord(
-            record.topic.name,
+            record.topic,
             record.partition.fold[Integer](null)(Integer.valueOf),
             record.key.fold[Array[Byte]](null)(_.toArray),
             record.value.toArray,
@@ -69,7 +69,7 @@ object Producer {
 }
 
 // TODO rename consumer's `Record`?
-case class ProducerRecord[+K, +V](topic: Topic[K, V],
+case class ProducerRecord[+K, +V](topic: TopicName,
                                   value: V,
                                   key: Option[K] = None,
                                   partition: Option[Partition] = None,

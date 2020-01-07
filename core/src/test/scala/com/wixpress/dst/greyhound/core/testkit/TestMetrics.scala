@@ -13,7 +13,7 @@ object TestMetrics {
     def reported: UIO[List[GreyhoundMetric]] = queue.takeAll
   }
 
-  def make: Managed[Nothing, TestMetrics] =
+  def make: UManaged[TestMetrics] =
     Queue.unbounded[GreyhoundMetric].toManaged_.map { q =>
       new TestMetrics {
         override val metrics: Service = new Service {

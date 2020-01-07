@@ -28,7 +28,4 @@ object Deserializer {
   def apply[A](f: (TopicName, Headers, Chunk[Byte]) => Task[A]): Deserializer[A] =
     (topic: TopicName, headers: Headers, data: Chunk[Byte]) =>
       f(topic, headers, data)
-
-  def apply[A](a: Task[A]): Deserializer[A] =
-    (_: TopicName, _: Headers, _: Chunk[Byte]) => a
 }

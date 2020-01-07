@@ -3,7 +3,10 @@ package com.wixpress.dst.greyhound.core
 import org.apache.kafka.common.serialization.{Serde => KafkaSerde}
 import zio.{Chunk, Task}
 
-trait Serde[A] extends Serializer[A] with Deserializer[A]
+trait Serde[A] extends Serializer[A] with Deserializer[A] {
+  def inmap[B](f: A => B)(g: B => A): Serde[B] =
+    Serde(contramap(g), map(f))
+}
 
 object Serde {
   def apply[A](serde: KafkaSerde[A]): Serde[A] =
