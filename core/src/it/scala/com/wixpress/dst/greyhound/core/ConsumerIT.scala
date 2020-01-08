@@ -34,14 +34,18 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
         _ <- kafka.createTopic(TopicConfig(topic, partitions, 1, delete))
 
         queue <- Queue.unbounded[ConsumerRecord[String, String]]
-        handler = RecordHandler(topic)(queue.offer)
-          .deserialize(StringSerde, StringSerde)
-          .ignore
+        offsets <- Offsets.make
 
-        _ <- handler.parallel(8).flatMap { parallelHandler =>
-          Consumers.make[Env](kafka.bootstrapServers, Map("group-1" -> parallelHandler))
-        }.useForever.fork // TODO when is consumer ready?
+        eventLoop = for {
+          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, "group-1", clientId))
+          handler <- RecordHandler(topic)(queue.offer)
+            .deserialize(StringSerde, StringSerde)
+            .andThen(offsets.update)
+            .parallel(partitions)
+          eventLoop <- EventLoop.make[Env](consumer, offsets, handler.ignore)
+        } yield eventLoop
 
+        _ <- eventLoop.useForever.fork // TODO when is consumer ready?
         _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)
         message <- queue.take
       } yield "produce and consume a single message" in {
@@ -56,6 +60,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
         _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-1", partitions, 1, delete))
         _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-2", partitions, 1, delete))
 
+        offsets <- Offsets.make
         invocations <- Ref.make(0)
         done <- Promise.make[Nothing, Unit]
         retryPolicy = RetryPolicy.default(topic, group, 1.second, 2.seconds, 3.seconds)
@@ -65,11 +70,18 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
             else done.succeed(()) // Succeed on final retry
           }
         }
-        retryHandler = handler
-          .deserialize(StringSerde, StringSerde)
-          .withRetries(retryPolicy, producer)
-          .ignore
-        _ <- Consumers.make[Env](kafka.bootstrapServers, Map(group -> retryHandler)).useForever.fork
+
+        eventLoop = for {
+          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          retryHandler = handler
+            .deserialize(StringSerde, StringSerde)
+            .withRetries(retryPolicy, producer)
+            .andThen(offsets.update)
+            .ignore
+          eventLoop <- EventLoop.make[Env](consumer, offsets, retryHandler)
+        } yield eventLoop
+
+        _ <- eventLoop.useForever.fork
         _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)
         success <- done.await.timeout(8.seconds)
       } yield "configure a handler with retry policy" in {
@@ -88,7 +100,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
         offsets <- Offsets.make
 
         eventLoop = for {
-          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, "greyhound-consumers"))
+          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
           handler1 <- RecordHandler(topic1)(records1.offer).andThen(offsets.update).parallel(partitions)
           handler2 <- RecordHandler(topic2)(records2.offer).andThen(offsets.update).parallel(partitions)
           handler = handler1.deserialize(StringSerde, StringSerde) combine handler2.deserialize(IntSerde, IntSerde)
@@ -113,6 +125,7 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
 }
 
 object ConsumerIT {
+  val clientId = "greyhound-consumers"
   val partitions = 8
   val delete = CleanupPolicy.Delete(1.hour)
 }

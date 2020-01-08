@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Consumers.Handler
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
@@ -17,6 +16,8 @@ trait EventLoop {
 }
 
 object EventLoop {
+  type Handler[R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
+
   private val pollTimeout = 100.millis
 
   def make[R](consumer: Consumer,
