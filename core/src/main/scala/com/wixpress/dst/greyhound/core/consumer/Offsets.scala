@@ -6,7 +6,11 @@ import zio.{Ref, UIO}
 
 trait Offsets {
   def getAndClear: UIO[Map[TopicPartition, Offset]]
+
   def update(topicPartition: TopicPartition, offset: Offset): UIO[Unit]
+
+  def update(record: ConsumerRecord[_, _]): UIO[Unit] =
+    update(new TopicPartition(record.topic, record.partition), record.offset)
 }
 
 object Offsets {

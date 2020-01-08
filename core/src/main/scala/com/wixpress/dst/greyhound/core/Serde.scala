@@ -1,6 +1,11 @@
 package com.wixpress.dst.greyhound.core
 
+import java.lang.Long
+import java.time.Instant
+
+import org.apache.kafka.common.serialization.Serdes.{IntegerSerde, LongSerde, StringSerde}
 import org.apache.kafka.common.serialization.{Serde => KafkaSerde}
+import zio.duration.Duration
 import zio.{Chunk, Task}
 
 trait Serde[A] extends Serializer[A] with Deserializer[A] {
@@ -19,4 +24,12 @@ object Serde {
     override def serialize(topic: String, value: A): Task[Chunk[Byte]] =
       serializer.serialize(topic, value)
   }
+}
+
+object Serdes {
+  val StringSerde = Serde(new StringSerde)
+  val IntSerde = Serde(new IntegerSerde).inmap(_.toInt)(Integer.valueOf)
+  val LongSerde = Serde(new LongSerde).inmap(_.toLong)(Long.valueOf)
+  val InstantSerde = LongSerde.inmap(Instant.ofEpochMilli)(_.toEpochMilli)
+  val DurationSerde = LongSerde.inmap(Duration.fromNanos)(_.toNanos)
 }

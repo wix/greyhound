@@ -1,14 +1,13 @@
 package com.wixpress.dst.greyhound.core.testkit
 
-import java.lang.Long
 import java.time.Instant
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
+import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.consumer.retry.{RetryAttempt, RetryPolicy}
+import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, RetryAttempt, RetryPolicy}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
-import org.apache.kafka.common.serialization.Serdes.{IntegerSerde, LongSerde}
 import zio.clock.Clock
 import zio.duration._
 import zio.{Chunk, URIO, ZIO, clock}
@@ -21,13 +20,13 @@ case class FakeRetryPolicy(topic: Topic)
 
   override def retryAttempt(topic: Topic, headers: Headers): URIO[Clock, Option[RetryAttempt]] =
     (for {
-      attempt <- headers.get(Header.Attempt, intSerde)
-      submittedAt <- headers.get(Header.SubmittedAt, instantSerde)
-      backoff <- headers.get(Header.Backoff, durationSerde)
+      attempt <- headers.get(Header.Attempt, IntSerde)
+      submittedAt <- headers.get(Header.SubmittedAt, InstantSerde)
+      backoff <- headers.get(Header.Backoff, DurationSerde)
     } yield retryAttempt(attempt, submittedAt, backoff)).orElse(ZIO.none)
 
   override def retryRecord(retryAttempt: Option[RetryAttempt],
-                           record: Record[Chunk[Byte], Chunk[Byte]],
+                           record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
                            error: HandlerError): URIO[Clock, Option[ProducerRecord[Chunk[Byte], Chunk[Byte]]]] =
     error match {
       case RetriableError =>
@@ -46,13 +45,13 @@ case class FakeRetryPolicy(topic: Topic)
       b <- backoff
     } yield RetryAttempt(a, s, b)
 
-  private def recordFrom(retryAttempt: Option[RetryAttempt], record: Record[Chunk[Byte], Chunk[Byte]]) =
+  private def recordFrom(retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) =
     for {
       now <- currentTime
       nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
-      retryAttempt <- intSerde.serialize(topic, nextRetryAttempt)
-      submittedAt <- instantSerde.serialize(topic, now)
-      backoff <- durationSerde.serialize(topic, 1.second)
+      retryAttempt <- IntSerde.serialize(topic, nextRetryAttempt)
+      submittedAt <- InstantSerde.serialize(topic, now)
+      backoff <- DurationSerde.serialize(topic, 1.second)
     } yield ProducerRecord(
       topic = s"$topic-retry",
       value = record.value,
@@ -72,10 +71,6 @@ object FakeRetryPolicy {
   }
 
   val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
-  val intSerde = Serde(new IntegerSerde).inmap(_.toInt)(Integer.valueOf)
-  val longSerde = Serde(new LongSerde).inmap(_.toLong)(Long.valueOf)
-  val instantSerde = longSerde.inmap(Instant.ofEpochMilli)(_.toEpochMilli)
-  val durationSerde = longSerde.inmap(Duration.fromNanos)(_.toNanos)
 }
 
 sealed trait HandlerError

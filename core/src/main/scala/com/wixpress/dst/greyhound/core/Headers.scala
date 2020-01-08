@@ -3,46 +3,10 @@ package com.wixpress.dst.greyhound.core
 import java.nio.charset.StandardCharsets.UTF_8
 
 import com.wixpress.dst.greyhound.core.Headers.Header
-import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.header.{Header => KafkaHeader, Headers => KafkaHeaders}
 import zio.{Chunk, Task, ZIO}
 
 import scala.collection.JavaConverters._
-
-case class Record[+K, +V](topic: Topic,
-                          partition: Partition,
-                          offset: Offset,
-                          headers: Headers,
-                          key: Option[K],
-                          value: V) {
-
-  def id: String = s"$topic:$partition:$offset"
-
-  def bimap[K2, V2](fk: K => K2, fv: V => V2): Record[K2, V2] =
-    Record(
-      topic = topic,
-      partition = partition,
-      offset = offset,
-      headers = headers,
-      key = key.map(fk),
-      value = fv(value))
-
-  def mapKey[K2](f: K => K2): Record[K2, V] = bimap(f, identity)
-
-  def mapValue[V2](f: V => V2): Record[K, V2] = bimap(identity, f)
-
-}
-
-object Record {
-  def apply[K, V](record: ConsumerRecord[K, V]): Record[K, V] =
-    Record(
-      topic = record.topic,
-      partition = record.partition,
-      offset = record.offset,
-      headers = Headers(record.headers),
-      key = Option(record.key),
-      value = record.value)
-}
 
 case class Headers(headers: Map[Header, Chunk[Byte]] = Map.empty) {
   def +(header: KafkaHeader): Headers =

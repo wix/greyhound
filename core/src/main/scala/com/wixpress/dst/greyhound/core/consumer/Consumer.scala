@@ -5,7 +5,7 @@ import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig}
+import org.apache.kafka.clients.consumer.{ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.Deserializer
 import zio._
@@ -27,7 +27,7 @@ trait Consumer {
 }
 
 object Consumer {
-  type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
+  type Record = KafkaConsumerRecord[Chunk[Byte], Chunk[Byte]]
   type Records = ConsumerRecords[Chunk[Byte], Chunk[Byte]]
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
