@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.Instant
 
+import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
@@ -41,12 +42,12 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         retryHandler = failingHandler.withRetries(retryPolicy, producer)
         key <- bytes
         value <- bytes
-        _ <- retryHandler.handle(Record(topic, partition, offset, Headers.Empty, Some(key), value))
+        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value))
         record <- producer.records.take
         now <- currentTime
-        retryAttempt <- intSerde.serialize(retryTopic, 0)
-        submittedAt <- instantSerde.serialize(retryTopic, now)
-        backoff <- durationSerde.serialize(retryTopic, 1.second)
+        retryAttempt <- IntSerde.serialize(retryTopic, 0)
+        submittedAt <- InstantSerde.serialize(retryTopic, now)
+        backoff <- DurationSerde.serialize(retryTopic, 1.second)
       } yield record must equalTo(
         ProducerRecord(
           topic = retryTopic,
@@ -65,7 +66,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         retryHandler = failingHandler.withRetries(retryPolicy, producer.failing)
         key <- bytes
         value <- bytes
-        result <- retryHandler.handle(Record(topic, partition, offset, Headers.Empty, Some(key), value)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value)).flip
       } yield result must beLeft
     }
 
@@ -80,14 +81,14 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         key <- bytes
         value <- bytes
         begin <- currentTime
-        retryAttempt <- intSerde.serialize(retryTopic, 0)
-        submittedAt <- instantSerde.serialize(retryTopic, begin)
-        backoff <- durationSerde.serialize(retryTopic, 1.second)
+        retryAttempt <- IntSerde.serialize(retryTopic, 0)
+        submittedAt <- InstantSerde.serialize(retryTopic, begin)
+        backoff <- DurationSerde.serialize(retryTopic, 1.second)
         headers = Headers(
           "retry-attempt" -> retryAttempt,
           "retry-submitted-at" -> submittedAt,
           "retry-backoff" -> backoff)
-        _ <- retryHandler.handle(Record(retryTopic, partition, offset, headers, Some(key), value)).fork
+        _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, Some(key), value)).fork
         _ <- TestClock.adjust(1.second)
         end <- executionTime.await
       } yield end must equalTo(begin.plusSeconds(1))
@@ -100,7 +101,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         retryHandler = failingHandler.withRetries(retryPolicy, producer)
         key <- bytes
         value <- bytes
-        result <- retryHandler.handle(Record(topic, partition, offset, Headers.Empty, Some(key), value)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value)).flip
       } yield result must beRight[HandlerError](NonRetriableError)
     }
   }
@@ -128,8 +129,8 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 
         combined = handler1 combine handler2
 
-        _ <- combined.handle(Record("topic1", partition, offset, Headers.Empty, None, "value1"))
-        _ <- combined.handle(Record("topic2", partition, offset, Headers.Empty, None, "value2"))
+        _ <- combined.handle(ConsumerRecord("topic1", partition, offset, Headers.Empty, None, "value1"))
+        _ <- combined.handle(ConsumerRecord("topic2", partition, offset, Headers.Empty, None, "value2"))
         value1 <- ref1.get
         value2 <- ref2.get
       } yield (value1 must beSome("value1")) and (value2 must beSome("value2"))
@@ -149,7 +150,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 
         combined = handler1 combine handler2
 
-        _ <- combined.handle(Record(topic, partition, offset, Headers.Empty, None, "value"))
+        _ <- combined.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value"))
         value1 <- ref1.get
         value2 <- ref2.get
       } yield (value1 must beSome("value")) and (value2 must beSome("value"))
@@ -160,7 +161,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         RecordHandler[Any, Throwable, String, String]("topic1")(_ => ZIO.unit) combine
           RecordHandler[Any, Throwable, String, String]("topic2")(_ => ZIO.unit)
 
-      val record = Record(topic, partition, offset, Headers.Empty, None, "value")
+      val record = ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value")
 
       handler.handle(record).either.map(_ must beRight)
     }
@@ -177,7 +178,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         }
         _ <- slowHandler.parallel(partitions).use { handler =>
           ZIO.foreach(0 until partitions) { partition =>
-            handler.handle(Record(topic, partition, 0L, Headers.Empty, None, s"message-$partition"))
+            handler.handle(ConsumerRecord(topic, partition, 0L, Headers.Empty, None, s"message-$partition"))
           }
         }.fork
         _ <- TestClock.adjust(1.second)
