@@ -1,12 +1,12 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.{Group, Record}
-import org.apache.kafka.common.TopicPartition
 import zio._
 import zio.blocking.Blocking
 
 // TODO rename ConsumersRunner?
+// TODO is this needed?
 object Consumers {
   private val clientId = "greyhound-consumers"
 
@@ -19,10 +19,7 @@ object Consumers {
           // TODO is this the right order for handling offsets?
           offsets <- Offsets.make.toManaged_
           consumer <- Consumer.make(ConsumerConfig(bootstrapServers, group, clientId))
-          eventLoop <- EventLoop.make[R](consumer, offsets, spec.andThen(updateOffsets(offsets)))
+          eventLoop <- EventLoop.make[R](consumer, offsets, spec.andThen(offsets.update))
         } yield group -> eventLoop
     }.map(_.toMap)
-
-  private def updateOffsets(offsets: Offsets)(record: Record[Chunk[Byte], Chunk[Byte]]): UIO[Unit] =
-    offsets.update(new TopicPartition(record.topic, record.partition), record.offset)
 }

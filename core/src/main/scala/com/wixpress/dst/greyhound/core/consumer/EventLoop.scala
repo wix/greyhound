@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core.consumer.Consumers.Handler
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
-import com.wixpress.dst.greyhound.core.{Offset, Record, Topic}
+import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.common.TopicPartition
 import zio._
 import zio.blocking.Blocking
@@ -42,7 +42,7 @@ object EventLoop {
   private def pollAndHandle[R](consumer: Consumer, handler: Handler[R]) =
     consumer.poll(pollTimeout).flatMap { records =>
       ZIO.foreach_(records.asScala) { record =>
-        handler.handle(Record(record))
+        handler.handle(ConsumerRecord(record))
       }
     }
 

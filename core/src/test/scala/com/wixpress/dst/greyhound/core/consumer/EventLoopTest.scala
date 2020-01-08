@@ -6,8 +6,8 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.BaseTest
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers.beRecordWithOffset
-import com.wixpress.dst.greyhound.core.{Offset, Record, Topic}
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords}
+import com.wixpress.dst.greyhound.core.{Offset, Topic}
+import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.TopicPartition
 import zio._
 import zio.blocking.Blocking
@@ -40,13 +40,13 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
   "handle polled records" in {
     for {
       offsets <- Offsets.make
-      queue <- Queue.unbounded[Record[Chunk[Byte], Chunk[Byte]]]
+      queue <- Queue.unbounded[ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       consumer = new EmptyConsumer {
         override def poll(timeout: Duration): RIO[Blocking, Records] =
           recordsFrom(
-            new ConsumerRecord(topic, 0, 0L, bytes, bytes),
-            new ConsumerRecord(topic, 0, 1L, bytes, bytes),
-            new ConsumerRecord(topic, 0, 2L, bytes, bytes))
+            new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
+            new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
+            new KafkaConsumerRecord(topic, 0, 2L, bytes, bytes))
       }
       handled <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(queue.offer)).use_ {
         ZIO.collectAll(List.fill(3)(queue.take))
@@ -64,14 +64,14 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       consumer = new EmptyConsumer {
         override def poll(timeout: Duration): RIO[Blocking, Records] =
           recordsFrom(
-            new ConsumerRecord(topic, 0, 0L, bytes, bytes),
-            new ConsumerRecord(topic, 0, 1L, bytes, bytes),
-            new ConsumerRecord(topic, 1, 2L, bytes, bytes))
+            new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
+            new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
+            new KafkaConsumerRecord(topic, 1, 2L, bytes, bytes))
 
         override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
           promise.succeed(offsets).unit
       }
-      committed <- EventLoop.make[Env](consumer, offsets, updateOffsets(topic, offsets)).use_(promise.await)
+      committed <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(offsets.update)).use_(promise.await)
     } yield committed must havePairs(
       new TopicPartition(topic, 0) -> 1L,
       new TopicPartition(topic, 1) -> 2L)
@@ -139,11 +139,6 @@ object EventLoopTest {
 
   def emptyHandler(topic: Topic): RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] =
     RecordHandler(topic)(_ => ZIO.unit)
-
-  def updateOffsets(topic: Topic, offsets: Offsets): RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] =
-    RecordHandler(topic) { record =>
-      offsets.update(new TopicPartition(record.topic, record.partition), record.offset)
-    }
 }
 
 trait EmptyConsumer extends Consumer {
