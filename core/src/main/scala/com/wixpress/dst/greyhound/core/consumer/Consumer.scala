@@ -6,8 +6,8 @@ import java.util.Properties
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRecord => KafkaConsumerRecord}
-import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.serialization.Deserializer
+import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
@@ -46,16 +46,32 @@ object Consumer {
           withConsumer(_.poll(timeout.toMillis))
 
         override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
-          withConsumer(_.commitSync(offsets.mapValues(new OffsetAndMetadata(_)).asJava))
+          withConsumer(_.commitSync(kafkaOffsets(offsets)))
 
         override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          withConsumer(_.pause(partitions.asJava))
+          withConsumer(_.pause(kafkaPartitions(partitions)))
 
         override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          withConsumer(_.resume(partitions.asJava))
+          withConsumer(_.resume(kafkaPartitions(partitions)))
 
         private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
           semaphore.withPermit(effectBlocking(f(consumer)))
+
+        private def kafkaOffsets(offsets: Map[TopicPartition, Offset]): util.Map[KafkaTopicPartition, OffsetAndMetadata] =
+          offsets.foldLeft(new util.HashMap[KafkaTopicPartition, OffsetAndMetadata](offsets.size)) {
+            case (acc, (TopicPartition(topic, partition), offset)) =>
+              val key = new KafkaTopicPartition(topic, partition)
+              val value = new OffsetAndMetadata(offset)
+              acc.put(key, value)
+              acc
+          }
+
+        private def kafkaPartitions(partitions: Set[TopicPartition]): util.Collection[KafkaTopicPartition] =
+          partitions.foldLeft(new util.ArrayList[KafkaTopicPartition](partitions.size)) {
+            case (acc, TopicPartition(topic, partition)) =>
+              acc.add(new KafkaTopicPartition(topic, partition))
+              acc
+          }
       }
     }
 

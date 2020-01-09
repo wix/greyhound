@@ -1,7 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.time
-import java.time.Instant
+import java.time.{Instant, Duration => JavaDuration}
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
 import com.wixpress.dst.greyhound.core.Serdes.StringSerde
@@ -82,8 +81,8 @@ case class RetryAttempt(attempt: RetryAttemptNumber,
                         backoff: Duration) {
 
   def sleep: URIO[Clock, Unit] = currentTime.flatMap { now =>
-    val expiresAt = submittedAt.plusMillis(backoff.toMillis)
-    val sleep = time.Duration.between(now, expiresAt)
+    val expiresAt = submittedAt.plus(backoff.asJava)
+    val sleep = JavaDuration.between(now, expiresAt)
     clock.sleep(Duration.fromJava(sleep))
   }
 

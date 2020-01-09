@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.core.testkit.BaseTest
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers.beRecordWithOffset
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => KafkaConsumerRecord}
-import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.Blocking
 import zio.duration.Duration
@@ -73,8 +73,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       }
       committed <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(offsets.update)).use_(promise.await)
     } yield committed must havePairs(
-      new TopicPartition(topic, 0) -> 1L,
-      new TopicPartition(topic, 1) -> 2L)
+      TopicPartition(topic, 0) -> 1L,
+      TopicPartition(topic, 1) -> 2L)
   }
 
   "don't commit empty offsets map" in {
@@ -99,7 +99,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
   }
 
   "pause partitions" in {
-    val partitions = Set(new TopicPartition(topic, 0))
+    val partitions = Set(TopicPartition(topic, 0))
 
     for {
       offsets <- Offsets.make
@@ -115,7 +115,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
   }
 
   "resume partitions" in {
-    val partitions = Set(new TopicPartition(topic, 0))
+    val partitions = Set(TopicPartition(topic, 0))
 
     for {
       offsets <- Offsets.make
@@ -158,7 +158,7 @@ trait EmptyConsumer extends Consumer {
     ZIO.unit
 
   def recordsFrom(records: Consumer.Record*): UIO[Consumer.Records] = ZIO.succeed {
-    val recordsMap = records.groupBy(record => new TopicPartition(record.topic, record.partition))
+    val recordsMap = records.groupBy(record => new KafkaTopicPartition(record.topic, record.partition))
     new ConsumerRecords(recordsMap.mapValues(_.asJava).asJava)
   }
 }
