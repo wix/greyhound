@@ -4,7 +4,6 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerError}
-import org.apache.kafka.common.TopicPartition
 import zio._
 import zio.clock.Clock
 
@@ -57,7 +56,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
   def withOffsetsMap: UIO[(Ref[Map[TopicPartition, Offset]], RecordHandler[R, E, K, V])] =
     Ref.make(Map.empty[TopicPartition, Offset]).map { offsets =>
       val handler = andThen { record =>
-        val topicPartition = new TopicPartition(record.topic, record.partition)
+        val topicPartition = TopicPartition(record)
         offsets.update { map =>
           val offset = map.get(topicPartition).foldLeft(record.offset)(_ max _)
           map + (topicPartition -> offset)
@@ -123,8 +122,8 @@ trait RecordHandler[-R, +E, K, V] { self =>
         }
     }
 
-  def parallel(n: Int, queueCapacity: Int = 128): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V]] =
-    ZManaged.foreach(0 until n)(makeQueue(queueCapacity)).map { queues =>
+  def parallel(n: Int, queueConfig: WatermarkedQueueConfig = WatermarkedQueueConfig.Default): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V]] =
+    ZManaged.foreach(0 until n)(makeQueue(queueConfig)).map { queues =>
       new RecordHandler[R with GreyhoundMetrics, E, K, V] {
         override def topics: Set[Topic] = self.topics
         override def handle(record: ConsumerRecord[K, V]): ZIO[R with GreyhoundMetrics, E, Any] =
@@ -133,10 +132,10 @@ trait RecordHandler[-R, +E, K, V] { self =>
       }
     }
 
-  private def makeQueue(queueCapacity: Int)(i: Int): URManaged[R with GreyhoundMetrics, Queue[ConsumerRecord[K, V]]] = {
+  private def makeQueue(config: WatermarkedQueueConfig)(i: Int): URManaged[R with GreyhoundMetrics, WatermarkedQueue[K, V]] = {
     val queue = for {
       _ <- Metrics.report(StartingRecordsProcessor(i))
-      queue <- Queue.bounded[ConsumerRecord[K, V]](queueCapacity)
+      queue <- WatermarkedQueue.make[K, V](config)
       _ <- queue.take.flatMap { record =>
         Metrics.report(HandlingRecord(record, i)) *>
           self.handle(record)
