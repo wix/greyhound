@@ -1,7 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.Offset
-import org.apache.kafka.common.TopicPartition
 import zio.{Ref, UIO}
 
 trait Offsets {
@@ -10,7 +9,7 @@ trait Offsets {
   def update(topicPartition: TopicPartition, offset: Offset): UIO[Unit]
 
   def update(record: ConsumerRecord[_, _]): UIO[Unit] =
-    update(new TopicPartition(record.topic, record.partition), record.offset)
+    update(TopicPartition(record), record.offset)
 }
 
 object Offsets {

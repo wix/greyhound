@@ -3,7 +3,6 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
-import org.apache.kafka.common.TopicPartition
 import zio._
 import zio.blocking.Blocking
 import zio.duration._

@@ -7,6 +7,7 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
+import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit._
 import zio._
 import zio.clock.Clock
@@ -64,9 +65,8 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
       for {
         producer <- FakeProducer.make
         retryHandler = failingHandler.withRetries(retryPolicy, producer.failing)
-        key <- bytes
         value <- bytes
-        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value)).flip
       } yield result must beLeft
     }
 
@@ -75,10 +75,9 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         producer <- FakeProducer.make
         executionTime <- Promise.make[Nothing, Instant]
         handler = RecordHandler[Clock, HandlerError, Chunk[Byte], Chunk[Byte]](topic) { _ =>
-          currentTime.flatMap(now => executionTime.succeed(now).unit)
+          currentTime.flatMap(executionTime.succeed)
         }
         retryHandler = handler.withRetries(retryPolicy, producer)
-        key <- bytes
         value <- bytes
         begin <- currentTime
         retryAttempt <- IntSerde.serialize(retryTopic, 0)
@@ -88,20 +87,19 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
           "retry-attempt" -> retryAttempt,
           "retry-submitted-at" -> submittedAt,
           "retry-backoff" -> backoff)
-        _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, Some(key), value)).fork
+        _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value)).fork
         _ <- TestClock.adjust(1.second)
         end <- executionTime.await
       } yield end must equalTo(begin.plusSeconds(1))
     }
 
-    "fail with original error retry policy decides not to continue" in {
+    "fail with original error when retry policy decides not to continue" in {
       for {
         producer <- FakeProducer.make
         failingHandler = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](topic)(_ => ZIO.fail(NonRetriableError))
         retryHandler = failingHandler.withRetries(retryPolicy, producer)
-        key <- bytes
         value <- bytes
-        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value)).flip
       } yield result must beRight[HandlerError](NonRetriableError)
     }
   }
@@ -117,43 +115,37 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 
     "invoke the correct handler by topic" in {
       for {
-        ref1 <- Ref.make(Option.empty[String])
-        handler1 = RecordHandler[Any, Nothing, Nothing, String]("topic1") { record =>
-          ref1.set(Some(record.value))
-        }
+        records1 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
+        handler1 = RecordHandler[Any, Nothing, Nothing, String]("topic1")(records1.offer)
 
-        ref2 <- Ref.make(Option.empty[String])
-        handler2 = RecordHandler[Any, Nothing, Nothing, String]("topic2") { record =>
-          ref2.set(Some(record.value))
-        }
+        records2 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
+        handler2 = RecordHandler[Any, Nothing, Nothing, String]("topic2")(records2.offer)
 
         combined = handler1 combine handler2
 
         _ <- combined.handle(ConsumerRecord("topic1", partition, offset, Headers.Empty, None, "value1"))
         _ <- combined.handle(ConsumerRecord("topic2", partition, offset, Headers.Empty, None, "value2"))
-        value1 <- ref1.get
-        value2 <- ref2.get
-      } yield (value1 must beSome("value1")) and (value2 must beSome("value2"))
+        record1 <- records1.take
+        record2 <- records2.take
+      } yield (record1 must beRecordWithValue("value1")) and
+        (record2 must beRecordWithValue("value2"))
     }
 
     "invoke both handlers for shared topics" in {
       for {
-        ref1 <- Ref.make(Option.empty[String])
-        handler1 = RecordHandler[Any, Nothing, Nothing, String](topic) { record =>
-          ref1.set(Some(record.value))
-        }
+        records1 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
+        handler1 = RecordHandler[Any, Nothing, Nothing, String](topic)(records1.offer)
 
-        ref2 <- Ref.make(Option.empty[String])
-        handler2 = RecordHandler[Any, Nothing, Nothing, String](topic) { record =>
-          ref2.set(Some(record.value))
-        }
+        records2 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
+        handler2 = RecordHandler[Any, Nothing, Nothing, String](topic)(records2.offer)
 
         combined = handler1 combine handler2
 
         _ <- combined.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value"))
-        value1 <- ref1.get
-        value2 <- ref2.get
-      } yield (value1 must beSome("value")) and (value2 must beSome("value"))
+        record1 <- records1.take
+        record2 <- records2.take
+      } yield (record1 must beRecordWithValue("value")) and
+        (record2 must beRecordWithValue("value"))
     }
 
     "not fail if no matching topic is found" in {
