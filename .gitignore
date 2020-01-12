@@ -1,2 +1,9 @@
 *.class
 *.log
+bazel-*
+.idea
+*.iml
+*.pyc
+.ijwb
+.DS_Store
+.project/
