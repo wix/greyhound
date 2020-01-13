@@ -4,8 +4,6 @@ import java.util.Properties
 
 import zio.duration.Duration
 
-import scala.collection.JavaConverters._
-
 case class TopicConfig(name: Topic,
                        partitions: Int,
                        replicationFactor: Int,
@@ -24,7 +22,7 @@ case class TopicConfig(name: Topic,
 
   def properties: Properties = {
     val props = new Properties
-    props.putAll(propertiesMap.asJava)
+    propertiesMap.foreach(p => props.put(p._1, p._2))
     props
   }
 
