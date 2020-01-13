@@ -1,80 +1,78 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import zio.{Queue, Ref, UIO}
+import com.wixpress.dst.greyhound.core.Offset
+import zio.{Queue, Ref, UIO, ZIO}
 
 trait WatermarkedQueue[K, V] {
-  def offer(record: ConsumerRecord[K, V]): UIO[Unit]
+  def offer(record: ConsumerRecord[K, V]): UIO[Boolean]
 
   def take: UIO[ConsumerRecord[K, V]]
 
-  def shutdown: UIO[Unit]
+  def shutdown: UIO[Unit] // TODO is this needed?
 
-  def pausePartitions: UIO[Set[TopicPartition]]
+  def pausePartitions: UIO[Map[TopicPartition, Offset]]
 
   def resumePartitions: UIO[Set[TopicPartition]]
 }
 
+/**
+  * This implementation is not fiber-safe. Since the queue is used per partition-bucket,
+  * and all operations performed on a single bucket are linearizable this is fine.
+  */
 object WatermarkedQueue {
-  // TODO should we drop offered records and seek to first offset over high watermark?
   def make[K, V](config: WatermarkedQueueConfig): UIO[WatermarkedQueue[K, V]] = for {
-    state <- Ref.make(State(config.lowWatermark, config.highWatermark))
-    queue <-  Queue.bounded[ConsumerRecord[K, V]](config.capacity)
+    state <- Ref.make(State.Empty)
+    queue <-  Queue.dropping[ConsumerRecord[K, V]](config.highWatermark)
   } yield new WatermarkedQueue[K, V] {
-    override def offer(record: ConsumerRecord[K, V]): UIO[Unit] =
-      state.update(_.offer(record)) *> queue.offer(record).unit
+    override def offer(record: ConsumerRecord[K, V]): UIO[Boolean] =
+      queue.offer(record).tap(added => state.update(_.offer(record, added)))
 
     override def take: UIO[ConsumerRecord[K, V]] =
-      state.update(_.take) *> queue.take
+      queue.take
 
     override def shutdown: UIO[Unit] =
       queue.shutdown
 
-    override def pausePartitions: UIO[Set[TopicPartition]] =
+    override def pausePartitions: UIO[Map[TopicPartition, Offset]] =
       state.modify(_.pausePartitions)
 
     override def resumePartitions: UIO[Set[TopicPartition]] =
-      state.modify(_.resumePartitions)
+      queue.size.flatMap { size =>
+        if (size <= config.lowWatermark) state.modify(_.resumePartitions)
+        else ZIO.succeed(Set.empty)
+      }
   }
 
-  case class State(lowWatermark: Int,
-                   highWatermark: Int,
-                   size: Int = 0,
-                   pausedPartitions: Set[TopicPartition] = Set.empty,
-                   partitionsToPause: Set[TopicPartition] = Set.empty) {
+  case class State(pausedPartitions: Set[TopicPartition],
+                   partitionsToPause: Map[TopicPartition, Offset]) {
 
-    def offer(record: ConsumerRecord[_, _]): State = {
-      val newSize = size + 1
+    def offer(record: ConsumerRecord[_, _], added: Boolean): State = {
+      val partition = TopicPartition(record)
       val newPartitionsToPause =
-        if (newSize >= highWatermark) partitionsToPause + TopicPartition(record)
-        else partitionsToPause
+        if (added || partitionsToPause.contains(partition)) partitionsToPause
+        else partitionsToPause + (partition -> record.offset)
 
-      copy(size = newSize, partitionsToPause = newPartitionsToPause)
+      copy(partitionsToPause = newPartitionsToPause)
     }
 
-    def take: State = {
-      val newSize = size - 1
-      val newPartitionsToPause =
-        if (newSize <= lowWatermark) Set.empty[TopicPartition]
-        else partitionsToPause
-
-      copy(size = newSize, partitionsToPause = newPartitionsToPause)
-    }
-
-    def pausePartitions: (Set[TopicPartition], State) = {
-      val newPausedPartitions = pausedPartitions union partitionsToPause
-      (partitionsToPause, copy(pausedPartitions = newPausedPartitions, partitionsToPause = Set.empty))
+    def pausePartitions: (Map[TopicPartition, Offset], State) = {
+      val newPausedPartitions = pausedPartitions union partitionsToPause.keySet
+      (partitionsToPause, copy(pausedPartitions = newPausedPartitions, partitionsToPause = Map.empty))
     }
 
     def resumePartitions: (Set[TopicPartition], State) =
-      if (size <= lowWatermark) (pausedPartitions, copy(pausedPartitions = Set.empty))
-      else (Set.empty, this)
+      (pausedPartitions, copy(pausedPartitions = Set.empty))
 
+  }
+
+  object State {
+    val Empty = State(Set.empty, Map.empty)
   }
 
 }
 
-case class WatermarkedQueueConfig(lowWatermark: Int, highWatermark: Int, capacity: Int)
+case class WatermarkedQueueConfig(lowWatermark: Int, highWatermark: Int)
 
 object WatermarkedQueueConfig {
-  val Default = WatermarkedQueueConfig(lowWatermark = 100, highWatermark = 200, capacity = 256)
+  val Default = WatermarkedQueueConfig(lowWatermark = 128, highWatermark = 256)
 }

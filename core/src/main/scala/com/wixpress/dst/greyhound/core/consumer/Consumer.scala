@@ -24,6 +24,8 @@ trait Consumer {
   def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit]
 
   def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit]
+
+  def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit]
 }
 
 object Consumer {
@@ -53,6 +55,9 @@ object Consumer {
 
         override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
           withConsumer(_.resume(kafkaPartitions(partitions)))
+
+        override def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit] =
+          withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset))
 
         private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
           semaphore.withPermit(effectBlocking(f(consumer)))

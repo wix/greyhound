@@ -122,13 +122,24 @@ trait RecordHandler[-R, +E, K, V] { self =>
         }
     }
 
-  def parallel(n: Int, queueConfig: WatermarkedQueueConfig = WatermarkedQueueConfig.Default): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V]] =
+  def parallel(n: Int, queueConfig: WatermarkedQueueConfig = WatermarkedQueueConfig.Default): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V] with PartitionsState] =
     ZManaged.foreach(0 until n)(makeQueue(queueConfig)).map { queues =>
-      new RecordHandler[R with GreyhoundMetrics, E, K, V] {
+      new RecordHandler[R with GreyhoundMetrics, E, K, V] with PartitionsState {
         override def topics: Set[Topic] = self.topics
+
         override def handle(record: ConsumerRecord[K, V]): ZIO[R with GreyhoundMetrics, E, Any] =
           Metrics.report(SubmittingRecord(record)) *>
             queues(record.partition % queues.length).offer(record)
+
+        override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
+          ZIO.foldLeft(queues)(Map.empty[TopicPartition, Offset]) { (acc, queue) =>
+            queue.pausePartitions.map(acc ++ _)
+          }
+
+        override def partitionsToResume: UIO[Set[TopicPartition]] =
+          ZIO.foldLeft(queues)(Set.empty[TopicPartition]) { (acc, queue) =>
+            queue.resumePartitions.map(acc union _)
+          }
       }
     }
 

@@ -157,6 +157,9 @@ trait EmptyConsumer extends Consumer {
   override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
     ZIO.unit
 
+  override def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit] =
+    ZIO.unit
+
   def recordsFrom(records: Consumer.Record*): UIO[Consumer.Records] = ZIO.succeed {
     val recordsMap = records.groupBy(record => new KafkaTopicPartition(record.topic, record.partition))
     new ConsumerRecords(recordsMap.mapValues(_.asJava).asJava)
