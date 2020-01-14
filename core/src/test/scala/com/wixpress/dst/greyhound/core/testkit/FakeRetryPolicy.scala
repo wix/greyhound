@@ -16,7 +16,7 @@ case class FakeRetryPolicy(topic: Topic)
   extends RetryPolicy[Clock, HandlerError] {
 
   override def retryTopics(originalTopic: Topic): Set[Topic] =
-    Set(originalTopic, s"$originalTopic-retry")
+    Set(s"$originalTopic-retry")
 
   override def retryAttempt(topic: Topic, headers: Headers): URIO[Clock, Option[RetryAttempt]] =
     (for {

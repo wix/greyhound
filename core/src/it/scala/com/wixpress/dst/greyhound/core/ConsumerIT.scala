@@ -150,14 +150,50 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
             producer.produce(record.copy(partition = Some(1)))
         }
 
-        handledAllFromPartition0 <- handledPartition0.await.timeout(10.seconds)
+        handledAllFromPartition0 <- handledPartition0.await.timeout(5.seconds)
         _ <- delayPartition1.succeed(())
-        handledAllFromPartition1 <- handledPartition1.await.timeout(10.seconds)
+        handledAllFromPartition1 <- handledPartition1.await.timeout(5.seconds)
       } yield "not lose any messages on a slow consumer (drives the message dispatcher to throttling)" in {
         (handledAllFromPartition0 must beSome) and (handledAllFromPartition1 must beSome)
       }
 
-      all(test1, test2, test3, test4)
+      val test5 = for {
+        topic <- randomTopic()
+        group <- randomGroup
+
+        numberOfMessages = 32
+        someMessages = numberOfMessages - 8
+        restOfMessages = numberOfMessages - someMessages
+        handledSomeMessages <- CountDownLatch.make(someMessages)
+        handledAllMessages <- CountDownLatch.make(numberOfMessages)
+        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          handledSomeMessages.countDown zipPar handledAllMessages.countDown
+        }
+
+        offsets <- Offsets.make
+        makeEventLoop = for {
+          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
+          eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
+        } yield eventLoop
+
+        test <- makeEventLoop.use { eventLoop =>
+          val record = ProducerRecord(topic, Chunk.empty)
+          for {
+            _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
+            _ <- handledSomeMessages.await
+            _ <- eventLoop.pause
+            _ <- ZIO.foreachPar(0 until restOfMessages)(_ => producer.produce(record))
+            a <- handledAllMessages.await.timeout(5.seconds)
+            _ <- eventLoop.resume
+            b <- handledAllMessages.await.timeout(5.seconds)
+          } yield "pause and resume event loop" in {
+            (a must beNone) and (b must beSome)
+          }
+        }
+      } yield test
+
+      all(test1, test2, test3, test4, test5)
   }
 
   run(tests)

@@ -5,14 +5,31 @@ import zio.{UIO, ZIO}
 
 trait PartitionsState { self =>
 
+  def pause: UIO[Unit]
+
+  def resume: UIO[Unit]
+
   def partitionsToPause: UIO[Map[TopicPartition, Offset]]
 
   def partitionsToResume: UIO[Set[TopicPartition]]
 
+  // TODO test
   def combine(other: PartitionsState): PartitionsState =
     new PartitionsState {
+      override def pause: UIO[Unit] =
+        self.pause *> other.pause
+
+      override def resume: UIO[Unit] =
+        self.resume *> other.resume
+
       override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
-        (self.partitionsToPause zipWith other.partitionsToPause)(_ ++ _)
+        (self.partitionsToPause zipWith other.partitionsToPause) { (a, b) =>
+          a.foldLeft(b) {
+            case (acc, (partition, offset)) =>
+              val updated = acc.get(partition).foldLeft(offset)(_ min _)
+              acc + (partition -> updated)
+          }
+        }
 
       override def partitionsToResume: UIO[Set[TopicPartition]] =
         (self.partitionsToResume zipWith other.partitionsToResume)(_ union _)
@@ -22,6 +39,10 @@ trait PartitionsState { self =>
 
 object PartitionsState {
   val Empty = new PartitionsState {
+    override def pause: UIO[Unit] = ZIO.unit
+
+    override def resume: UIO[Unit] = ZIO.unit
+
     override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
       ZIO.succeed(Map.empty)
 

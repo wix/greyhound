@@ -108,7 +108,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
     new RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] {
       override def topics: Set[Topic] = for {
         topic <- self.topics
-        retryTopic <- retryPolicy.retryTopics(topic)
+        retryTopic <- retryPolicy.retryTopics(topic) + topic
       } yield retryTopic
 
       override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock, Either[ProducerError, E], Any] =
@@ -122,6 +122,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
         }
     }
 
+  // TODO should this be a part of record handler?
   def parallel(n: Int, queueConfig: WatermarkedQueueConfig = WatermarkedQueueConfig.Default): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V] with PartitionsState] =
     ZManaged.foreach(0 until n)(makeQueue(queueConfig)).map { queues =>
       new RecordHandler[R with GreyhoundMetrics, E, K, V] with PartitionsState {
@@ -131,14 +132,26 @@ trait RecordHandler[-R, +E, K, V] { self =>
           Metrics.report(SubmittingRecord(record)) *>
             queues(record.partition % queues.length).offer(record)
 
+        override def pause: UIO[Unit] =
+          ZIO.foreachPar_(queues)(_.pause)
+
+        override def resume: UIO[Unit] =
+          ZIO.foreachPar_(queues)(_.resume)
+
         override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
           ZIO.foldLeft(queues)(Map.empty[TopicPartition, Offset]) { (acc, queue) =>
-            queue.pausePartitions.map(acc ++ _)
+            queue.partitionsToPause.map { partitions =>
+              partitions.foldLeft(acc) {
+                case (acc1, (partition, offset)) =>
+                  val updated = acc1.get(partition).foldLeft(offset)(_ min _)
+                  acc1 + (partition -> updated)
+              }
+            }
           }
 
         override def partitionsToResume: UIO[Set[TopicPartition]] =
           ZIO.foldLeft(queues)(Set.empty[TopicPartition]) { (acc, queue) =>
-            queue.resumePartitions.map(acc union _)
+            queue.partitionsToResume.map(acc union _)
           }
       }
     }

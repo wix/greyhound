@@ -27,7 +27,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       offsets <- Offsets.make
       promise <- Promise.make[Nothing, Set[Topic]]
       consumer = new EmptyConsumer {
-        override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
+        override def subscribe(topics: Set[Topic]): UIO[Unit] =
           promise.succeed(topics).unit
       }
       subscribed <- EventLoop.make[Env](
@@ -42,7 +42,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       offsets <- Offsets.make
       queue <- Queue.unbounded[ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
+        override def poll(timeout: Duration): UIO[Records] =
           recordsFrom(
             new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
             new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
@@ -62,13 +62,13 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       offsets <- Offsets.make
       promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
       consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
+        override def poll(timeout: Duration): UIO[Records] =
           recordsFrom(
             new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
             new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
             new KafkaConsumerRecord(topic, 1, 2L, bytes, bytes))
 
-        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
+        override def commit(offsets: Map[TopicPartition, Offset]): UIO[Unit] =
           promise.succeed(offsets).unit
       }
       committed <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(offsets.update)).use_(promise.await)
@@ -83,7 +83,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       promise <- Promise.make[Unit, Unit]
       currentPoll <- Ref.make(0)
       consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
+        override def poll(timeout: Duration): UIO[Records] =
           currentPoll.update(_ + 1).flatMap {
             // Return empty result on first poll
             case 1 => recordsFrom()
@@ -91,43 +91,11 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
             case _ => promise.succeed(()) *> recordsFrom()
           }
 
-        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
+        override def commit(offsets: Map[TopicPartition, Offset]): UIO[Unit] =
           promise.fail(()).unit
       }
       result <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use_(promise.await.either)
     } yield result must beRight
-  }
-
-  "pause partitions" in {
-    val partitions = Set(TopicPartition(topic, 0))
-
-    for {
-      offsets <- Offsets.make
-      promise <- Promise.make[Nothing, Set[TopicPartition]]
-      consumer = new EmptyConsumer {
-        override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          promise.succeed(partitions).unit
-      }
-      paused <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use { eventLoop =>
-        eventLoop.pause(partitions) *> promise.await
-      }
-    } yield paused must equalTo(partitions)
-  }
-
-  "resume partitions" in {
-    val partitions = Set(TopicPartition(topic, 0))
-
-    for {
-      offsets <- Offsets.make
-      promise <- Promise.make[Nothing, Set[TopicPartition]]
-      consumer = new EmptyConsumer {
-        override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          promise.succeed(partitions).unit
-      }
-      resumed <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use { eventLoop =>
-        eventLoop.resume(partitions) *> promise.await
-      }
-    } yield resumed must equalTo(partitions)
   }
 
 }
@@ -141,23 +109,23 @@ object EventLoopTest {
     RecordHandler(topic)(_ => ZIO.unit)
 }
 
-trait EmptyConsumer extends Consumer {
-  override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
+trait EmptyConsumer extends Consumer[Any] {
+  override def subscribe(topics: Set[Topic]): UIO[Unit] =
     ZIO.unit
 
-  override def poll(timeout: Duration): RIO[Blocking, Records] =
+  override def poll(timeout: Duration): UIO[Records] =
     ZIO.succeed(ConsumerRecords.empty())
 
-  override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
+  override def commit(offsets: Map[TopicPartition, Offset]): UIO[Unit] =
     ZIO.unit
 
-  override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+  override def pause(partitions: Set[TopicPartition]): UIO[Unit] =
     ZIO.unit
 
-  override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+  override def resume(partitions: Set[TopicPartition]): UIO[Unit] =
     ZIO.unit
 
-  override def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit] =
+  override def seek(partition: TopicPartition, offset: Offset): UIO[Unit] =
     ZIO.unit
 
   def recordsFrom(records: Consumer.Record*): UIO[Consumer.Records] = ZIO.succeed {

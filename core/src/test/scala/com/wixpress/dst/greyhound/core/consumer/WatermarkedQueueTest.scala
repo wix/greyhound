@@ -28,7 +28,7 @@ class WatermarkedQueueTest extends BaseTest[Clock] {
       _ <- queue.offer(ConsumerRecord(topic, 0, 2L, Headers.Empty, None, "record-3"))
       _ <- queue.offer(ConsumerRecord(topic, 0, 3L, Headers.Empty, None, "record-4"))
       _ <- queue.offer(ConsumerRecord(topic, 0, 4L, Headers.Empty, None, "record-5")) // Will be dropped
-      partitionsToPause <- queue.pausePartitions
+      partitionsToPause <- queue.partitionsToPause
     } yield partitionsToPause must equalTo(Map(TopicPartition(topic, 0) -> 4L))
   }
 
@@ -42,7 +42,7 @@ class WatermarkedQueueTest extends BaseTest[Clock] {
       _ <- queue.offer(ConsumerRecord(topic, 0, 4L, Headers.Empty, None, "record-5")) // Will be dropped
       _ <- queue.offer(ConsumerRecord(topic, 0, 5L, Headers.Empty, None, "record-6")) // Will be dropped
       _ <- queue.offer(ConsumerRecord(topic, 1, 6L, Headers.Empty, None, "record-7")) // Will be dropped
-      partitionsToPause <- queue.pausePartitions
+      partitionsToPause <- queue.partitionsToPause
     } yield partitionsToPause must havePairs(TopicPartition(topic, 0) -> 4L, TopicPartition(topic, 1) -> 6L)
   }
 
@@ -74,8 +74,8 @@ class WatermarkedQueueTest extends BaseTest[Clock] {
       _ <- queue.offer(ConsumerRecord(topic, 0, 2L, Headers.Empty, None, "record-3"))
       _ <- queue.offer(ConsumerRecord(topic, 0, 3L, Headers.Empty, None, "record-4"))
       _ <- queue.offer(ConsumerRecord(topic, 0, 4L, Headers.Empty, None, "record-5")) // Will be dropped
-      _ <- queue.pausePartitions
-      partitionsToPause <- queue.pausePartitions
+      _ <- queue.partitionsToPause
+      partitionsToPause <- queue.partitionsToPause
     } yield partitionsToPause must beEmpty
   }
 
@@ -88,10 +88,10 @@ class WatermarkedQueueTest extends BaseTest[Clock] {
       _ <- queue.offer(ConsumerRecord(topic, 3, 0L, Headers.Empty, None, "record-4"))
       _ <- queue.offer(ConsumerRecord(topic, 4, 0L, Headers.Empty, None, "record-5")) // Will be dropped
       _ <- queue.offer(ConsumerRecord(topic, 5, 0L, Headers.Empty, None, "record-6")) // Will be dropped
-      _ <- queue.pausePartitions
+      _ <- queue.partitionsToPause
       _ <- queue.take
       _ <- queue.take
-      partitionsToResume <- queue.resumePartitions
+      partitionsToResume <- queue.partitionsToResume
     } yield partitionsToResume must equalTo(Set(TopicPartition(topic, 4), TopicPartition(topic, 5)))
   }
 
@@ -103,11 +103,11 @@ class WatermarkedQueueTest extends BaseTest[Clock] {
       _ <- queue.offer(ConsumerRecord(topic, 2, 0L, Headers.Empty, None, "record-3"))
       _ <- queue.offer(ConsumerRecord(topic, 3, 0L, Headers.Empty, None, "record-4"))
       _ <- queue.offer(ConsumerRecord(topic, 4, 0L, Headers.Empty, None, "record-5")) // Will be dropped
-      _ <- queue.pausePartitions
-      partitionsToResume1 <- queue.resumePartitions
+      _ <- queue.partitionsToPause
+      partitionsToResume1 <- queue.partitionsToResume
       _ <- queue.take
       _ <- queue.take
-      partitionsToResume2 <- queue.resumePartitions
+      partitionsToResume2 <- queue.partitionsToResume
     } yield (partitionsToResume1 must beEmpty) and
       (partitionsToResume2 must equalTo(Set(TopicPartition(topic, 4))))
   }
@@ -120,11 +120,44 @@ class WatermarkedQueueTest extends BaseTest[Clock] {
       _ <- queue.offer(ConsumerRecord(topic, 2, 0L, Headers.Empty, None, "record-3"))
       _ <- queue.offer(ConsumerRecord(topic, 3, 0L, Headers.Empty, None, "record-4"))
       _ <- queue.offer(ConsumerRecord(topic, 4, 0L, Headers.Empty, None, "record-5")) // Will be dropped
-      _ <- queue.pausePartitions
+      _ <- queue.partitionsToPause
       _ <- queue.take
       _ <- queue.take
-      _ <- queue.resumePartitions
-      partitionsToResume <- queue.resumePartitions
+      _ <- queue.partitionsToResume
+      partitionsToResume <- queue.partitionsToResume
+    } yield partitionsToResume must beEmpty
+  }
+
+  "pause handling regardless of queue's size" in {
+    for {
+      queue <- makeQueue
+      _ <- queue.pause
+      _ <- queue.offer(record)
+      partitionsToPause <- queue.partitionsToPause
+    } yield partitionsToPause must havePair(TopicPartition(record) -> record.offset)
+  }
+
+  "drop new records if queue is paused" in {
+    val record1 = ConsumerRecord(topic, 0, 1L, Headers.Empty, None, "record-1")
+    val record2 = ConsumerRecord(topic, 0, 2L, Headers.Empty, None, "record-2")
+
+    for {
+      queue <- makeQueue
+      _ <- queue.pause
+      _ <- queue.offer(record1) // Will be dropped
+      _ <- queue.resume
+      _ <- queue.offer(record2)
+      polled <- queue.take
+    } yield polled must equalTo(record2)
+  }
+
+  "not resume any partitions when in paused state" in {
+    for {
+      queue <- makeQueue
+      _ <- queue.pause
+      _ <- queue.offer(ConsumerRecord(topic, 0, 1L, Headers.Empty, None, "record-1")) // Will be dropped
+      _ <- queue.partitionsToPause
+      partitionsToResume <- queue.partitionsToResume
     } yield partitionsToResume must beEmpty
   }
 

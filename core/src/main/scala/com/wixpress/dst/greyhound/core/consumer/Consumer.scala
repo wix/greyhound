@@ -14,18 +14,18 @@ import zio.duration.Duration
 
 import scala.collection.JavaConverters._
 
-trait Consumer {
-  def subscribe(topics: Set[Topic]): RIO[Blocking, Unit]
+trait Consumer[-R] {
+  def subscribe(topics: Set[Topic]): RIO[R, Unit]
 
-  def poll(timeout: Duration): RIO[Blocking, Records]
+  def poll(timeout: Duration): RIO[R, Records]
 
-  def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit]
+  def commit(offsets: Map[TopicPartition, Offset]): RIO[R, Unit]
 
-  def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit]
+  def pause(partitions: Set[TopicPartition]): RIO[R, Unit]
 
-  def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit]
+  def resume(partitions: Set[TopicPartition]): RIO[R, Unit]
 
-  def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit]
+  def seek(partition: TopicPartition, offset: Offset): RIO[R, Unit]
 }
 
 object Consumer {
@@ -38,9 +38,9 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(config: ConsumerConfig): RManaged[Blocking, Consumer] =
+  def make(config: ConsumerConfig): RManaged[Blocking, Consumer[Blocking]] =
     (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>
-      new Consumer {
+      new Consumer[Blocking] {
         override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
           withConsumer(_.subscribe(topics.asJava))
 
