@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer
 import java.util
 import java.util.Properties
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
+import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRebalanceListener => KafkaConsumerRebalanceListener, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.serialization.Deserializer
@@ -11,12 +11,13 @@ import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
-import zio.stream.ZStream
 
 import scala.collection.JavaConverters._
 
-trait Consumer[-R] {
-  def subscribe(topics: Set[Topic]): RIO[R, ConsumerRebalanceListener[R]]
+trait Consumer[R] {
+  def subscribe(topics: Set[Topic],
+                onPartitionsRevoked: RebalanceListener[R] = _ => ZIO.unit,
+                onPartitionsAssigned: RebalanceListener[R] = _ => ZIO.unit): RIO[R, Unit]
 
   def poll(timeout: Duration): RIO[R, Records]
 
@@ -26,9 +27,9 @@ trait Consumer[-R] {
 
   def resume(partitions: Set[TopicPartition]): RIO[R, Unit]
 
-  def partitionsFor(topic: Topic): RIO[R, Set[TopicPartition]]
-
   def seek(partition: TopicPartition, offset: Offset): RIO[R, Unit]
+
+  def partitionsFor(topic: Topic): RIO[R, Set[TopicPartition]]
 
   def partitionsFor(topics: Set[Topic]): RIO[R, Set[TopicPartition]] =
     ZIO.foldLeft(topics)(Set.empty[TopicPartition]) { (acc, topic) =>
@@ -39,6 +40,7 @@ trait Consumer[-R] {
 object Consumer {
   type Record = KafkaConsumerRecord[Chunk[Byte], Chunk[Byte]]
   type Records = ConsumerRecords[Chunk[Byte], Chunk[Byte]]
+  type RebalanceListener[R] = Set[TopicPartition] => URIO[R, Unit]
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
     override def configure(configs: util.Map[Topic, _], isKey: Boolean): Unit = ()
@@ -46,30 +48,29 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  private val makeQueue = Queue.sliding[Set[TopicPartition]](64)
-
-  def make(config: ConsumerConfig): RManaged[Blocking, Consumer[Blocking]] =
+  def make[R](config: ConsumerConfig): RManaged[R with Blocking, Consumer[R with Blocking]] =
     (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>
-      new Consumer[Blocking] {
-        override def subscribe(topics: Set[Topic]): RIO[Blocking, ConsumerRebalanceListener[Blocking]] =
+      new Consumer[R with Blocking] {
+        override def subscribe(topics: Set[Topic],
+                               onPartitionsRevoked: RebalanceListener[R with Blocking],
+                               onPartitionsAssigned: RebalanceListener[R with Blocking]): RIO[R with Blocking, Unit] = {
+          val onPartitionsRevoked1 = onPartitionsRevoked
+          val onPartitionsAssigned1 = onPartitionsAssigned
           for {
-            runtime <- ZIO.runtime[Any]
-            partitionsRevoked <- makeQueue
-            partitionsAssigned <- makeQueue
+            runtime <- ZIO.runtime[R with Blocking]
             rebalanceListener = new KafkaConsumerRebalanceListener {
               override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
-                runtime.unsafeRun(partitionsRevoked.offer(partitionsFor(partitions)))
+                runtime.unsafeRun(onPartitionsRevoked1(partitionsFor(partitions)))
 
               override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
-                runtime.unsafeRun(partitionsAssigned.offer(partitionsFor(partitions)))
+                runtime.unsafeRun(onPartitionsAssigned1(partitionsFor(partitions)))
 
               private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
                 partitions.asScala.foldLeft(Set.empty[TopicPartition])(_ + TopicPartition(_))
             }
             _ <- withConsumer(_.subscribe(topics.asJava, rebalanceListener))
-          } yield ConsumerRebalanceListener(
-            partitionsRevoked = ZStream.fromQueue(partitionsRevoked),
-            partitionsAssigned = ZStream.fromQueue(partitionsAssigned))
+          } yield ()
+        }
 
         override def poll(timeout: Duration): RIO[Blocking, Records] =
           withConsumer(_.poll(timeout.toMillis))
@@ -121,9 +122,6 @@ object Consumer {
   }
 
 }
-
-case class ConsumerRebalanceListener[-R](partitionsRevoked: ZStream[R, Nothing, Set[TopicPartition]],
-                                         partitionsAssigned: ZStream[R, Nothing, Set[TopicPartition]])
 
 case class ConsumerConfig(bootstrapServers: Set[String],
                           groupId: String,

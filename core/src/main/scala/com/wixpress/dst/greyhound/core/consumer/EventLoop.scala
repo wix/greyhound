@@ -20,11 +20,11 @@ object EventLoop {
   def make[R](consumer: Consumer[R],
               offsets: Offsets,
               handler: Handler[R],
-              partitionsState: PartitionsState = PartitionsState.Empty): RManaged[R with GreyhoundMetrics, EventLoop] = {
-    val reportingConsumer = ReportingConsumer(consumer)
+              partitionsState: PartitionsState = EmptyPartitionsState): RManaged[R with GreyhoundMetrics, EventLoop] = {
+    val consumer1 = ReportingConsumer(consumer)
     for {
-      subscriber <- Subscriber.make(reportingConsumer, handler.topics)
-      _ <- run(reportingConsumer, partitionsState, handler, offsets).forever.toManaged_.fork
+      subscriber <- Subscriber.make(consumer1, handler.topics).toManaged_
+      _ <- run(consumer1, partitionsState, handler, offsets).forever.toManaged_.fork
       _ <- subscriber.await.toManaged_
     } yield new EventLoop {
       override def pause: UIO[Unit] = partitionsState.pause
@@ -70,29 +70,23 @@ trait Subscriber {
 }
 
 object Subscriber {
-  def make[R](consumer: Consumer[R], topics: Set[Topic]): RManaged[R, Subscriber] = {
-    val acquire = for {
+  def make[R](consumer: Consumer[R], topics: Set[Topic]): RIO[R, Subscriber] =
+    for {
       ready <- Promise.make[Nothing, Unit]
       partitionsToAssign <- Ref.make(Set.empty[TopicPartition])
       _ <- consumer.partitionsFor(topics).flatMap { partitions =>
         if (partitions.isEmpty) ready.succeed(())
         else partitionsToAssign.set(partitions)
       }
-      listener <- consumer.subscribe(topics)
-    } yield (ready, listener, partitionsToAssign)
-
-    acquire.toManaged_.flatMap {
-      case (ready, listener, partitionsToAssign) =>
-        listener.partitionsAssigned.foreach { partitions =>
+      _ <- consumer.subscribe(
+        topics = topics,
+        onPartitionsAssigned = { partitions =>
           partitionsToAssign.update(_ diff partitions).flatMap { remaining =>
             ZIO.when(remaining.isEmpty)(ready.succeed(()))
           }
-        }.toManaged_.fork.as {
-          new Subscriber {
-            override def await: UIO[Unit] =
-              ready.await
-          }
-        }
+        })
+    } yield new Subscriber {
+      override def await: UIO[Unit] =
+        ready.await
     }
-  }
 }

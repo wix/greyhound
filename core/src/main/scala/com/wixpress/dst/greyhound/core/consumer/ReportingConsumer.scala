@@ -1,29 +1,35 @@
 package com.wixpress.dst.greyhound.core.consumer
-import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
+import com.wixpress.dst.greyhound.core.consumer.Consumer.{RebalanceListener, Records}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import zio.duration.Duration
 import zio.{RIO, ZIO}
 
-// TODO test
+// TODO test?
 case class ReportingConsumer[R](internal: Consumer[R])
   extends Consumer[R with GreyhoundMetrics] {
 
+  override def subscribe(topics: Set[Topic],
+                         onPartitionsRevoked: RebalanceListener[R with GreyhoundMetrics],
+                         onPartitionsAssigned: RebalanceListener[R with GreyhoundMetrics]): RIO[R with GreyhoundMetrics, Unit] =
+    for {
+      r <- ZIO.environment[R with GreyhoundMetrics]
+      _ <- Metrics.report(Subscribing(topics))
+      _ <- internal.subscribe(
+        topics = topics,
+        onPartitionsRevoked = { partitions =>
+          (Metrics.report(PartitionsRevoked(partitions)) *>
+            onPartitionsRevoked(partitions)).provide(r)
+        },
+        onPartitionsAssigned = { partitions =>
+          (Metrics.report(PartitionsAssigned(partitions)) *>
+            onPartitionsAssigned(partitions)).provide(r)
+        })
+    } yield ()
+
   override def poll(timeout: Duration): RIO[R with GreyhoundMetrics, Records] =
     internal.poll(timeout)
-
-  override def subscribe(topics: Set[Topic]): RIO[R with GreyhoundMetrics, ConsumerRebalanceListener[R with GreyhoundMetrics]] =
-    Metrics.report(Subscribing(topics)) *>
-      internal.subscribe(topics).map { listener =>
-        ConsumerRebalanceListener(
-          partitionsRevoked = listener.partitionsRevoked.tap { partitions =>
-            Metrics.report(PartitionsRevoked(partitions))
-          },
-          partitionsAssigned = listener.partitionsAssigned.tap { partitions =>
-            Metrics.report(PartitionsAssigned(partitions))
-          })
-      }
 
   override def commit(offsets: Map[TopicPartition, Offset]): RIO[R with GreyhoundMetrics, Unit] =
     ZIO.when(offsets.nonEmpty) {

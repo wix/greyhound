@@ -13,7 +13,6 @@ trait PartitionsState { self =>
 
   def partitionsToResume: UIO[Set[TopicPartition]]
 
-  // TODO test
   def combine(other: PartitionsState): PartitionsState =
     new PartitionsState {
       override def pause: UIO[Unit] = self.pause *> other.pause
@@ -35,16 +34,16 @@ trait PartitionsState { self =>
 
 }
 
-object PartitionsState {
-  val Empty = new PartitionsState {
-    override def pause: UIO[Unit] = ZIO.unit
+trait EmptyPartitionsState extends PartitionsState {
+  override def pause: UIO[Unit] = ZIO.unit
 
-    override def resume: UIO[Unit] = ZIO.unit
+  override def resume: UIO[Unit] = ZIO.unit
 
-    override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
-      ZIO.succeed(Map.empty)
+  override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
+    ZIO.succeed(Map.empty)
 
-    override def partitionsToResume: UIO[Set[TopicPartition]] =
-      ZIO.succeed(Set.empty)
-  }
+  override def partitionsToResume: UIO[Set[TopicPartition]] =
+    ZIO.succeed(Set.empty)
 }
+
+object EmptyPartitionsState extends EmptyPartitionsState

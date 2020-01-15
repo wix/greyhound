@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
+import com.wixpress.dst.greyhound.core.consumer.Consumer.{RebalanceListener, Records}
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
@@ -12,7 +12,6 @@ import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.Blocking
 import zio.duration.Duration
-import zio.stream.ZStream
 
 import scala.collection.JavaConverters._
 
@@ -27,9 +26,11 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
     for {
       offsets <- Offsets.make
       promise <- Promise.make[Nothing, Set[Topic]]
-      consumer = new EmptyConsumer {
-        override def subscribe(topics: Set[Topic]): UIO[ConsumerRebalanceListener[Any]] =
-          promise.succeed(topics).as(ConsumerRebalanceListener(ZStream.empty, ZStream.empty))
+      consumer = new EmptyConsumer[Env] {
+        override def subscribe(topics: Set[Topic],
+                               onPartitionsRevoked: RebalanceListener[Env],
+                               onPartitionsAssigned: RebalanceListener[Env]): RIO[Env, Unit] =
+          promise.succeed(topics).unit
       }
       subscribed <- EventLoop.make[Env](
         consumer = consumer,
@@ -42,8 +43,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
     for {
       offsets <- Offsets.make
       queue <- Queue.unbounded[ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): UIO[Records] =
+      consumer = new EmptyConsumer[Env] {
+        override def poll(timeout: Duration): RIO[Env, Records] =
           recordsFrom(
             new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
             new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
@@ -62,8 +63,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
     for {
       offsets <- Offsets.make
       promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): UIO[Records] =
+      consumer = new EmptyConsumer[Env] {
+        override def poll(timeout: Duration): RIO[Env, Records] =
           recordsFrom(
             new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
             new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
@@ -83,8 +84,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       offsets <- Offsets.make
       promise <- Promise.make[Unit, Unit]
       currentPoll <- Ref.make(0)
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): UIO[Records] =
+      consumer = new EmptyConsumer[Env] {
+        override def poll(timeout: Duration): RIO[Env, Records] =
           currentPoll.update(_ + 1).flatMap {
             // Return empty result on first poll
             case 1 => recordsFrom()
@@ -110,29 +111,31 @@ object EventLoopTest {
     RecordHandler(topic)(_ => ZIO.unit)
 }
 
-trait EmptyConsumer extends Consumer[Any] {
-  override def subscribe(topics: Set[Topic]): UIO[ConsumerRebalanceListener[Any]] =
-    ZIO.succeed(ConsumerRebalanceListener(ZStream.empty, ZStream.empty))
+trait EmptyConsumer[R] extends Consumer[R] {
+  override def subscribe(topics: Set[Topic],
+                         onPartitionsRevoked: RebalanceListener[R],
+                         onPartitionsAssigned: RebalanceListener[R]): RIO[R, Unit] =
+    ZIO.unit
 
-  override def poll(timeout: Duration): UIO[Records] =
+  override def poll(timeout: Duration): RIO[R, Records] =
     ZIO.succeed(ConsumerRecords.empty())
 
-  override def commit(offsets: Map[TopicPartition, Offset]): UIO[Unit] =
+  override def commit(offsets: Map[TopicPartition, Offset]): RIO[R, Unit] =
     ZIO.unit
 
-  override def pause(partitions: Set[TopicPartition]): UIO[Unit] =
+  override def pause(partitions: Set[TopicPartition]): RIO[R, Unit] =
     ZIO.unit
 
-  override def resume(partitions: Set[TopicPartition]): UIO[Unit] =
+  override def resume(partitions: Set[TopicPartition]): RIO[R, Unit] =
     ZIO.unit
 
-  override def seek(partition: TopicPartition, offset: Offset): UIO[Unit] =
+  override def seek(partition: TopicPartition, offset: Offset): RIO[R, Unit] =
     ZIO.unit
 
-  override def partitionsFor(topic: Topic): UIO[Set[TopicPartition]] =
+  override def partitionsFor(topic: Topic): RIO[R, Set[TopicPartition]] =
     ZIO.succeed(Set.empty)
 
-  def recordsFrom(records: Consumer.Record*): UIO[Consumer.Records] = ZIO.succeed {
+  def recordsFrom(records: Consumer.Record*): RIO[R, Consumer.Records] = ZIO.succeed {
     val recordsMap = records.groupBy(record => new KafkaTopicPartition(record.topic, record.partition))
     new ConsumerRecords(recordsMap.mapValues(_.asJava).asJava)
   }

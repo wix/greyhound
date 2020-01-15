@@ -47,7 +47,7 @@ class ConsumerIT extends BaseTest[Env] {
         offsets <- Offsets.make
 
         eventLoop = for {
-          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
           handler <- RecordHandler(topic)(queue.offer)
             .deserialize(StringSerde, StringSerde)
             .andThen(offsets.update)
@@ -83,7 +83,7 @@ class ConsumerIT extends BaseTest[Env] {
         }
 
         eventLoop = for {
-          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
           retryHandler = handler
             .deserialize(StringSerde, StringSerde)
             .withRetries(retryPolicy, producer)
@@ -110,7 +110,7 @@ class ConsumerIT extends BaseTest[Env] {
         offsets <- Offsets.make
 
         eventLoop = for {
-          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
           handler1 <- RecordHandler(topic1)(records1.offer).andThen(offsets.update).parallel(partitions)
           handler2 <- RecordHandler(topic2)(records2.offer).andThen(offsets.update).parallel(partitions)
           handler = handler1.deserialize(StringSerde, StringSerde) combine handler2.deserialize(IntSerde, IntSerde)
@@ -145,7 +145,7 @@ class ConsumerIT extends BaseTest[Env] {
 
         offsets <- Offsets.make
         eventLoop = for {
-          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
           handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
           eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
         } yield eventLoop
@@ -182,7 +182,7 @@ class ConsumerIT extends BaseTest[Env] {
 
         offsets <- Offsets.make
         makeEventLoop = for {
-          consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
           handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
           eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
         } yield eventLoop
