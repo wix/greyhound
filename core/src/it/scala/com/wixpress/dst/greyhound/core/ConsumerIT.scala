@@ -16,12 +16,16 @@ import zio.console.Console
 import zio.duration._
 import zio.random.Random
 
-class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console with Clock with Random] {
-
-  type Env = GreyhoundMetrics with Blocking with Console with Clock with Random
+class ConsumerIT extends BaseTest[Env] {
 
   override def env: UManaged[Env] =
-    Managed.succeed(new GreyhoundMetric.Live with Blocking.Live with Console.Live with Clock.Live with Random.Live)
+    Managed.succeed {
+      new GreyhoundMetric.Live
+        with Blocking.Live
+        with Console.Live
+        with Clock.Live
+        with Random.Live
+    }
 
   val resources = for {
     kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
@@ -51,9 +55,11 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
           eventLoop <- EventLoop.make[Env](consumer, offsets, handler.ignore)
         } yield eventLoop
 
-        _ <- eventLoop.useForever.fork // TODO when is consumer ready?
-        _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)
-        message <- queue.take
+        message <- eventLoop.use_ {
+          val record = ProducerRecord(topic, "bar", Some("foo"))
+          producer.produce(record, StringSerde, StringSerde) *>
+            queue.take
+        }
       } yield "produce and consume a single message" in {
         message must (beRecordWithKey("foo") and beRecordWithValue("bar"))
       }
@@ -86,9 +92,10 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
           eventLoop <- EventLoop.make[Env](consumer, offsets, retryHandler)
         } yield eventLoop
 
-        _ <- eventLoop.useForever.fork
-        _ <- producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)
-        success <- done.await.timeout(8.seconds)
+        success <- eventLoop.use_ {
+          producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+            done.await.timeout(8.seconds)
+        }
       } yield "configure a handler with retry policy" in {
         success must beSome
       }
@@ -110,11 +117,11 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
           eventLoop <- EventLoop.make[Env](consumer, offsets, handler.ignore)
         } yield eventLoop
 
-        _ <- eventLoop.useForever.fork
-        _ <- producer.produce(ProducerRecord(topic1, "bar", Some("foo")), StringSerde, StringSerde)
-        _ <- producer.produce(ProducerRecord(topic2, 2, Some(1)), IntSerde, IntSerde)
-        record1 <- records1.take
-        record2 <- records2.take
+        (record1, record2) <- eventLoop.use_ {
+          producer.produce(ProducerRecord(topic1, "bar", Some("foo")), StringSerde, StringSerde) *>
+            producer.produce(ProducerRecord(topic2, 2, Some(1)), IntSerde, IntSerde) *>
+            (records1.take zip records2.take)
+        }
       } yield "consume messages from combined handlers" in {
         (record1 must (beRecordWithKey("foo") and beRecordWithValue("bar"))) and
           (record2 must (beRecordWithKey(1) and beRecordWithValue(2)))
@@ -142,20 +149,23 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
           handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
           eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
         } yield eventLoop
-        _ <- eventLoop.useForever.fork
 
-        record = ProducerRecord(topic, Chunk.empty)
-        _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
-          producer.produce(record.copy(partition = Some(0))) zipPar
-            producer.produce(record.copy(partition = Some(1)))
+        test <- eventLoop.use_ {
+          val record = ProducerRecord(topic, Chunk.empty)
+          for {
+            _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
+              producer.produce(record.copy(partition = Some(0))) zipPar
+                producer.produce(record.copy(partition = Some(1)))
+            }
+
+            handledAllFromPartition0 <- handledPartition0.await.timeout(5.seconds)
+            _ <- delayPartition1.succeed(())
+            handledAllFromPartition1 <- handledPartition1.await.timeout(5.seconds)
+          } yield "not lose any messages on a slow consumer (drives the message dispatcher to throttling)" in {
+            (handledAllFromPartition0 must beSome) and (handledAllFromPartition1 must beSome)
+          }
         }
-
-        handledAllFromPartition0 <- handledPartition0.await.timeout(5.seconds)
-        _ <- delayPartition1.succeed(())
-        handledAllFromPartition1 <- handledPartition1.await.timeout(5.seconds)
-      } yield "not lose any messages on a slow consumer (drives the message dispatcher to throttling)" in {
-        (handledAllFromPartition0 must beSome) and (handledAllFromPartition1 must beSome)
-      }
+      } yield test
 
       val test5 = for {
         topic <- randomTopic()
@@ -201,6 +211,8 @@ class ConsumerIT extends BaseTest[GreyhoundMetrics with Blocking with Console wi
 }
 
 object ConsumerIT {
+  type Env = GreyhoundMetrics with Blocking with Console with Clock with Random
+
   val clientId = "greyhound-consumers"
   val partitions = 8
   val delete = CleanupPolicy.Delete(1.hour)

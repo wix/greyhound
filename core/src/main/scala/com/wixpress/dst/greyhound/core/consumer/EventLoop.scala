@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.Topic
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import zio._
 import zio.duration._
@@ -22,8 +23,9 @@ object EventLoop {
               partitionsState: PartitionsState = PartitionsState.Empty): RManaged[R with GreyhoundMetrics, EventLoop] = {
     val reportingConsumer = ReportingConsumer(consumer)
     for {
-      _ <- reportingConsumer.subscribe(handler.topics).toManaged_
+      subscriber <- Subscriber.make(reportingConsumer, handler.topics)
       _ <- run(reportingConsumer, partitionsState, handler, offsets).forever.toManaged_.fork
+      _ <- subscriber.await.toManaged_
     } yield new EventLoop {
       override def pause: UIO[Unit] = partitionsState.pause
       override def resume: UIO[Unit] = partitionsState.resume
@@ -61,4 +63,36 @@ object EventLoop {
 
   private def commitOffsets[R](consumer: Consumer[R], offsets: Offsets) =
     offsets.getAndClear.flatMap(consumer.commit)
+}
+
+trait Subscriber {
+  def await: UIO[Unit]
+}
+
+object Subscriber {
+  def make[R](consumer: Consumer[R], topics: Set[Topic]): RManaged[R, Subscriber] = {
+    val acquire = for {
+      ready <- Promise.make[Nothing, Unit]
+      partitionsToAssign <- Ref.make(Set.empty[TopicPartition])
+      _ <- consumer.partitionsFor(topics).flatMap { partitions =>
+        if (partitions.isEmpty) ready.succeed(())
+        else partitionsToAssign.set(partitions)
+      }
+      listener <- consumer.subscribe(topics)
+    } yield (ready, listener, partitionsToAssign)
+
+    acquire.toManaged_.flatMap {
+      case (ready, listener, partitionsToAssign) =>
+        listener.partitionsAssigned.foreach { partitions =>
+          partitionsToAssign.update(_ diff partitions).flatMap { remaining =>
+            ZIO.when(remaining.isEmpty)(ready.succeed(()))
+          }
+        }.toManaged_.fork.as {
+          new Subscriber {
+            override def await: UIO[Unit] =
+              ready.await
+          }
+        }
+    }
+  }
 }

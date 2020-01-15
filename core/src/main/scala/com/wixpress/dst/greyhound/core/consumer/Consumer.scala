@@ -5,17 +5,18 @@ import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
-import org.apache.kafka.clients.consumer.{ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRecord => KafkaConsumerRecord}
+import org.apache.kafka.clients.consumer.{ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRebalanceListener => KafkaConsumerRebalanceListener, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
+import zio.stream.ZStream
 
 import scala.collection.JavaConverters._
 
 trait Consumer[-R] {
-  def subscribe(topics: Set[Topic]): RIO[R, Unit]
+  def subscribe(topics: Set[Topic]): RIO[R, ConsumerRebalanceListener[R]]
 
   def poll(timeout: Duration): RIO[R, Records]
 
@@ -25,7 +26,14 @@ trait Consumer[-R] {
 
   def resume(partitions: Set[TopicPartition]): RIO[R, Unit]
 
+  def partitionsFor(topic: Topic): RIO[R, Set[TopicPartition]]
+
   def seek(partition: TopicPartition, offset: Offset): RIO[R, Unit]
+
+  def partitionsFor(topics: Set[Topic]): RIO[R, Set[TopicPartition]] =
+    ZIO.foldLeft(topics)(Set.empty[TopicPartition]) { (acc, topic) =>
+      partitionsFor(topic).map(acc union _)
+    }
 }
 
 object Consumer {
@@ -38,11 +46,30 @@ object Consumer {
     override def close(): Unit = ()
   }
 
+  private val makeQueue = Queue.sliding[Set[TopicPartition]](64)
+
   def make(config: ConsumerConfig): RManaged[Blocking, Consumer[Blocking]] =
     (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>
       new Consumer[Blocking] {
-        override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
-          withConsumer(_.subscribe(topics.asJava))
+        override def subscribe(topics: Set[Topic]): RIO[Blocking, ConsumerRebalanceListener[Blocking]] =
+          for {
+            runtime <- ZIO.runtime[Any]
+            partitionsRevoked <- makeQueue
+            partitionsAssigned <- makeQueue
+            rebalanceListener = new KafkaConsumerRebalanceListener {
+              override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
+                runtime.unsafeRun(partitionsRevoked.offer(partitionsFor(partitions)))
+
+              override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
+                runtime.unsafeRun(partitionsAssigned.offer(partitionsFor(partitions)))
+
+              private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
+                partitions.asScala.foldLeft(Set.empty[TopicPartition])(_ + TopicPartition(_))
+            }
+            _ <- withConsumer(_.subscribe(topics.asJava, rebalanceListener))
+          } yield ConsumerRebalanceListener(
+            partitionsRevoked = ZStream.fromQueue(partitionsRevoked),
+            partitionsAssigned = ZStream.fromQueue(partitionsAssigned))
 
         override def poll(timeout: Duration): RIO[Blocking, Records] =
           withConsumer(_.poll(timeout.toMillis))
@@ -58,6 +85,14 @@ object Consumer {
 
         override def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit] =
           withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset))
+
+        override def partitionsFor(topic: Topic): RIO[Blocking, Set[TopicPartition]] =
+          withConsumer(_.partitionsFor(topic)).map { partitions =>
+            val safePartitions = Option(partitions).map(_.asScala).getOrElse(Nil)
+            safePartitions.foldLeft(Set.empty[TopicPartition]) { (acc, partition) =>
+              acc + TopicPartition(topic, partition.partition)
+            }
+          }
 
         private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
           semaphore.withPermit(effectBlocking(f(consumer)))
@@ -87,10 +122,13 @@ object Consumer {
 
 }
 
+case class ConsumerRebalanceListener[-R](partitionsRevoked: ZStream[R, Nothing, Set[TopicPartition]],
+                                         partitionsAssigned: ZStream[R, Nothing, Set[TopicPartition]])
+
 case class ConsumerConfig(bootstrapServers: Set[String],
                           groupId: String,
                           clientId: String,
-                          offsetReset: OffsetReset = OffsetReset.Earliest) {
+                          offsetReset: OffsetReset = OffsetReset.Latest) {
 
   def properties: Properties = {
     val props = new Properties

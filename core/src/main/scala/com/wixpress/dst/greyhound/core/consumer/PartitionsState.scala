@@ -16,11 +16,9 @@ trait PartitionsState { self =>
   // TODO test
   def combine(other: PartitionsState): PartitionsState =
     new PartitionsState {
-      override def pause: UIO[Unit] =
-        self.pause *> other.pause
+      override def pause: UIO[Unit] = self.pause *> other.pause
 
-      override def resume: UIO[Unit] =
-        self.resume *> other.resume
+      override def resume: UIO[Unit] = self.resume *> other.resume
 
       override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
         (self.partitionsToPause zipWith other.partitionsToPause) { (a, b) =>

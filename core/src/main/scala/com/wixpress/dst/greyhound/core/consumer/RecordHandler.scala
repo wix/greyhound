@@ -107,9 +107,9 @@ trait RecordHandler[-R, +E, K, V] { self =>
                      (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] =
     new RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] {
       override def topics: Set[Topic] = for {
-        topic <- self.topics
-        retryTopic <- retryPolicy.retryTopics(topic) + topic
-      } yield retryTopic
+        originalTopic <- self.topics
+        topic <- retryPolicy.retryTopics(originalTopic) + originalTopic
+      } yield topic
 
       override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock, Either[ProducerError, E], Any] =
         retryPolicy.retryAttempt(record.topic, record.headers).flatMap { retryAttempt =>
@@ -140,13 +140,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
 
         override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
           ZIO.foldLeft(queues)(Map.empty[TopicPartition, Offset]) { (acc, queue) =>
-            queue.partitionsToPause.map { partitions =>
-              partitions.foldLeft(acc) {
-                case (acc1, (partition, offset)) =>
-                  val updated = acc1.get(partition).foldLeft(offset)(_ min _)
-                  acc1 + (partition -> updated)
-              }
-            }
+            queue.partitionsToPause.map(acc ++ _)
           }
 
         override def partitionsToResume: UIO[Set[TopicPartition]] =

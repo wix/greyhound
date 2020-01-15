@@ -12,6 +12,7 @@ import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.Blocking
 import zio.duration.Duration
+import zio.stream.ZStream
 
 import scala.collection.JavaConverters._
 
@@ -27,8 +28,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       offsets <- Offsets.make
       promise <- Promise.make[Nothing, Set[Topic]]
       consumer = new EmptyConsumer {
-        override def subscribe(topics: Set[Topic]): UIO[Unit] =
-          promise.succeed(topics).unit
+        override def subscribe(topics: Set[Topic]): UIO[ConsumerRebalanceListener[Any]] =
+          promise.succeed(topics).as(ConsumerRebalanceListener(ZStream.empty, ZStream.empty))
       }
       subscribed <- EventLoop.make[Env](
         consumer = consumer,
@@ -110,8 +111,8 @@ object EventLoopTest {
 }
 
 trait EmptyConsumer extends Consumer[Any] {
-  override def subscribe(topics: Set[Topic]): UIO[Unit] =
-    ZIO.unit
+  override def subscribe(topics: Set[Topic]): UIO[ConsumerRebalanceListener[Any]] =
+    ZIO.succeed(ConsumerRebalanceListener(ZStream.empty, ZStream.empty))
 
   override def poll(timeout: Duration): UIO[Records] =
     ZIO.succeed(ConsumerRecords.empty())
@@ -127,6 +128,9 @@ trait EmptyConsumer extends Consumer[Any] {
 
   override def seek(partition: TopicPartition, offset: Offset): UIO[Unit] =
     ZIO.unit
+
+  override def partitionsFor(topic: Topic): UIO[Set[TopicPartition]] =
+    ZIO.succeed(Set.empty)
 
   def recordsFrom(records: Consumer.Record*): UIO[Consumer.Records] = ZIO.succeed {
     val recordsMap = records.groupBy(record => new KafkaTopicPartition(record.topic, record.partition))
