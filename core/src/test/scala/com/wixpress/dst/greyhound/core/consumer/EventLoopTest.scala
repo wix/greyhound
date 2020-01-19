@@ -50,7 +50,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
             new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
             new KafkaConsumerRecord(topic, 0, 2L, bytes, bytes))
       }
-      handled <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(queue.offer)).use_ {
+      handled <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(queue.offer(_).unit)).use_ {
         ZIO.collectAll(List.fill(3)(queue.take))
       }
     } yield handled must

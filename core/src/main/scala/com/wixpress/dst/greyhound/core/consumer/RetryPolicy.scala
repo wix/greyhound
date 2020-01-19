@@ -6,6 +6,7 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 import com.wixpress.dst.greyhound.core.Serdes.StringSerde
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RetryAttempt.{RetryAttemptNumber, currentTime}
+import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import zio._
 import zio.clock.Clock
@@ -14,9 +15,9 @@ import zio.duration.Duration
 trait RetryPolicy[-R, -E] {
   def retryTopics(originalTopic: Topic): Set[Topic]
   def retryAttempt(topic: Topic, headers: Headers): URIO[R, Option[RetryAttempt]]
-  def retryRecord(retryAttempt: Option[RetryAttempt],
-                  record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-                  error: E): URIO[R, Option[ProducerRecord[Chunk[Byte], Chunk[Byte]]]]
+  def retryDecision(retryAttempt: Option[RetryAttempt],
+                    record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                    error: E): URIO[R, RetryDecision]
 }
 
 object RetryPolicy {
@@ -48,9 +49,9 @@ object RetryPolicy {
         }.orElse(ZIO.none)
       }
 
-      override def retryRecord(retryAttempt: Option[RetryAttempt],
-                               record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-                               error: E): URIO[Clock, Option[ProducerRecord[Chunk[Byte], Chunk[Byte]]]] =
+      override def retryDecision(retryAttempt: Option[RetryAttempt],
+                                 record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                                 error: E): URIO[Clock, RetryDecision] =
         currentTime.map { now =>
           val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
           backoffs.lift(nextRetryAttempt).map { backoff =>
@@ -62,7 +63,7 @@ object RetryPolicy {
               headers = record.headers +
                 (RetryHeader.Submitted -> toChunk(now.toEpochMilli)) +
                 (RetryHeader.Backoff -> toChunk(backoff.toMillis)))
-          }
+          }.fold[RetryDecision](NoMoreRetries)(RetryWith)
         }
 
       private def toChunk(long: Long): Chunk[Byte] =
@@ -92,4 +93,11 @@ object RetryAttempt {
   type RetryAttemptNumber = Int
 
   val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
+}
+
+sealed trait RetryDecision
+
+object RetryDecision {
+  case object NoMoreRetries extends RetryDecision
+  case class RetryWith(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) extends RetryDecision
 }

@@ -48,8 +48,8 @@ class ConsumerIT extends BaseTest[Env] {
 
         eventLoop = for {
           consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler <- RecordHandler(topic)(queue.offer)
-            .deserialize(StringSerde, StringSerde)
+          handler <- RecordHandler(topic)(queue.offer(_: ConsumerRecord[String, String]).unit)
+            .withDeserializers(StringSerde, StringSerde)
             .andThen(offsets.update)
             .parallel(partitions)
           eventLoop <- EventLoop.make[Env](consumer, offsets, handler.ignore)
@@ -78,14 +78,14 @@ class ConsumerIT extends BaseTest[Env] {
         handler = RecordHandler(topic) { _: ConsumerRecord[String, String] =>
           invocations.update(_ + 1).flatMap { n =>
             if (n < 4) ZIO.fail(new RuntimeException("Oops!"))
-            else done.succeed(()) // Succeed on final retry
+            else done.succeed(()).unit // Succeed on final retry
           }
         }
 
         eventLoop = for {
           consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
           retryHandler = handler
-            .deserialize(StringSerde, StringSerde)
+            .withDeserializers(StringSerde, StringSerde)
             .withRetries(retryPolicy, producer)
             .andThen(offsets.update)
             .ignore
@@ -111,9 +111,9 @@ class ConsumerIT extends BaseTest[Env] {
 
         eventLoop = for {
           consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler1 <- RecordHandler(topic1)(records1.offer).andThen(offsets.update).parallel(partitions)
-          handler2 <- RecordHandler(topic2)(records2.offer).andThen(offsets.update).parallel(partitions)
-          handler = handler1.deserialize(StringSerde, StringSerde) combine handler2.deserialize(IntSerde, IntSerde)
+          handler1 <- RecordHandler(topic1)(records1.offer(_: ConsumerRecord[String, String]).unit).andThen(offsets.update).parallel(partitions)
+          handler2 <- RecordHandler(topic2)(records2.offer(_: ConsumerRecord[Int, Int]).unit).andThen(offsets.update).parallel(partitions)
+          handler = handler1.withDeserializers(StringSerde, StringSerde) combine handler2.withDeserializers(IntSerde, IntSerde)
           eventLoop <- EventLoop.make[Env](consumer, offsets, handler.ignore)
         } yield eventLoop
 
@@ -177,7 +177,7 @@ class ConsumerIT extends BaseTest[Env] {
         handledSomeMessages <- CountDownLatch.make(someMessages)
         handledAllMessages <- CountDownLatch.make(numberOfMessages)
         handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-          handledSomeMessages.countDown zipPar handledAllMessages.countDown
+          handledSomeMessages.countDown zipParRight handledAllMessages.countDown
         }
 
         offsets <- Offsets.make

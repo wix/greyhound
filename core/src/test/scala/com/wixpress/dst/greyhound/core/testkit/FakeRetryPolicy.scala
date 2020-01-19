@@ -5,7 +5,8 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, RetryAttempt, RetryPolicy}
+import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
+import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, RetryAttempt, RetryDecision, RetryPolicy}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import zio.clock.Clock
@@ -25,15 +26,16 @@ case class FakeRetryPolicy(topic: Topic)
       backoff <- headers.get(Header.Backoff, DurationSerde)
     } yield retryAttempt(attempt, submittedAt, backoff)).orElse(ZIO.none)
 
-  override def retryRecord(retryAttempt: Option[RetryAttempt],
-                           record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-                           error: HandlerError): URIO[Clock, Option[ProducerRecord[Chunk[Byte], Chunk[Byte]]]] =
+  override def retryDecision(retryAttempt: Option[RetryAttempt],
+                             record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                             error: HandlerError): URIO[Clock, RetryDecision] =
     error match {
       case RetriableError =>
         recordFrom(retryAttempt, record)
-          .fold(_ => None, Some(_))
+          .fold(_ => NoMoreRetries, RetryWith)
 
-      case NonRetriableError => ZIO.none
+      case NonRetriableError =>
+        ZIO.succeed(NoMoreRetries)
     }
 
   private def retryAttempt(attempt: Option[Int],
