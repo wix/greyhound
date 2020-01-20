@@ -126,7 +126,8 @@ object Consumer {
 case class ConsumerConfig(bootstrapServers: Set[String],
                           groupId: String,
                           clientId: String,
-                          offsetReset: OffsetReset = OffsetReset.Latest) {
+                          offsetReset: OffsetReset = OffsetReset.Latest,
+                          extraProperties: Map[String, String] = Map.empty) {
 
   def properties: Properties = {
     val props = new Properties
@@ -138,6 +139,10 @@ case class ConsumerConfig(bootstrapServers: Set[String],
       case OffsetReset.Latest => "latest"
     })
     props.setProperty(KafkaConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
+    extraProperties.foreach {
+      case (key, value) =>
+        props.setProperty(key, value)
+    }
     props
   }
 

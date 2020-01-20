@@ -151,11 +151,11 @@ class ConsumerIT extends BaseTest[Env] {
         } yield eventLoop
 
         test <- eventLoop.use_ {
-          val record = ProducerRecord(topic, Chunk.empty)
+          val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
+          val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
           for {
             _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
-              producer.produce(record.copy(partition = Some(0))) zipPar
-                producer.produce(record.copy(partition = Some(1)))
+              producer.produce(recordPartition0) zipPar producer.produce(recordPartition1)
             }
 
             handledAllFromPartition0 <- handledPartition0.await.timeout(5.seconds)
