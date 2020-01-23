@@ -203,7 +203,76 @@ class ConsumerIT extends BaseTest[Env] {
         }
       } yield test
 
-      all(test1, test2, test3, test4, test5)
+      val test6 = for {
+        topic <- randomTopic()
+        group <- randomGroup
+
+        ref <- Ref.make(0)
+        startedHandling <- Promise.make[Nothing, Unit]
+        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          startedHandling.succeed(()) *>
+            clock.sleep(5.seconds) *>
+            ref.update(_ + 1).unit
+        }
+
+        offsets <- Offsets.make
+        eventLoop = for {
+          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
+          eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
+        } yield eventLoop
+
+        _ <- eventLoop.use_ {
+          producer.produce(ProducerRecord(topic, Chunk.empty)) *>
+            startedHandling.await
+        }
+
+        handled <- ref.get
+      } yield "wait until queues are drained" in {
+        handled must equalTo(1)
+      }
+
+      val test7 = for {
+        topic <- randomTopic()
+        group <- randomGroup
+
+        allMessages = 400
+        someMessages = 100
+        produce = producer.produce(ProducerRecord(topic, Chunk.empty))
+
+        invocations <- Ref.make(0)
+        handledAll <- CountDownLatch.make(allMessages)
+        handledSome <- CountDownLatch.make(someMessages)
+        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          invocations.update(_ + 1) *>
+            handledSome.countDown *>
+            handledAll.countDown
+        }
+
+        offsets <- Offsets.make
+        eventLoop = for {
+          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
+          handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
+          eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
+        } yield eventLoop
+
+        startProducing1 <- Promise.make[Nothing, Unit]
+        eventLoop1 <- eventLoop.use_(startProducing1.succeed(()) *> handledAll.await).fork
+        _ <- startProducing1.await *> ZIO.foreachPar(0 until someMessages)(_ => produce)
+
+        _ <- handledSome.await
+        startProducing2 <- Promise.make[Nothing, Unit]
+        eventLoop2 <- eventLoop.use_(startProducing2.succeed(()) *> handledAll.await).fork
+        _ <- startProducing2.await *> ZIO.foreachPar(someMessages until allMessages)(_ => produce)
+
+        _ <- eventLoop1.join
+        _ <- eventLoop2.join
+        allInvocations <- invocations.get
+      } yield "don't reprocess messages after rebalance" in {
+        allInvocations must equalTo(allMessages)
+      }
+
+      all(test1, test2, test3, test4, test5, test6, test7)
   }
 
   run(tests)

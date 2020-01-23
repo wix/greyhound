@@ -4,12 +4,13 @@ sources()
 
 specs2_ite2e_test(
     name = "core",
+    timeout = "long",
     testonly = 1,
     srcs = [
         ":sources",
     ],
     deps = [
-        "//core/src/it/resources",
+        "//core/src/test/resources",
         "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",

@@ -11,16 +11,15 @@ import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => Kaf
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.Blocking
-import zio.duration.Duration
+import zio.clock.Clock
+import zio.duration._
 
 import scala.collection.JavaConverters._
 
-class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
-
-  type Env = GreyhoundMetrics with Blocking
+class EventLoopTest extends BaseTest[Env] {
 
   override def env: UManaged[Env] =
-    Managed.succeed(new GreyhoundMetric.Live with Blocking.Live)
+    Managed.succeed(new GreyhoundMetric.Live with Clock.Live with Blocking.Live)
 
   "subscribe to topics on startup" in {
     for {
@@ -30,7 +29,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
         override def subscribe(topics: Set[Topic],
                                onPartitionsRevoked: RebalanceListener[Env],
                                onPartitionsAssigned: RebalanceListener[Env]): RIO[Env, Unit] =
-          promise.succeed(topics).unit
+          promise.succeed(topics).unit *>
+            super.subscribe(topics, onPartitionsRevoked, onPartitionsAssigned)
       }
       subscribed <- EventLoop.make[Env](
         consumer = consumer,
@@ -50,7 +50,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
             new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
             new KafkaConsumerRecord(topic, 0, 2L, bytes, bytes))
       }
-      handled <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(queue.offer(_).unit)).use_ {
+      handler = RecordHandler(topic)(queue.offer(_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]).unit)
+      handled <- EventLoop.make[Env](consumer, offsets, handler.andThen(offsets.update)).use_ {
         ZIO.collectAll(List.fill(3)(queue.take))
       }
     } yield handled must
@@ -59,7 +60,7 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
         contain(beRecordWithOffset(2L)))
   }
 
-  "commit handled records" in {
+  "commit handled offsets + 1" in {
     for {
       offsets <- Offsets.make
       promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
@@ -75,8 +76,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
       }
       committed <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(offsets.update)).use_(promise.await)
     } yield committed must havePairs(
-      TopicPartition(topic, 0) -> 1L,
-      TopicPartition(topic, 1) -> 2L)
+      TopicPartition(topic, 0) -> 2L,
+      TopicPartition(topic, 1) -> 3L)
   }
 
   "don't commit empty offsets map" in {
@@ -103,6 +104,8 @@ class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
 }
 
 object EventLoopTest {
+  type Env = GreyhoundMetrics with Clock with Blocking
+
   val topic = "topic"
 
   val bytes = Chunk.empty
@@ -115,7 +118,7 @@ trait EmptyConsumer[R] extends Consumer[R] {
   override def subscribe(topics: Set[Topic],
                          onPartitionsRevoked: RebalanceListener[R],
                          onPartitionsAssigned: RebalanceListener[R]): RIO[R, Unit] =
-    ZIO.unit
+    onPartitionsAssigned(topics.map(TopicPartition(_, 0)))
 
   override def poll(timeout: Duration): RIO[R, Records] =
     ZIO.succeed(ConsumerRecords.empty())
