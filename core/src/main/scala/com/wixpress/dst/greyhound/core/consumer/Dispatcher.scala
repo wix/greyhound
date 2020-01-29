@@ -5,6 +5,8 @@ import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import zio._
+import zio.clock.Clock
+import zio.duration.Duration
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R, SubmitResult]
@@ -16,7 +18,7 @@ object Dispatcher {
 
   def make[R](handle: Record => URIO[R, Unit],
               lowWatermark: Int,
-              highWatermark: Int): URManaged[GreyhoundMetrics, Dispatcher[R with GreyhoundMetrics]] =
+              highWatermark: Int): URManaged[GreyhoundMetrics, Dispatcher[R with GreyhoundMetrics with Clock]] =
     Ref.make(Map.empty[TopicPartition, DispatcherWorker]).toManaged { ref =>
       ref.get.flatMap { workers =>
         ZIO.foreach_(workers) {
@@ -26,8 +28,8 @@ object Dispatcher {
         }
       }
     }.map { ref =>
-      new Dispatcher[R with GreyhoundMetrics] {
-        override def submit(record: Record): URIO[R with GreyhoundMetrics, SubmitResult] =
+      new Dispatcher[R with GreyhoundMetrics with Clock] {
+        override def submit(record: Record): URIO[R with GreyhoundMetrics with Clock, SubmitResult] =
           for {
             _ <- Metrics.report(SubmittingRecord(record))
             partition = TopicPartition(record)
@@ -68,7 +70,11 @@ object Dispatcher {
           }
 
         private def handleWithMetrics(record: Record) =
-          Metrics.report(HandlingRecord(record)) *> handle(record)
+          Metrics.report(HandlingRecord(record)) *>
+            handle(record).timed.flatMap {
+              case (duration, _) =>
+                Metrics.report(RecordHandled(record, duration))
+            }
       }
     }
 
@@ -109,3 +115,4 @@ case class StartingWorker(partition: TopicPartition) extends DispatcherMetric
 case class StoppingWorker(partition: TopicPartition) extends DispatcherMetric
 case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
 case class HandlingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
+case class RecordHandled[K, V](record: ConsumerRecord[K, V], duration: Duration) extends DispatcherMetric

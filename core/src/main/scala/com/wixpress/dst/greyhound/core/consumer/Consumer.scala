@@ -23,20 +23,13 @@ trait Consumer[R] {
 
   def commit(offsets: Map[TopicPartition, Offset]): RIO[R, Unit]
 
-  def pause(partitions: Set[TopicPartition]): RIO[R, Unit]
+  def pause(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit]
 
-  def resume(partitions: Set[TopicPartition]): RIO[R, Unit]
+  def resume(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit]
 
-  def seek(partition: TopicPartition, offset: Offset): RIO[R, Unit]
+  def seek(partition: TopicPartition, offset: Offset): ZIO[R, IllegalStateException, Unit]
 
-  def partitionsFor(topic: Topic): RIO[R, Set[TopicPartition]]
-
-  def partitionsFor(topics: Set[Topic]): RIO[R, Set[TopicPartition]] =
-    ZIO.foldLeft(topics)(Set.empty[TopicPartition]) { (acc, topic) =>
-      partitionsFor(topic).map(acc union _)
-    }
-
-  def pause(record: ConsumerRecord[_, _]): RIO[R, Unit] = {
+  def pause(record: ConsumerRecord[_, _]): ZIO[R, IllegalStateException, Unit] = {
     val partition = TopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }
@@ -84,21 +77,19 @@ object Consumer {
     override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
       withConsumer(_.commitSync(kafkaOffsets(offsets)))
 
-    override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-      withConsumer(_.pause(kafkaPartitions(partitions)))
+    override def pause(partitions: Set[TopicPartition]): ZIO[Blocking, IllegalStateException, Unit] =
+      withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie {
+        case e: IllegalStateException => e
+      }
 
-    override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-      withConsumer(_.resume(kafkaPartitions(partitions)))
+    override def resume(partitions: Set[TopicPartition]): ZIO[Blocking, IllegalStateException, Unit] =
+      withConsumer(_.resume(kafkaPartitions(partitions))).refineOrDie {
+        case e: IllegalStateException => e
+      }
 
-    override def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit] =
-      withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset))
-
-    override def partitionsFor(topic: Topic): RIO[Blocking, Set[TopicPartition]] =
-      withConsumer(_.partitionsFor(topic)).map { partitions =>
-        val safePartitions = Option(partitions).map(_.asScala).getOrElse(Nil)
-        safePartitions.foldLeft(Set.empty[TopicPartition]) { (acc, partition) =>
-          acc + TopicPartition(topic, partition.partition)
-        }
+    override def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking, IllegalStateException, Unit] =
+      withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset)).refineOrDie {
+        case e: IllegalStateException => e
       }
 
     private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =

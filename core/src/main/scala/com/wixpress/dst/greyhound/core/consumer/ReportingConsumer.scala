@@ -15,7 +15,7 @@ case class ReportingConsumer[R](internal: Consumer[R])
                          onPartitionsAssigned: RebalanceListener[R with GreyhoundMetrics]): RIO[R with GreyhoundMetrics, Unit] =
     for {
       r <- ZIO.environment[R with GreyhoundMetrics]
-      _ <- Metrics.report(Subscribing(topics))
+      _ <- Metrics.report(SubscribingToTopics(topics))
       _ <- internal.subscribe(
         topics = topics,
         onPartitionsRevoked = { partitions =>
@@ -29,39 +29,52 @@ case class ReportingConsumer[R](internal: Consumer[R])
     } yield ()
 
   override def poll(timeout: Duration): RIO[R with GreyhoundMetrics, Records] =
-    internal.poll(timeout)
+    internal.poll(timeout).tapError { error =>
+      Metrics.report(PollingFailed(error))
+    }
 
   override def commit(offsets: Map[TopicPartition, Offset]): RIO[R with GreyhoundMetrics, Unit] =
     ZIO.when(offsets.nonEmpty) {
       Metrics.report(CommittingOffsets(offsets)) *>
-        internal.commit(offsets)
+        internal.commit(offsets).tapError { error =>
+          Metrics.report(CommitFailed(error))
+        }
     }
 
-  override def pause(partitions: Set[TopicPartition]): RIO[R with GreyhoundMetrics, Unit] =
+  override def pause(partitions: Set[TopicPartition]): ZIO[R with GreyhoundMetrics, IllegalStateException, Unit] =
     ZIO.when(partitions.nonEmpty) {
-      Metrics.report(Pausing(partitions)) *>
-        internal.pause(partitions)
+      Metrics.report(PausingPartitions(partitions)) *>
+        internal.pause(partitions).tapError { error =>
+          Metrics.report(PausePartitionsFailed(error))
+        }
     }
 
-  override def resume(partitions: Set[TopicPartition]): RIO[R with GreyhoundMetrics, Unit] =
+  override def resume(partitions: Set[TopicPartition]): ZIO[R with GreyhoundMetrics, IllegalStateException, Unit] =
     ZIO.when(partitions.nonEmpty) {
-      Metrics.report(Resuming(partitions)) *>
-        internal.resume(partitions)
+      Metrics.report(ResumingPartitions(partitions)) *>
+        internal.resume(partitions).tapError { error =>
+          Metrics.report(ResumePartitionsFailed(error))
+        }
     }
 
-  override def seek(partition: TopicPartition, offset: Offset): RIO[R with GreyhoundMetrics, Unit] =
-    Metrics.report(Seeking(partition, offset)) *> internal.seek(partition, offset)
-
-  override def partitionsFor(topic: Topic): RIO[R with GreyhoundMetrics, Set[TopicPartition]] =
-    internal.partitionsFor(topic)
+  override def seek(partition: TopicPartition, offset: Offset): ZIO[R with GreyhoundMetrics, IllegalStateException, Unit] =
+    Metrics.report(SeekingToOffset(partition, offset)) *>
+      internal.seek(partition, offset).tapError { error =>
+        Metrics.report(SeekToOffsetFailed(error))
+      }
 
 }
 
 sealed trait ConsumerMetric extends GreyhoundMetric
-case class Subscribing(topics: Set[Topic]) extends ConsumerMetric
+case class SubscribingToTopics(topics: Set[Topic]) extends ConsumerMetric
 case class CommittingOffsets(offsets: Map[TopicPartition, Offset]) extends ConsumerMetric
-case class Pausing(partitions: Set[TopicPartition]) extends ConsumerMetric
-case class Resuming(partitions: Set[TopicPartition]) extends ConsumerMetric
-case class Seeking(partition: TopicPartition, offset: Offset) extends ConsumerMetric
+case class PausingPartitions(partitions: Set[TopicPartition]) extends ConsumerMetric
+case class ResumingPartitions(partitions: Set[TopicPartition]) extends ConsumerMetric
+case class SeekingToOffset(partition: TopicPartition, offset: Offset) extends ConsumerMetric
 case class PartitionsAssigned(partitions: Set[TopicPartition]) extends ConsumerMetric
 case class PartitionsRevoked(partitions: Set[TopicPartition]) extends ConsumerMetric
+case class PollingFailed(error: Throwable) extends ConsumerMetric
+case class CommitFailed(error: Throwable) extends ConsumerMetric
+case class PausePartitionsFailed(error: IllegalStateException) extends ConsumerMetric
+case class ResumePartitionsFailed(error: IllegalStateException) extends ConsumerMetric
+case class SeekToOffsetFailed(error: IllegalStateException) extends ConsumerMetric
