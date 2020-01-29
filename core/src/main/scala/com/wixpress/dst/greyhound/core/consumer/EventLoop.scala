@@ -84,12 +84,13 @@ object EventLoop {
                            config: EventLoopConfig): RIO[R1 with R2 with GreyhoundMetrics, Unit] =
     state.get.flatMap {
       case EventLoopState.Running =>
-        for {
-          newPaused1 <- resumePartitions(consumer, dispatcher, paused)
-          (newPending, newPaused2) <- pollAndHandle(consumer, dispatcher, pending, newPaused1, config)
-          _ <- commitOffsets(consumer, offsets)
-          result <- loop(state, consumer, dispatcher, newPending, newPaused2, offsets, config)
-        } yield result
+        resumePartitions(consumer, dispatcher, paused).flatMap { newPaused1 =>
+          pollAndHandle(consumer, dispatcher, pending, newPaused1, config).flatMap {
+            case (newPending, newPaused2) =>
+              commitOffsets(consumer, offsets) *>
+                loop(state, consumer, dispatcher, newPending, newPaused2, offsets, config)
+          }
+        }
 
       case EventLoopState.Paused =>
         pollPaused(consumer, config).flatMap { newPaused =>
@@ -97,7 +98,7 @@ object EventLoop {
         }
 
       case EventLoopState.ShuttingDown =>
-        // Await for all pending tasks before closing the fiber
+        // Await for all pending tasks before exiting the fiber
         ZIO.foreach_(pending)(_._2)
     }
 

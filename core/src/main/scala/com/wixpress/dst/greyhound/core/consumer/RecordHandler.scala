@@ -90,15 +90,15 @@ trait RecordHandler[-R, +E, K, V] { self =>
         value = value)).mapError(e => Left(SerializationError(e)))
     }
 
-  def withRetries[R2](retryPolicy: RetryPolicy[R2, E], producer: Producer)
-                     (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] =
-    new RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] {
+  def withRetries[R2, R3](retryPolicy: RetryPolicy[R2, E], producer: Producer[R3])
+                         (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with R3 with Clock, Either[ProducerError, E], K, V] =
+    new RecordHandler[R with R2 with R3 with Clock, Either[ProducerError, E], K, V] {
       override def topics: Set[Topic] = for {
         originalTopic <- self.topics
         topic <- retryPolicy.retryTopics(originalTopic) + originalTopic
       } yield topic
 
-      override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock, Either[ProducerError, E], Unit] =
+      override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with R3 with Clock, Either[ProducerError, E], Unit] =
         retryPolicy.retryAttempt(record.topic, record.headers).flatMap { retryAttempt =>
           ZIO.foreach_(retryAttempt)(_.sleep) *> self.handle(record).catchAll { e =>
             retryPolicy.retryDecision(retryAttempt, record.bimap(evK, evV), e).flatMap {

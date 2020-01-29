@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord, ReportingProducer}
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, CountDownLatch}
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
@@ -31,7 +31,7 @@ class ConsumerIT extends BaseTest[Env] {
   val resources = for {
     kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
     producer <- Producer.make(ProducerConfig(kafka.bootstrapServers))
-  } yield (kafka, producer)
+  } yield (kafka, ReportingProducer(producer))
 
   val tests = resources.use {
     case (kafka, producer) =>
