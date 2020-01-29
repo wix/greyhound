@@ -14,7 +14,9 @@ import zio.duration.Duration
 
 trait RetryPolicy[-R, -E] {
   def retryTopics(originalTopic: Topic): Set[Topic]
+
   def retryAttempt(topic: Topic, headers: Headers): URIO[R, Option[RetryAttempt]]
+
   def retryDecision(retryAttempt: Option[RetryAttempt],
                     record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
                     error: E): URIO[R, RetryDecision]

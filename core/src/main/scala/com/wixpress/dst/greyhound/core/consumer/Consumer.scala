@@ -5,7 +5,7 @@ import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
-import org.apache.kafka.clients.consumer.{ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRebalanceListener => KafkaConsumerRebalanceListener, ConsumerRecord => KafkaConsumerRecord}
+import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
@@ -35,6 +35,11 @@ trait Consumer[R] {
     ZIO.foldLeft(topics)(Set.empty[TopicPartition]) { (acc, topic) =>
       partitionsFor(topic).map(acc union _)
     }
+
+  def pause(record: ConsumerRecord[_, _]): RIO[R, Unit] = {
+    val partition = TopicPartition(record)
+    pause(Set(partition)) *> seek(partition, record.offset)
+  }
 }
 
 object Consumer {
@@ -48,73 +53,73 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make[R](config: ConsumerConfig): RManaged[R with Blocking, Consumer[R with Blocking]] =
-    (makeConsumer(config) zipWith Semaphore.make(1).toManaged_) { (consumer, semaphore) =>
-      new Consumer[R with Blocking] {
-        override def subscribe(topics: Set[Topic],
-                               onPartitionsRevoked: RebalanceListener[R with Blocking],
-                               onPartitionsAssigned: RebalanceListener[R with Blocking]): RIO[R with Blocking, Unit] = {
-          val onPartitionsRevoked1 = onPartitionsRevoked
-          val onPartitionsAssigned1 = onPartitionsAssigned
-          for {
-            runtime <- ZIO.runtime[R with Blocking]
-            rebalanceListener = new KafkaConsumerRebalanceListener {
-              override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
-                runtime.unsafeRun(onPartitionsRevoked1(partitionsFor(partitions)))
+  def make(config: ConsumerConfig): RManaged[Blocking, Consumer[Blocking]] = for {
+    semaphore <- Semaphore.make(1).toManaged_
+    consumer <- makeConsumer(config)
+  } yield new Consumer[Blocking] {
+    override def subscribe(topics: Set[Topic],
+                           onPartitionsRevoked: RebalanceListener[Blocking],
+                           onPartitionsAssigned: RebalanceListener[Blocking]): RIO[Blocking, Unit] = {
+      val partitionsRevokedCallback = onPartitionsRevoked
+      val partitionsAssignedCallback = onPartitionsAssigned
+      for {
+        runtime <- ZIO.runtime[Blocking]
+        rebalanceListener = new ConsumerRebalanceListener {
+          override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
+            runtime.unsafeRun(partitionsRevokedCallback(partitionsFor(partitions)))
 
-              override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
-                runtime.unsafeRun(onPartitionsAssigned1(partitionsFor(partitions)))
+          override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
+            runtime.unsafeRun(partitionsAssignedCallback(partitionsFor(partitions)))
 
-              private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
-                partitions.asScala.foldLeft(Set.empty[TopicPartition])(_ + TopicPartition(_))
-            }
-            _ <- withConsumer(_.subscribe(topics.asJava, rebalanceListener))
-          } yield ()
+          private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
+            partitions.asScala.map(TopicPartition(_)).toSet
         }
-
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
-          withConsumer(_.poll(timeout.toMillis))
-
-        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
-          withConsumer(_.commitSync(kafkaOffsets(offsets)))
-
-        override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          withConsumer(_.pause(kafkaPartitions(partitions)))
-
-        override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          withConsumer(_.resume(kafkaPartitions(partitions)))
-
-        override def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit] =
-          withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset))
-
-        override def partitionsFor(topic: Topic): RIO[Blocking, Set[TopicPartition]] =
-          withConsumer(_.partitionsFor(topic)).map { partitions =>
-            val safePartitions = Option(partitions).map(_.asScala).getOrElse(Nil)
-            safePartitions.foldLeft(Set.empty[TopicPartition]) { (acc, partition) =>
-              acc + TopicPartition(topic, partition.partition)
-            }
-          }
-
-        private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
-          semaphore.withPermit(effectBlocking(f(consumer)))
-
-        private def kafkaOffsets(offsets: Map[TopicPartition, Offset]): util.Map[KafkaTopicPartition, OffsetAndMetadata] =
-          offsets.foldLeft(new util.HashMap[KafkaTopicPartition, OffsetAndMetadata](offsets.size)) {
-            case (acc, (TopicPartition(topic, partition), offset)) =>
-              val key = new KafkaTopicPartition(topic, partition)
-              val value = new OffsetAndMetadata(offset)
-              acc.put(key, value)
-              acc
-          }
-
-        private def kafkaPartitions(partitions: Set[TopicPartition]): util.Collection[KafkaTopicPartition] =
-          partitions.foldLeft(new util.ArrayList[KafkaTopicPartition](partitions.size)) {
-            case (acc, TopicPartition(topic, partition)) =>
-              acc.add(new KafkaTopicPartition(topic, partition))
-              acc
-          }
-      }
+        _ <- withConsumer(_.subscribe(topics.asJava, rebalanceListener))
+      } yield ()
     }
+
+    override def poll(timeout: Duration): RIO[Blocking, Records] =
+      withConsumer(_.poll(timeout.toMillis))
+
+    override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
+      withConsumer(_.commitSync(kafkaOffsets(offsets)))
+
+    override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+      withConsumer(_.pause(kafkaPartitions(partitions)))
+
+    override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
+      withConsumer(_.resume(kafkaPartitions(partitions)))
+
+    override def seek(partition: TopicPartition, offset: Offset): RIO[Blocking, Unit] =
+      withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset))
+
+    override def partitionsFor(topic: Topic): RIO[Blocking, Set[TopicPartition]] =
+      withConsumer(_.partitionsFor(topic)).map { partitions =>
+        val safePartitions = Option(partitions).map(_.asScala).getOrElse(Nil)
+        safePartitions.foldLeft(Set.empty[TopicPartition]) { (acc, partition) =>
+          acc + TopicPartition(topic, partition.partition)
+        }
+      }
+
+    private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
+      semaphore.withPermit(effectBlocking(f(consumer)))
+
+    private def kafkaOffsets(offsets: Map[TopicPartition, Offset]): util.Map[KafkaTopicPartition, OffsetAndMetadata] =
+      offsets.foldLeft(new util.HashMap[KafkaTopicPartition, OffsetAndMetadata](offsets.size)) {
+        case (acc, (TopicPartition(topic, partition), offset)) =>
+          val key = new KafkaTopicPartition(topic, partition)
+          val value = new OffsetAndMetadata(offset)
+          acc.put(key, value)
+          acc
+      }
+
+    private def kafkaPartitions(partitions: Set[TopicPartition]): util.Collection[KafkaTopicPartition] =
+      partitions.foldLeft(new util.ArrayList[KafkaTopicPartition](partitions.size)) {
+        case (acc, TopicPartition(topic, partition)) =>
+          acc.add(new KafkaTopicPartition(topic, partition))
+          acc
+      }
+  }
 
   private def makeConsumer(config: ConsumerConfig): RManaged[Blocking, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
     val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))

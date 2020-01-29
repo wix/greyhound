@@ -2,8 +2,6 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerError}
 import zio._
 import zio.clock.Clock
@@ -111,50 +109,6 @@ trait RecordHandler[-R, +E, K, V] { self =>
         }
     }
 
-  // TODO should this be a part of record handler?
-  def parallel(n: Int, queueConfig: WatermarkedQueueConfig = WatermarkedQueueConfig.Default): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V] with PartitionsState] =
-    ZManaged.foreach(0 until n)(makeQueue(queueConfig)).map { queues =>
-      new RecordHandler[R with GreyhoundMetrics, E, K, V] with PartitionsState {
-        override def topics: Set[Topic] = self.topics
-
-        override def handle(record: ConsumerRecord[K, V]): ZIO[R with GreyhoundMetrics, E, Unit] =
-          Metrics.report(SubmittingRecord(record)) *>
-            queues(record.partition % queues.length).offer(record).unit
-
-        override def pause: UIO[Unit] =
-          ZIO.foreachPar_(queues)(_.pause)
-
-        override def resume: UIO[Unit] =
-          ZIO.foreachPar_(queues)(_.resume)
-
-        override def partitionsToPause: UIO[Map[TopicPartition, Offset]] =
-          ZIO.foldLeft(queues)(Map.empty[TopicPartition, Offset]) { (acc, queue) =>
-            queue.partitionsToPause.map(acc ++ _)
-          }
-
-        override def partitionsToResume: UIO[Set[TopicPartition]] =
-          ZIO.foldLeft(queues)(Set.empty[TopicPartition]) { (acc, queue) =>
-            queue.partitionsToResume.map(acc union _)
-          }
-      }
-    }
-
-  private def makeQueue(config: WatermarkedQueueConfig)(i: Int): URManaged[R with GreyhoundMetrics, WatermarkedQueue[K, V]] = {
-    val queue = for {
-      _ <- Metrics.report(StartingRecordsProcessor(i))
-      queue <- WatermarkedQueue.make[K, V](config)
-      _ <- queue.take.flatMap { record =>
-        Metrics.report(HandlingRecord(record, i)) *>
-          self.handle(record)
-      }.forever.fork
-    } yield queue
-
-    queue.toManaged { queue =>
-      Metrics.report(StoppingRecordsProcessor(i)) *>
-        queue.shutdown
-    }
-  }
-
 }
 
 case class SerializationError(cause: Throwable) extends RuntimeException(cause)
@@ -167,10 +121,10 @@ object RecordHandler {
       override def handle(record: ConsumerRecord[K, V]): ZIO[R, E, Unit] = f(record)
     }
   }
-}
 
-sealed trait RecordHandlerMetric extends GreyhoundMetric
-case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends RecordHandlerMetric
-case class StartingRecordsProcessor(processor: Int) extends RecordHandlerMetric
-case class StoppingRecordsProcessor(processor: Int) extends RecordHandlerMetric
-case class HandlingRecord[K, V](record: ConsumerRecord[K, V], processor: Int) extends RecordHandlerMetric
+  def empty[K, V]: RecordHandler[Any, Nothing, K, V] =
+    new RecordHandler[Any, Nothing, K, V] {
+      override def topics: Set[Topic] = Set.empty
+      override def handle(record: ConsumerRecord[K, V]): UIO[Unit] = ZIO.unit
+    }
+}

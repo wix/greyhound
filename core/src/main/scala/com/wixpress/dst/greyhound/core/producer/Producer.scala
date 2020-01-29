@@ -9,6 +9,7 @@ import org.apache.kafka.common.header.internals.RecordHeader
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
+import zio.duration._
 
 import scala.collection.JavaConverters._
 
@@ -69,11 +70,14 @@ object Producer {
 }
 
 case class ProducerConfig(bootstrapServers: Set[String],
+                          retryPolicy: ProducerRetryPolicy = ProducerRetryPolicy.Default,
                           extraProperties: Map[String, String] = Map.empty) {
 
   def properties: Properties = {
     val props = new Properties
     props.setProperty(KafkaProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers.mkString(","))
+    props.setProperty(KafkaProducerConfig.RETRIES_CONFIG, retryPolicy.retries.toString)
+    props.setProperty(KafkaProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryPolicy.backoff.toMillis.toString)
     extraProperties.foreach {
       case (key, value) =>
         props.setProperty(key, value)
@@ -81,4 +85,10 @@ case class ProducerConfig(bootstrapServers: Set[String],
     props
   }
 
+}
+
+case class ProducerRetryPolicy(retries: Int, backoff: Duration)
+
+object ProducerRetryPolicy {
+  val Default = ProducerRetryPolicy(30, 200.millis)
 }

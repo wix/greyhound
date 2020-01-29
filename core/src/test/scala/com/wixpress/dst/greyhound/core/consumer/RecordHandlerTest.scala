@@ -18,13 +18,14 @@ import zio.test.environment.{TestClock, TestEnvironment, TestRandom}
 class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetrics] {
 
   override def env: UManaged[TestRandom with TestClock with TestMetrics] =
-    (TestEnvironment.Value zipWith TestMetrics.make) { (env, testMetrics) =>
-      new TestRandom with TestClock with TestMetrics {
-        override val random: TestRandom.Service[Any] = env.random
-        override val clock: TestClock.Service[Any] = env.clock
-        override val scheduler: TestClock.Service[Any] = env.scheduler
-        override val metrics: TestMetrics.Service = testMetrics.metrics
-      }
+    for {
+      env <- TestEnvironment.Value
+      testMetrics <- TestMetrics.make
+    } yield new TestRandom with TestClock with TestMetrics {
+      override val random: TestRandom.Service[Any] = env.random
+      override val clock: TestClock.Service[Any] = env.clock
+      override val scheduler: TestClock.Service[Any] = env.scheduler
+      override val metrics: TestMetrics.Service = testMetrics.metrics
     }
 
   "withRetries" should {
@@ -156,26 +157,6 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
       val record = ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value")
 
       handler.handle(record).either.map(_ must beRight)
-    }
-  }
-
-  "parallel" should {
-    "parallelize handling based on partition" in {
-      val partitions = 8
-
-      for {
-        latch <- CountDownLatch.make(partitions)
-        slowHandler = RecordHandler[Clock, Nothing, Nothing, String](topic) { _ =>
-          clock.sleep(1.second) *> latch.countDown
-        }
-        _ <- slowHandler.parallel(partitions).use { handler =>
-          ZIO.foreach(0 until partitions) { partition =>
-            handler.handle(ConsumerRecord(topic, partition, 0L, Headers.Empty, None, s"message-$partition"))
-          }
-        }.fork
-        _ <- TestClock.adjust(1.second)
-        _ <- latch.await
-      } yield ok // If execution is not parallel, the latch will not be released
     }
   }
 

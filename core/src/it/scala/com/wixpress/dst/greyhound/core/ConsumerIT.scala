@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.ConsumerIT._
 import com.wixpress.dst.greyhound.core.Serdes._
+import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
@@ -39,23 +40,22 @@ class ConsumerIT extends BaseTest[Env] {
         _ <- kafka.createTopic(TopicConfig(topic, partitions, 1, delete))
       } yield topic
 
+      def eventLoopFor(handler: Handler[Env], group: Option[Group] = None) = for {
+        group <- group.fold(randomGroup.toManaged_)(ZManaged.succeed)
+        consumer <- Consumer.make(ConsumerConfig(kafka.bootstrapServers, group, clientId))
+        eventLoop <- EventLoop.make(ReportingConsumer(consumer), handler)
+      } yield eventLoop
+
+
       val test1 = for {
         topic <- randomTopic()
-        group <- randomGroup
 
         queue <- Queue.unbounded[ConsumerRecord[String, String]]
-        offsets <- Offsets.make
+        handler = RecordHandler(topic)(queue.offer(_: ConsumerRecord[String, String]).unit)
+          .withDeserializers(StringSerde, StringSerde)
+          .ignore
 
-        eventLoop = for {
-          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler <- RecordHandler(topic)(queue.offer(_: ConsumerRecord[String, String]).unit)
-            .withDeserializers(StringSerde, StringSerde)
-            .andThen(offsets.update)
-            .parallel(partitions)
-          eventLoop <- EventLoop.make[Env](consumer, offsets, handler.ignore)
-        } yield eventLoop
-
-        message <- eventLoop.use_ {
+        message <- eventLoopFor(handler).use_ {
           val record = ProducerRecord(topic, "bar", Some("foo"))
           producer.produce(record, StringSerde, StringSerde) *>
             queue.take
@@ -71,7 +71,6 @@ class ConsumerIT extends BaseTest[Env] {
         _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-1", partitions, 1, delete))
         _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-2", partitions, 1, delete))
 
-        offsets <- Offsets.make
         invocations <- Ref.make(0)
         done <- Promise.make[Nothing, Unit]
         retryPolicy = RetryPolicy.default(topic, group, 1.second, 2.seconds, 3.seconds)
@@ -81,20 +80,14 @@ class ConsumerIT extends BaseTest[Env] {
             else done.succeed(()).unit // Succeed on final retry
           }
         }
+        retryHandler = handler
+          .withDeserializers(StringSerde, StringSerde)
+          .withRetries(retryPolicy, producer)
+          .ignore
 
-        eventLoop = for {
-          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          retryHandler = handler
-            .withDeserializers(StringSerde, StringSerde)
-            .withRetries(retryPolicy, producer)
-            .andThen(offsets.update)
-            .ignore
-          eventLoop <- EventLoop.make[Env](consumer, offsets, retryHandler)
-        } yield eventLoop
-
-        success <- eventLoop.use_ {
+        success <- eventLoopFor(retryHandler, Some(group)).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-            done.await.timeout(8.seconds)
+            done.await.timeout(12.seconds)
         }
       } yield "configure a handler with retry policy" in {
         success must beSome
@@ -103,21 +96,14 @@ class ConsumerIT extends BaseTest[Env] {
       val test3 = for {
         topic1 <- randomTopic()
         topic2 <- randomTopic()
-        group <- randomGroup
 
         records1 <- Queue.unbounded[ConsumerRecord[String, String]]
         records2 <- Queue.unbounded[ConsumerRecord[Int, Int]]
-        offsets <- Offsets.make
+        handler1 = RecordHandler(topic1)(records1.offer(_: ConsumerRecord[String, String]).unit)
+        handler2 = RecordHandler(topic2)(records2.offer(_: ConsumerRecord[Int, Int]).unit)
+        handler = handler1.withDeserializers(StringSerde, StringSerde) combine handler2.withDeserializers(IntSerde, IntSerde)
 
-        eventLoop = for {
-          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler1 <- RecordHandler(topic1)(records1.offer(_: ConsumerRecord[String, String]).unit).andThen(offsets.update).parallel(partitions)
-          handler2 <- RecordHandler(topic2)(records2.offer(_: ConsumerRecord[Int, Int]).unit).andThen(offsets.update).parallel(partitions)
-          handler = handler1.withDeserializers(StringSerde, StringSerde) combine handler2.withDeserializers(IntSerde, IntSerde)
-          eventLoop <- EventLoop.make[Env](consumer, offsets, handler.ignore)
-        } yield eventLoop
-
-        (record1, record2) <- eventLoop.use_ {
+        (record1, record2) <- eventLoopFor(handler.ignore).use_ {
           producer.produce(ProducerRecord(topic1, "bar", Some("foo")), StringSerde, StringSerde) *>
             producer.produce(ProducerRecord(topic2, 2, Some(1)), IntSerde, IntSerde) *>
             (records1.take zip records2.take)
@@ -130,7 +116,6 @@ class ConsumerIT extends BaseTest[Env] {
       val test4 = for {
         partitions <- ZIO.succeed(2)
         topic <- randomTopic(partitions)
-        group <- randomGroup
 
         messagesPerPartition = 500 // Exceeds queue's capacity
         delayPartition1 <- Promise.make[Nothing, Unit]
@@ -143,14 +128,7 @@ class ConsumerIT extends BaseTest[Env] {
           }
         }
 
-        offsets <- Offsets.make
-        eventLoop = for {
-          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
-          eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
-        } yield eventLoop
-
-        test <- eventLoop.use_ {
+        test <- eventLoopFor(handler).use_ {
           val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
           val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
           for {
@@ -169,7 +147,6 @@ class ConsumerIT extends BaseTest[Env] {
 
       val test5 = for {
         topic <- randomTopic()
-        group <- randomGroup
 
         numberOfMessages = 32
         someMessages = numberOfMessages - 8
@@ -180,14 +157,7 @@ class ConsumerIT extends BaseTest[Env] {
           handledSomeMessages.countDown zipParRight handledAllMessages.countDown
         }
 
-        offsets <- Offsets.make
-        makeEventLoop = for {
-          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
-          eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
-        } yield eventLoop
-
-        test <- makeEventLoop.use { eventLoop =>
+        test <- eventLoopFor(handler).use { eventLoop =>
           val record = ProducerRecord(topic, Chunk.empty)
           for {
             _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
@@ -205,7 +175,6 @@ class ConsumerIT extends BaseTest[Env] {
 
       val test6 = for {
         topic <- randomTopic()
-        group <- randomGroup
 
         ref <- Ref.make(0)
         startedHandling <- Promise.make[Nothing, Unit]
@@ -215,14 +184,7 @@ class ConsumerIT extends BaseTest[Env] {
             ref.update(_ + 1).unit
         }
 
-        offsets <- Offsets.make
-        eventLoop = for {
-          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
-          eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
-        } yield eventLoop
-
-        _ <- eventLoop.use_ {
+        _ <- eventLoopFor(handler).use_ {
           producer.produce(ProducerRecord(topic, Chunk.empty)) *>
             startedHandling.await
         }
@@ -248,13 +210,7 @@ class ConsumerIT extends BaseTest[Env] {
             handledSome.countDown *>
             handledAll.countDown
         }
-
-        offsets <- Offsets.make
-        eventLoop = for {
-          consumer <- Consumer.make[Env](ConsumerConfig(kafka.bootstrapServers, group, clientId))
-          handler <- handler.andThen(offsets.update).ignore.parallel(partitions)
-          eventLoop <- EventLoop.make[Env](consumer, offsets, handler, handler)
-        } yield eventLoop
+        eventLoop = eventLoopFor(handler, Some(group))
 
         startProducing1 <- Promise.make[Nothing, Unit]
         eventLoop1 <- eventLoop.use_(startProducing1.succeed(()) *> handledAll.await).fork

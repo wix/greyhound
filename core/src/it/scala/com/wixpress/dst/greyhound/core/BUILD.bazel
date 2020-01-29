@@ -4,7 +4,7 @@ sources()
 
 specs2_ite2e_test(
     name = "core",
-    timeout = "long",
+    size = "large",
     testonly = 1,
     srcs = [
         ":sources",
