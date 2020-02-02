@@ -11,103 +11,149 @@ import zio.duration.Duration
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R, SubmitResult]
   def resumeablePartitions(paused: Set[TopicPartition]): URIO[R, Set[TopicPartition]]
+  def pause: URIO[R, Unit]
+  def resume: URIO[R, Unit]
+  def shutdown: URIO[R, Unit]
 }
 
 object Dispatcher {
   type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
 
-  def make[R](handle: Record => URIO[R, Unit],
+  def make[R](handle: Record => URIO[R, Any],
               lowWatermark: Int,
-              highWatermark: Int): URManaged[GreyhoundMetrics, Dispatcher[R with GreyhoundMetrics with Clock]] =
-    Ref.make(Map.empty[TopicPartition, DispatcherWorker]).toManaged { ref =>
-      ref.get.flatMap { workers =>
-        ZIO.foreach_(workers) {
-          case (partition, worker) =>
-            Metrics.report(StoppingWorker(partition)) *>
-              worker.shutdown
-        }
-      }
-    }.map { ref =>
-      new Dispatcher[R with GreyhoundMetrics with Clock] {
-        override def submit(record: Record): URIO[R with GreyhoundMetrics with Clock, SubmitResult] =
-          for {
-            _ <- Metrics.report(SubmittingRecord(record))
-            partition = TopicPartition(record)
-            worker <- workerFor(partition)
-            promise <- Promise.make[Nothing, Unit]
-            submitted <- worker.submit(DispatcherTask(record, promise.succeed(()).unit))
-          } yield if (submitted) Submitted(promise.await) else Rejected
+              highWatermark: Int): UIO[Dispatcher[R with GreyhoundMetrics with Clock]] =
+    for {
+      state <- Ref.make[State](State.Running)
+      workers <- Ref.make(Map.empty[TopicPartition, Worker])
+    } yield new Dispatcher[R with GreyhoundMetrics with Clock] {
+      override def submit(record: Record): URIO[R with GreyhoundMetrics with Clock, SubmitResult] =
+        for {
+          _ <- Metrics.report(SubmittingRecord(record))
+          partition = TopicPartition(record)
+          worker <- workerFor(partition)
+          submitted <- worker.submit(record)
+        } yield if (submitted) Submitted else Rejected
 
-        override def resumeablePartitions(paused: Set[TopicPartition]): UIO[Set[TopicPartition]] =
-          ref.get.flatMap { workers =>
-            ZIO.foldLeft(paused)(Set.empty[TopicPartition]) { (acc, partition) =>
-              workers.get(partition) match {
-                case Some(worker) =>
-                  worker.pendingTasks.map { tasks =>
-                    if (tasks <= lowWatermark) acc + partition
-                    else acc
-                  }
-
-                case None => ZIO.succeed(acc)
-              }
-            }
-          }
-
-        /**
-          * This implementation is not fiber-safe. Since the worker is used per partition,
-          * and all operations performed on a single partition are linearizable this is fine.
-          */
-        private def workerFor(partition: TopicPartition) =
-          ref.get.flatMap { workers =>
+      override def resumeablePartitions(paused: Set[TopicPartition]): UIO[Set[TopicPartition]] =
+        workers.get.flatMap { workers =>
+          ZIO.foldLeft(paused)(Set.empty[TopicPartition]) { (acc, partition) =>
             workers.get(partition) match {
-              case Some(worker) => ZIO.succeed(worker)
-              case None => for {
-                _ <- Metrics.report(StartingWorker(partition))
-                worker <- DispatcherWorker.make(handleWithMetrics, highWatermark)
-                _ <- ref.update(_ + (partition -> worker))
-              } yield worker
+              case Some(worker) =>
+                worker.pendingTasks.map { tasks =>
+                  if (tasks <= lowWatermark) acc + partition
+                  else acc
+                }
+
+              case None => ZIO.succeed(acc)
             }
           }
+        }
 
-        private def handleWithMetrics(record: Record) =
-          Metrics.report(HandlingRecord(record)) *>
-            handle(record).timed.flatMap {
-              case (duration, _) =>
-                Metrics.report(RecordHandled(record, duration))
-            }
-      }
+      override def pause: UIO[Unit] = for {
+        resume <- Promise.make[Nothing, Unit]
+        _ <- state.updateSome {
+          case State.Running =>
+            State.Paused(resume)
+        }
+      } yield ()
+
+      override def resume: UIO[Unit] = state.modify {
+        case State.Paused(resume) => (resume.succeed(()).unit, State.Running)
+        case state => (ZIO.unit, state)
+      }.flatten
+
+      override def shutdown: URIO[R with GreyhoundMetrics with Clock, Unit] =
+        state.modify(state => (state, State.ShuttingDown)).flatMap {
+          case State.Paused(resume) => resume.succeed(()).unit
+          case _ => ZIO.unit
+        } *> workers.get.flatMap { workers =>
+          ZIO.foreachPar_(workers) {
+            case (partition, worker) =>
+              Metrics.report(StoppingWorker(partition)) *>
+                worker.shutdown
+          }
+        }
+
+      /**
+        * This implementation is not fiber-safe. Since the worker is used per partition,
+        * and all operations performed on a single partition are linearizable this is fine.
+        */
+      private def workerFor(partition: TopicPartition) =
+        workers.get.flatMap { workers1 =>
+          workers1.get(partition) match {
+            case Some(worker) => ZIO.succeed(worker)
+            case None => for {
+              _ <- Metrics.report(StartingWorker(partition))
+              worker <- Worker.make(state, handleWithMetrics, highWatermark)
+              _ <- workers.update(_ + (partition -> worker))
+            } yield worker
+          }
+        }
+
+      private def handleWithMetrics(record: Record) =
+        Metrics.report(HandlingRecord(record)) *>
+          handle(record).timed.flatMap {
+            case (duration, _) =>
+              Metrics.report(RecordHandled(record, duration))
+          }
     }
+
+  sealed trait State
+
+  object State {
+    case object Running extends State
+    case class Paused(resume: Promise[Nothing, Unit]) extends State
+    case object ShuttingDown extends State
+  }
+
+  case class Task(record: Record, complete: UIO[Unit])
+
+  trait Worker {
+    def submit(record: Record): UIO[Boolean]
+    def pendingTasks: UIO[Int]
+    def shutdown: UIO[Unit]
+  }
+
+  object Worker {
+    def make[R](state: Ref[State],
+                handle: Record => URIO[R, Any],
+                capacity: Int): URIO[R, Worker] = for {
+      queue <- Queue.dropping[Option[Record]](capacity)
+      fiber <- loop(state, handle, queue).fork
+    } yield new Worker {
+      override def submit(record: Record): UIO[Boolean] =
+        queue.offer(Some(record))
+
+      override def pendingTasks: UIO[Int] =
+        queue.size
+
+      override def shutdown: UIO[Unit] =
+        queue.offer(None) *> fiber.join
+    }
+
+    private def loop[R](state: Ref[State],
+                        handle: Record => URIO[R, Any],
+                        queue: Queue[Option[Record]]): URIO[R, Unit] =
+      state.get.flatMap {
+        case State.Running => queue.take.flatMap {
+          case Some(record) => handle(record) *> loop(state, handle, queue)
+          case None => ZIO.unit
+        }
+
+        case State.Paused(resume) =>
+          resume.await *> loop(state, handle, queue)
+
+        case State.ShuttingDown => ZIO.unit
+      }
+  }
 
 }
 
 sealed trait SubmitResult
 
 object SubmitResult {
-  case class Submitted(awaitCompletion: UIO[Unit]) extends SubmitResult
+  case object Submitted extends SubmitResult
   case object Rejected extends SubmitResult
-}
-
-case class DispatcherTask(record: Record, complete: UIO[Unit])
-
-trait DispatcherWorker {
-  def submit(task: DispatcherTask): UIO[Boolean]
-  def pendingTasks: UIO[Int]
-  def shutdown: UIO[Unit]
-}
-
-object DispatcherWorker {
-  def make[R](handle: Record => URIO[R, Unit],
-              capacity: Int): URIO[R, DispatcherWorker] = for {
-    queue <- Queue.dropping[DispatcherTask](capacity)
-    fiber <- queue.take.flatMap {
-      case DispatcherTask(record, complete) =>
-        handle(record) *> complete
-    }.forever.fork.interruptible
-  } yield new DispatcherWorker {
-    override def submit(task: DispatcherTask): UIO[Boolean] = queue.offer(task)
-    override def pendingTasks: UIO[Int] = queue.size
-    override def shutdown: UIO[Unit] = fiber.interrupt.unit
-  }
 }
 
 sealed trait DispatcherMetric extends GreyhoundMetric

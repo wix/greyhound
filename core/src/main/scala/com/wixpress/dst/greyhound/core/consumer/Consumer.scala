@@ -38,7 +38,7 @@ trait Consumer[R] {
 object Consumer {
   type Record = KafkaConsumerRecord[Chunk[Byte], Chunk[Byte]]
   type Records = ConsumerRecords[Chunk[Byte], Chunk[Byte]]
-  type RebalanceListener[R] = Set[TopicPartition] => URIO[R, Unit]
+  type RebalanceListener[R] = Set[TopicPartition] => URIO[R, Any]
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
     override def configure(configs: util.Map[Topic, _], isKey: Boolean): Unit = ()

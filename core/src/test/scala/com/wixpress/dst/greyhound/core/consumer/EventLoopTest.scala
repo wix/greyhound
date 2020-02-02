@@ -36,9 +36,7 @@ class EventLoopTest extends BaseTest[TestClock with TestMetrics] {
           }
       }
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
-      handler = RecordHandler(topic) { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-        promise.succeed(record).unit
-      }
+      handler = RecordHandler(topic)(promise.succeed)
       handled <- EventLoop.make(ReportingConsumer(consumer), handler).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty))) and
@@ -88,7 +86,7 @@ trait EmptyConsumer[R] extends Consumer[R] {
   override def subscribe(topics: Set[Topic],
                          onPartitionsRevoked: RebalanceListener[R],
                          onPartitionsAssigned: RebalanceListener[R]): RIO[R, Unit] =
-    onPartitionsAssigned(topics.map(TopicPartition(_, 0)))
+    onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit
 
   override def poll(timeout: Duration): RIO[R, Records] =
     ZIO.succeed(ConsumerRecords.empty())

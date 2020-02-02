@@ -76,7 +76,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         producer <- FakeProducer.make
         executionTime <- Promise.make[Nothing, Instant]
         handler = RecordHandler[Clock, HandlerError, Chunk[Byte], Chunk[Byte]](topic) { _ =>
-          currentTime.flatMap(executionTime.succeed).unit
+          currentTime.flatMap(executionTime.succeed)
         }
         retryHandler = handler.withRetries(retryPolicy, producer)
         value <- bytes
@@ -117,10 +117,10 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
     "invoke the correct handler by topic" in {
       for {
         records1 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
-        handler1 = RecordHandler[Any, Nothing, Nothing, String]("topic1")(records1.offer(_).unit)
+        handler1 = RecordHandler[Any, Nothing, Nothing, String]("topic1")(records1.offer)
 
         records2 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
-        handler2 = RecordHandler[Any, Nothing, Nothing, String]("topic2")(records2.offer(_).unit)
+        handler2 = RecordHandler[Any, Nothing, Nothing, String]("topic2")(records2.offer)
 
         combined = handler1 combine handler2
 
@@ -135,10 +135,10 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
     "invoke both handlers for shared topics" in {
       for {
         records1 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
-        handler1 = RecordHandler[Any, Nothing, Nothing, String](topic)(records1.offer(_).unit)
+        handler1 = RecordHandler[Any, Nothing, Nothing, String](topic)(records1.offer)
 
         records2 <- Queue.unbounded[ConsumerRecord[Nothing, String]]
-        handler2 = RecordHandler[Any, Nothing, Nothing, String](topic)(records2.offer(_).unit)
+        handler2 = RecordHandler[Any, Nothing, Nothing, String](topic)(records2.offer)
 
         combined = handler1 combine handler2
 

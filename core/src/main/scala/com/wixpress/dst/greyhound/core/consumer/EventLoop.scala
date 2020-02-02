@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.Topic
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import org.apache.kafka.clients.consumer.ConsumerRecords
@@ -17,90 +16,62 @@ trait EventLoop[-R] {
 
 object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
-  private val emptyRecords = ZIO.succeed(ConsumerRecords.empty())
 
   def make[R1, R2](consumer: Consumer[R1],
                    handler: Handler[R2],
-                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, EventLoop[R1 with R2 with GreyhoundMetrics]] = {
-    Offsets.make.toManaged_.flatMap { offsets =>
-      val handle = handler.andThen(offsets.update).handle(_)
-      Dispatcher.make(handle, config.lowWatermark, config.highWatermark).flatMap { dispatcher =>
-        start(consumer, dispatcher, handler.topics, offsets, config).toManaged {
-          case (state, fiber) => for {
-            _ <- Metrics.report(StoppingEventLoop)
-            _ <- state.set(EventLoopState.ShuttingDown)
-            drained <- fiber.join.timeout(config.drainTimeout)
-            _ <- ZIO.when(drained.isEmpty)(Metrics.report(DrainTimeoutExceeded))
-            _ <- commitOffsets(consumer, offsets)
-          } yield ()
-        }.map {
-          case (state, _) =>
-            new EventLoop[R1 with R2 with GreyhoundMetrics] {
-              // TODO should we pause all assigned partitions eagerly?
-              // TODO should we return a promise / suspend until paused?
-              override def pause: URIO[R1 with R2 with GreyhoundMetrics, Unit] =
-                Metrics.report(PausingEventLoop) *>
-                  state.updateSome {
-                    case EventLoopState.Running =>
-                      EventLoopState.Paused
-                  }.unit
-
-              override def resume: URIO[R1 with R2 with GreyhoundMetrics, Unit] =
-                Metrics.report(ResumingEventLoop) *>
-                  state.updateSome {
-                    case EventLoopState.Paused =>
-                      EventLoopState.Running
-                  }.unit
-            }
-        }
-      }
-    }
-  }
-
-  private def start[R1, R2](consumer: Consumer[R1],
-                            dispatcher: Dispatcher[R2],
-                            topics: Set[Topic],
-                            offsets: Offsets,
-                            config: EventLoopConfig) =
-    for {
+                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
+    val start = for {
       _ <- Metrics.report(StartingEventLoop)
-      state <- Ref.make[EventLoopState](EventLoopState.Running)
+      offsets <- Offsets.make
+      handle = handler.andThen(offsets.update).handle(_)
+      dispatcher <- Dispatcher.make(handle, config.lowWatermark, config.highWatermark)
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
       _ <- consumer.subscribe(
-        topics = topics,
+        topics = handler.topics,
         onPartitionsAssigned = { _ =>
-          partitionsAssigned.succeed(()).unit
+          partitionsAssigned.succeed(())
         })
-      fiber <- loop(state, consumer, dispatcher, Map.empty, Set.empty, offsets, config).fork
+      running <- Ref.make(true)
+      fiber <- loop(running, consumer, dispatcher, Set.empty, offsets, config).fork
       _ <- partitionsAssigned.await
-    } yield (state, fiber)
+    } yield (offsets, dispatcher, running, fiber)
 
-  private def loop[R1, R2](state: Ref[EventLoopState],
+    start.toManaged {
+      case (offsets, dispatcher, running, fiber) => for {
+        _ <- Metrics.report(StoppingEventLoop)
+        _ <- running.set(false)
+        drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
+        _ <- ZIO.when(drained.isEmpty)(Metrics.report(DrainTimeoutExceeded))
+        _ <- commitOffsets(consumer, offsets)
+      } yield ()
+    }.map {
+      case (_, dispatcher, _, _) =>
+        new EventLoop[R2 with GreyhoundMetrics with Clock] {
+          override def pause: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
+            Metrics.report(PausingEventLoop) *> dispatcher.pause
+
+          override def resume: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
+            Metrics.report(ResumingEventLoop) *> dispatcher.resume
+        }
+    }
+  }
+
+  private def loop[R1, R2](running: Ref[Boolean],
                            consumer: Consumer[R1],
                            dispatcher: Dispatcher[R2],
-                           pending: Map[TopicPartition, UIO[Unit]],
                            paused: Set[TopicPartition],
                            offsets: Offsets,
                            config: EventLoopConfig): URIO[R1 with R2 with GreyhoundMetrics, Unit] =
-    state.get.flatMap {
-      case EventLoopState.Running =>
-        resumePartitions(consumer, dispatcher, paused).flatMap { newPaused1 =>
-          pollAndHandle(consumer, dispatcher, pending, newPaused1, config).flatMap {
-            case (newPending, newPaused2) =>
-              commitOffsets(consumer, offsets) *>
-                loop(state, consumer, dispatcher, newPending, newPaused2, offsets, config)
-          }
-        }
+    running.get.flatMap {
+      case true => for {
+        paused1 <- resumePartitions(consumer, dispatcher, paused)
+        paused2 <- pollAndHandle(consumer, dispatcher, paused1, config)
+        _ <- commitOffsets(consumer, offsets)
+        result <- loop(running, consumer, dispatcher, paused2, offsets, config)
+      } yield result
 
-      case EventLoopState.Paused =>
-        pollPaused(consumer, config).flatMap { newPaused =>
-          loop(state, consumer, dispatcher, pending, paused union newPaused, offsets, config)
-        }
-
-      case EventLoopState.ShuttingDown =>
-        // Await for all pending tasks before exiting the fiber
-        ZIO.foreach_(pending)(_._2)
+      case false => ZIO.unit
     }
 
   private def resumePartitions[R1, R2](consumer: Consumer[R1],
@@ -111,46 +82,25 @@ object EventLoop {
       _ <- consumer.resume(partitionsToResume).ignore
     } yield paused diff partitionsToResume
 
+  private val emptyRecords = ZIO.succeed(ConsumerRecords.empty())
+
   private def pollAndHandle[R1, R2](consumer: Consumer[R1],
                                     dispatcher: Dispatcher[R2],
-                                    pending: Map[TopicPartition, UIO[Unit]],
                                     paused: Set[TopicPartition],
                                     config: EventLoopConfig) =
-    poll(consumer, config).flatMap { records =>
-      ZIO.foldLeft(records.asScala)((pending, paused)) {
-        case ((accPending, accPaused), kafkaRecord) =>
-          val record = ConsumerRecord(kafkaRecord)
-          val partition = TopicPartition(record)
-          if (accPaused contains partition) {
-            Metrics.report(PartitionThrottled(partition))
-              .as((accPending, accPaused))
-          } else {
-            dispatcher.submit(record).flatMap {
-              case SubmitResult.Submitted(awaitCompletion) =>
-                ZIO.succeed((accPending + (partition -> awaitCompletion), accPaused))
-
-              case SubmitResult.Rejected =>
-                Metrics.report(HighWatermarkReached(partition)) *>
-                  consumer.pause(record)
-                    .fold(_ => accPaused, _ => accPaused + partition)
-                    .map(newPaused => (accPending, newPaused))
-            }
-          }
-      }
-    }
-
-  private def pollPaused[R](consumer: Consumer[R], config: EventLoopConfig) =
-    poll(consumer, config).flatMap { records =>
-      ZIO.foldLeft(records.asScala)(Set.empty[TopicPartition]) { (acc, kafkaRecord) =>
+    consumer.poll(config.pollTimeout).catchAll(_ => emptyRecords).flatMap { records =>
+      ZIO.foldLeft(records.asScala)(paused) { (acc, kafkaRecord) =>
         val record = ConsumerRecord(kafkaRecord)
         val partition = TopicPartition(record)
-        if (acc contains partition) ZIO.succeed(acc)
-        else consumer.pause(record).fold(_ => acc, _ => acc + partition)
+        if (acc contains partition) Metrics.report(PartitionThrottled(partition)).as(acc)
+        else dispatcher.submit(record).flatMap {
+          case SubmitResult.Submitted => ZIO.succeed(acc)
+          case SubmitResult.Rejected =>
+            Metrics.report(HighWatermarkReached(partition)) *>
+              consumer.pause(record).fold(_ => acc, _ => acc + partition)
+        }
       }
     }
-
-  private def poll[R](consumer: Consumer[R], config: EventLoopConfig) =
-    consumer.poll(config.pollTimeout).catchAll(_ => emptyRecords)
 
   private def commitOffsets[R](consumer: Consumer[R], offsets: Offsets) =
     offsets.committable.flatMap { committable =>
