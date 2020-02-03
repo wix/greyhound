@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
+import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
@@ -157,8 +158,11 @@ object SubmitResult {
 }
 
 sealed trait DispatcherMetric extends GreyhoundMetric
-case class StartingWorker(partition: TopicPartition) extends DispatcherMetric
-case class StoppingWorker(partition: TopicPartition) extends DispatcherMetric
-case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
-case class HandlingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
-case class RecordHandled[K, V](record: ConsumerRecord[K, V], duration: Duration) extends DispatcherMetric
+
+object DispatcherMetric {
+  case class StartingWorker(partition: TopicPartition) extends DispatcherMetric
+  case class StoppingWorker(partition: TopicPartition) extends DispatcherMetric
+  case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
+  case class HandlingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
+  case class RecordHandled[K, V](record: ConsumerRecord[K, V], duration: Duration) extends DispatcherMetric
+}

@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.producer
 
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
+import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import zio.clock.Clock
 import zio.duration.Duration
 import zio.{Chunk, ZIO}
@@ -21,6 +22,9 @@ case class ReportingProducer[-R](internal: Producer[R])
 }
 
 sealed trait ProducerMetric extends GreyhoundMetric
-case class ProducingRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) extends ProducerMetric
-case class RecordProduced(metadata: RecordMetadata, duration: Duration) extends ProducerMetric
-case class ProduceFailed(error: ProducerError) extends ProducerMetric
+
+object ProducerMetric {
+  case class ProducingRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) extends ProducerMetric
+  case class RecordProduced(metadata: RecordMetadata, duration: Duration) extends ProducerMetric
+  case class ProduceFailed(error: ProducerError) extends ProducerMetric
+}

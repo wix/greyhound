@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.{RebalanceListener, Record, Records}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic}
@@ -37,10 +38,10 @@ class EventLoopTest extends BaseTest[TestClock with TestMetrics] {
       }
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       handler = RecordHandler(topic)(promise.succeed)
-      handled <- EventLoop.make(ReportingConsumer(consumer), handler).use_(promise.await)
+      handled <- EventLoop.make(ReportingConsumer(group, consumer), handler).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty))) and
-      (metrics must contain(PollingFailed(exception)))
+      (metrics must contain(PollingFailed(group, exception)))
   }
 
   "recover from consumer failing to commit" in {
@@ -61,15 +62,16 @@ class EventLoopTest extends BaseTest[TestClock with TestMetrics] {
             case _ => promise.succeed(offsets).unit
           }
       }
-      committed <- EventLoop.make(ReportingConsumer(consumer), RecordHandler.empty).use_(promise.await)
+      committed <- EventLoop.make(ReportingConsumer(group, consumer), RecordHandler.empty).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
-      (metrics must contain(CommitFailed(exception)))
+      (metrics must contain(CommitFailed(group, exception)))
   }
 
 }
 
 object EventLoopTest {
+  val group = "group"
   val topic = "topic"
   val partition = 0
   val offset = 0L

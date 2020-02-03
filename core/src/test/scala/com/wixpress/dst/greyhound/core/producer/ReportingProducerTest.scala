@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.producer
 
+import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.ReportingProducerTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, FakeProducer, TestMetrics}
 import zio._

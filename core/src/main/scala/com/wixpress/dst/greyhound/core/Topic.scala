@@ -7,10 +7,20 @@ import zio.duration.Duration
 case class TopicConfig(name: Topic,
                        partitions: Int,
                        replicationFactor: Int,
-                       cleanupPolicy: CleanupPolicy) {
+                       cleanupPolicy: CleanupPolicy,
+                       extraProperties: Map[String, String] = Map.empty) {
+
+  def properties: Properties = {
+    val props = new Properties
+    propertiesMap.foreach {
+      case (key, value) =>
+        props.put(key, value)
+    }
+    props
+  }
 
   def propertiesMap: Map[String, String] =
-    cleanupPolicy match {
+    (cleanupPolicy match {
       case CleanupPolicy.Delete(retention) =>
         Map(
           "retention.ms" -> retention.toMillis.toString,
@@ -18,13 +28,7 @@ case class TopicConfig(name: Topic,
 
       case CleanupPolicy.Compact =>
         Map("cleanup.policy" -> "compact")
-    }
-
-  def properties: Properties = {
-    val props = new Properties
-    propertiesMap.foreach(p => props.put(p._1, p._2))
-    props
-  }
+    }) ++ extraProperties
 
 }
 

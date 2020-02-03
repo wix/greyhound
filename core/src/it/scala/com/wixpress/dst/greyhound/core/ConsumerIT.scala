@@ -108,8 +108,7 @@ class ConsumerIT extends BaseTest[Env] {
       }
 
       val test4 = for {
-        partitions <- ZIO.succeed(2)
-        topic <- randomTopic(partitions)
+        topic <- randomTopic(partitions = 2)
         group <- randomGroup
 
         messagesPerPartition = 500 // Exceeds queue's capacity

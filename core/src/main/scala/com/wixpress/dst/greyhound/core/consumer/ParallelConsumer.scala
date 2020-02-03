@@ -15,7 +15,7 @@ object ParallelConsumer {
     ZManaged.foreachPar(handlers) {
       case (group, handler) => for {
         consumer <- Consumer.make(ConsumerConfig(config.bootstrapServers, group, config.clientId))
-        eventLoop <- EventLoop.make(ReportingConsumer(consumer), handler, config.eventLoopConfig)
+        eventLoop <- EventLoop.make(ReportingConsumer(group, consumer), handler, config.eventLoopConfig)
       } yield group -> eventLoop
     }.map(_.toMap)
 

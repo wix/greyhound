@@ -38,11 +38,16 @@ object AdminClient {
   }
 }
 
-case class AdminClientConfig(bootstrapServers: Set[String]) {
+case class AdminClientConfig(bootstrapServers: Set[String],
+                             extraProperties: Map[String, String] = Map.empty) {
 
   def properties: Properties = {
     val props = new Properties
     props.setProperty(KafkaAdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers.mkString(","))
+    extraProperties.foreach {
+      case (key, value) =>
+        props.setProperty(key, value)
+    }
     props
   }
 
