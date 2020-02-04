@@ -9,17 +9,12 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
-trait EventLoop[-R] {
-  def pause: URIO[R, Unit]
-  def resume: URIO[R, Unit]
-}
-
 object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
   def make[R1, R2](consumer: Consumer[R1],
                    handler: Handler[R2],
-                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
+                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, Resource[R2 with GreyhoundMetrics with Clock]] = {
     val start = for {
       _ <- Metrics.report(StartingEventLoop)
       offsets <- Offsets.make
@@ -35,10 +30,10 @@ object EventLoop {
       running <- Ref.make(true)
       fiber <- loop(running, consumer, dispatcher, Set.empty, offsets, config).fork
       _ <- partitionsAssigned.await
-    } yield (offsets, dispatcher, running, fiber)
+    } yield (dispatcher, fiber, offsets, running)
 
     start.toManaged {
-      case (offsets, dispatcher, running, fiber) => for {
+      case (dispatcher, fiber, offsets, running) => for {
         _ <- Metrics.report(StoppingEventLoop)
         _ <- running.set(false)
         drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
@@ -46,13 +41,18 @@ object EventLoop {
         _ <- commitOffsets(consumer, offsets)
       } yield ()
     }.map {
-      case (_, dispatcher, _, _) =>
-        new EventLoop[R2 with GreyhoundMetrics with Clock] {
+      case (dispatcher, fiber, _, _) =>
+        new Resource[R2 with GreyhoundMetrics with Clock] {
           override def pause: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
             Metrics.report(PausingEventLoop) *> dispatcher.pause
 
           override def resume: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
             Metrics.report(ResumingEventLoop) *> dispatcher.resume
+
+          override def isAlive: UIO[Boolean] = fiber.poll.map {
+            case Some(Exit.Failure(_)) => false
+            case _ => true
+          }
         }
     }
   }

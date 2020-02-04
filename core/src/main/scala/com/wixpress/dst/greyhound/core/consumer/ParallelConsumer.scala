@@ -11,16 +11,18 @@ object ParallelConsumer {
   type Env = GreyhoundMetrics with Blocking with Clock
 
   def make[R](config: ParallelConsumerConfig,
-              handlers: Map[Group, Handler[R]]): ZManaged[R with Env, Throwable, Map[Group, EventLoop[R with Env]]] =
+              handlers: Map[Group, Handler[R]]): ZManaged[R with Env, Throwable, Resource[R with Env]] =
     ZManaged.foreachPar(handlers) {
       case (group, handler) => for {
         consumer <- Consumer.make(ConsumerConfig(config.bootstrapServers, group, config.clientId))
         eventLoop <- EventLoop.make(ReportingConsumer(group, consumer), handler, config.eventLoopConfig)
-      } yield group -> eventLoop
-    }.map(_.toMap)
+      } yield eventLoop
+    }.map { eventLoops =>
+      eventLoops.foldLeft[Resource[R with Env]](Resource.Empty)(_ combine _)
+    }
 
   def make[R](bootstrapServers: Set[String],
-              handlers: (Group, Handler[R])*): ZManaged[R with Env, Throwable, Map[Group, EventLoop[R with Env]]] =
+              handlers: (Group, Handler[R])*): ZManaged[R with Env, Throwable, Resource[R with Env]] =
     make(ParallelConsumerConfig(bootstrapServers), handlers.toMap)
 
 }

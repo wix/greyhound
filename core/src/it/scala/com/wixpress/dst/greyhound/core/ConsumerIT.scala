@@ -152,15 +152,15 @@ class ConsumerIT extends BaseTest[Env] {
           handledSomeMessages.countDown zipParRight handledAllMessages.countDown
         }
 
-        test <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use { eventLoops =>
+        test <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use { consumer =>
           val record = ProducerRecord(topic, Chunk.empty)
           for {
             _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
             _ <- handledSomeMessages.await
-            _ <- eventLoops(group).pause
+            _ <- consumer.pause
             _ <- ZIO.foreachPar(0 until restOfMessages)(_ => producer.produce(record))
             a <- handledAllMessages.await.timeout(5.seconds)
-            _ <- eventLoops(group).resume
+            _ <- consumer.resume
             b <- handledAllMessages.await.timeout(5.seconds)
           } yield "pause and resume event loop" in {
             (a must beNone) and (b must beSome)

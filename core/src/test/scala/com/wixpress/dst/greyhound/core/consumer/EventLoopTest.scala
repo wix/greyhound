@@ -8,21 +8,19 @@ import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
-import zio.duration.Duration
-import zio.test.environment.{TestClock, TestEnvironment}
+import zio.clock.Clock
+import zio.duration._
 
 import scala.collection.JavaConverters._
 
-class EventLoopTest extends BaseTest[TestClock with TestMetrics] {
+class EventLoopTest extends BaseTest[Clock with TestMetrics] {
 
-  override def env: UManaged[TestClock with TestMetrics] =
-    for {
-      env <- TestEnvironment.Value
-      testMetrics <- TestMetrics.make
-    } yield new TestClock with TestMetrics {
-      override val clock: TestClock.Service[Any] = env.clock
-      override val scheduler: TestClock.Service[Any] = env.scheduler
-      override val metrics: TestMetrics.Service = testMetrics.metrics
+  override def env: UManaged[Clock with TestMetrics] =
+    TestMetrics.make.map { testMetrics =>
+      new TestMetrics with Clock.Live {
+        override val metrics: TestMetrics.Service =
+          testMetrics.metrics
+      }
     }
 
   "recover from consumer failing to poll" in {
@@ -66,6 +64,19 @@ class EventLoopTest extends BaseTest[TestClock with TestMetrics] {
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(group, exception)))
+  }
+
+  "expose event loop health" in {
+    for {
+      _ <- ZIO.unit
+      sickConsumer = new EmptyConsumer[Any] {
+        override def poll(timeout: Duration): Task[Records] =
+          ZIO.dieMessage("cough :(")
+      }
+      died <- EventLoop.make(sickConsumer, RecordHandler.empty).use { eventLoop =>
+        eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.doUntil(alive => !alive)).unit
+      }.catchAllCause(_ => ZIO.unit).timeout(1.second)
+    } yield died must beSome
   }
 
 }
