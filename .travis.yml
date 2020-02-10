@@ -1,0 +1,23 @@
+language: java
+
+jdk:
+  - openjdk8
+
+env:
+  - V=1.2.1
+
+dist: xenial
+
+before_install:
+  - |
+    URL="https://github.com/bazelbuild/bazel/releases/download/${V}/bazel-${V}-installer-linux-x86_64.sh"
+    wget -O install.sh "${URL}"
+    chmod +x install.sh
+    ./install.sh --user
+    rm -f install.sh
+
+#avoid running `mvn install` by default
+install: true
+
+script:
+  bazel test //... -k --test_output=streamed
