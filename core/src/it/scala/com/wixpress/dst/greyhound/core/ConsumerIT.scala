@@ -80,7 +80,7 @@ class ConsumerIT extends BaseTest[Env] {
 
         success <- ParallelConsumer.make(kafka.bootstrapServers, group -> retryHandler).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-            done.await.timeout(30.seconds)
+            done.await.timeout(1.minute)
         }
       } yield "configure a handler with retry policy" in {
         success must beSome
