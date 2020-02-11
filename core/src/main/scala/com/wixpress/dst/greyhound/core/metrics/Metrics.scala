@@ -9,16 +9,16 @@ trait Metrics[-A] {
 
 object Metrics {
   trait Service[-A] {
-    def report(metric: A): UIO[_]
+    def report(metric: A): UIO[Unit]
   }
 
-  def report[A](metric: A): URIO[Metrics[A], _] =
+  def report[A](metric: A): URIO[Metrics[A], Unit] =
     ZIO.accessM[Metrics[A]](_.metrics.report(metric))
 
   case class Live[A]() extends Service[A] {
     private val logger = LoggerFactory.getLogger("metrics")
 
-    override def report(metric: A): UIO[_] =
+    override def report(metric: A): UIO[Unit] =
       ZIO.effectTotal(logger.info(metric.toString))
   }
 }

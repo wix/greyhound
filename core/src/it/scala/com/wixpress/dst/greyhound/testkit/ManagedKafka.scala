@@ -3,11 +3,13 @@ package com.wixpress.dst.greyhound.testkit
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.TopicConfig
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
+import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
-import zio.console.{Console, putStrLn}
-import zio.{RIO, RManaged, ZManaged}
+import zio.{RIO, RManaged}
 
 import scala.reflect.io.Directory
 
@@ -19,7 +21,7 @@ trait ManagedKafka {
 
 object ManagedKafka {
 
-  def make(config: ManagedKafkaConfig): RManaged[Blocking with Console, ManagedKafka] = for {
+  def make(config: ManagedKafkaConfig): RManaged[Blocking with GreyhoundMetrics, ManagedKafka] = for {
     _ <- embeddedZooKeeper(config.zooKeeperPort)
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
     kafka <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir))
@@ -35,29 +37,29 @@ object ManagedKafka {
   }
 
   private def tempDirectory(path: String) = {
-    val acquire = putStrLn(s"Creating $path") *> effectBlocking(Directory(path))
-    ZManaged.make(acquire) { dir =>
-      putStrLn(s"Deleting $path") *>
+    val acquire = Metrics.report(CreatingTempDirectory(path)) *> effectBlocking(Directory(path))
+    acquire.toManaged { dir =>
+      Metrics.report(DeletingTempDirectory(path)) *>
         effectBlocking(dir.deleteRecursively()).ignore
     }
   }
 
   private def embeddedZooKeeper(port: Int) = {
-    val acquire = putStrLn("Starting ZooKeeper") *> effectBlocking(new TestingServer(port))
-    ZManaged.make(acquire) { server =>
-      putStrLn("Stopping ZooKeeper") *>
+    val acquire = Metrics.report(StartingZooKeeper(port)) *> effectBlocking(new TestingServer(port))
+    acquire.toManaged { server =>
+      Metrics.report(StoppingZooKeeper) *>
         effectBlocking(server.stop()).ignore
     }
   }
 
   private def embeddedKafka(config: KafkaServerConfig) = {
     val acquire = for {
-      _ <- putStrLn("Starting Kafka")
+      _ <- Metrics.report(StartingKafka(config.port))
       server <- effectBlocking(new KafkaServer(config.toKafkaConfig))
       _ <- effectBlocking(server.startup())
     } yield server
-    ZManaged.make(acquire) { server =>
-      putStrLn("Stopping Kafka") *>
+    acquire.toManaged { server =>
+      Metrics.report(StoppingKafka) *>
         effectBlocking(server.shutdown()).ignore
     }
   }
@@ -100,4 +102,15 @@ case class KafkaServerConfig(port: Int,
     props
   }
 
+}
+
+sealed trait ManagedKafkaMetric extends GreyhoundMetric
+
+object ManagedKafkaMetric {
+  case class CreatingTempDirectory(path: String) extends ManagedKafkaMetric
+  case class DeletingTempDirectory(path: String) extends ManagedKafkaMetric
+  case class StartingZooKeeper(port: Int) extends ManagedKafkaMetric
+  case object StoppingZooKeeper extends ManagedKafkaMetric
+  case class StartingKafka(port: Int) extends ManagedKafkaMetric
+  case object StoppingKafka extends ManagedKafkaMetric
 }

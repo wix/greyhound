@@ -17,7 +17,7 @@ object TestMetrics {
     Queue.unbounded[GreyhoundMetric].toManaged_.map { q =>
       new TestMetrics {
         override val metrics: Service = new Service {
-          override def report(metric: GreyhoundMetric): UIO[_] = q.offer(metric)
+          override def report(metric: GreyhoundMetric): UIO[Unit] = q.offer(metric).unit
           override def queue: Queue[GreyhoundMetric] = q
         }
       }

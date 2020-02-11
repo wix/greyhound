@@ -1,164 +1,118 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
+import com.wixpress.dst.greyhound.core.consumer.Consumer.{RebalanceListener, Record, Records}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.testkit.BaseTest
-import com.wixpress.dst.greyhound.core.testkit.RecordMatchers.beRecordWithOffset
-import com.wixpress.dst.greyhound.core.{Offset, Topic}
+import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
+import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
-import zio.blocking.Blocking
-import zio.duration.Duration
+import zio.clock.Clock
+import zio.duration._
 
 import scala.collection.JavaConverters._
 
-class EventLoopTest extends BaseTest[GreyhoundMetrics with Blocking] {
+class EventLoopTest extends BaseTest[Clock with TestMetrics] {
 
-  type Env = GreyhoundMetrics with Blocking
-
-  override def env: UManaged[Env] =
-    Managed.succeed(new GreyhoundMetric.Live with Blocking.Live)
-
-  "subscribe to topics on startup" in {
-    for {
-      offsets <- Offsets.make
-      promise <- Promise.make[Nothing, Set[Topic]]
-      consumer = new EmptyConsumer {
-        override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
-          promise.succeed(topics).unit
+  override def env: UManaged[Clock with TestMetrics] =
+    TestMetrics.make.map { testMetrics =>
+      new TestMetrics with Clock.Live {
+        override val metrics: TestMetrics.Service =
+          testMetrics.metrics
       }
-      subscribed <- EventLoop.make[Env](
-        consumer = consumer,
-        offsets = offsets,
-        handler = RecordHandler("topic-1", "topic-2")(_ => ZIO.unit)).use_(promise.await)
-    } yield subscribed must equalTo(Set("topic-1", "topic-2"))
+    }
+
+  "recover from consumer failing to poll" in {
+    for {
+      invocations <- Ref.make(0)
+      consumer = new EmptyConsumer[Any] {
+        override def poll(timeout: Duration): Task[Records] =
+          invocations.update(_ + 1).flatMap {
+            case 1 => ZIO.fail(exception)
+            case 2 => ZIO.succeed(recordsFrom(record))
+            case _ => ZIO.succeed(ConsumerRecords.empty())
+          }
+      }
+      promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
+      handler = RecordHandler(topic)(promise.succeed)
+      handled <- EventLoop.make(ReportingConsumer(group, consumer), handler).use_(promise.await)
+      metrics <- TestMetrics.reported
+    } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty))) and
+      (metrics must contain(PollingFailed(group, exception)))
   }
 
-  "handle polled records" in {
+  "recover from consumer failing to commit" in {
     for {
-      offsets <- Offsets.make
-      queue <- Queue.unbounded[ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
-          recordsFrom(
-            new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
-            new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
-            new KafkaConsumerRecord(topic, 0, 2L, bytes, bytes))
-      }
-      handled <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(queue.offer)).use_ {
-        ZIO.collectAll(List.fill(3)(queue.take))
-      }
-    } yield handled must
-      (contain(beRecordWithOffset(0L)) and
-        contain(beRecordWithOffset(1L)) and
-        contain(beRecordWithOffset(2L)))
-  }
-
-  "commit handled records" in {
-    for {
-      offsets <- Offsets.make
+      pollInvocations <- Ref.make(0)
+      commitInvocations <- Ref.make(0)
       promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
-          recordsFrom(
-            new KafkaConsumerRecord(topic, 0, 0L, bytes, bytes),
-            new KafkaConsumerRecord(topic, 0, 1L, bytes, bytes),
-            new KafkaConsumerRecord(topic, 1, 2L, bytes, bytes))
-
-        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
-          promise.succeed(offsets).unit
-      }
-      committed <- EventLoop.make[Env](consumer, offsets, RecordHandler(topic)(offsets.update)).use_(promise.await)
-    } yield committed must havePairs(
-      TopicPartition(topic, 0) -> 1L,
-      TopicPartition(topic, 1) -> 2L)
-  }
-
-  "don't commit empty offsets map" in {
-    for {
-      offsets <- Offsets.make
-      promise <- Promise.make[Unit, Unit]
-      currentPoll <- Ref.make(0)
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): RIO[Blocking, Records] =
-          currentPoll.update(_ + 1).flatMap {
-            // Return empty result on first poll
-            case 1 => recordsFrom()
-            // Release the promise on the second poll
-            case _ => promise.succeed(()) *> recordsFrom()
+      consumer = new EmptyConsumer[Any] {
+        override def poll(timeout: Duration): Task[Records] =
+          pollInvocations.update(_ + 1).flatMap {
+            case 1 => ZIO.succeed(recordsFrom(record))
+            case _ => ZIO.succeed(ConsumerRecords.empty())
           }
 
-        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
-          promise.fail(()).unit
+        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Any, Unit] =
+          commitInvocations.update(_ + 1).flatMap {
+            case 1 => ZIO.fail(exception)
+            case _ => promise.succeed(offsets).unit
+          }
       }
-      result <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use_(promise.await.either)
-    } yield result must beRight
+      committed <- EventLoop.make(ReportingConsumer(group, consumer), RecordHandler.empty).use_(promise.await)
+      metrics <- TestMetrics.reported
+    } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
+      (metrics must contain(CommitFailed(group, exception)))
   }
 
-  "pause partitions" in {
-    val partitions = Set(TopicPartition(topic, 0))
-
+  "expose event loop health" in {
     for {
-      offsets <- Offsets.make
-      promise <- Promise.make[Nothing, Set[TopicPartition]]
-      consumer = new EmptyConsumer {
-        override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          promise.succeed(partitions).unit
+      _ <- ZIO.unit
+      sickConsumer = new EmptyConsumer[Any] {
+        override def poll(timeout: Duration): Task[Records] =
+          ZIO.dieMessage("cough :(")
       }
-      paused <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use { eventLoop =>
-        eventLoop.pause(partitions) *> promise.await
-      }
-    } yield paused must equalTo(partitions)
-  }
-
-  "resume partitions" in {
-    val partitions = Set(TopicPartition(topic, 0))
-
-    for {
-      offsets <- Offsets.make
-      promise <- Promise.make[Nothing, Set[TopicPartition]]
-      consumer = new EmptyConsumer {
-        override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-          promise.succeed(partitions).unit
-      }
-      resumed <- EventLoop.make[Env](consumer, offsets, emptyHandler(topic)).use { eventLoop =>
-        eventLoop.resume(partitions) *> promise.await
-      }
-    } yield resumed must equalTo(partitions)
+      died <- EventLoop.make(sickConsumer, RecordHandler.empty).use { eventLoop =>
+        eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.doUntil(alive => !alive)).unit
+      }.catchAllCause(_ => ZIO.unit).timeout(1.second)
+    } yield died must beSome
   }
 
 }
 
 object EventLoopTest {
+  val group = "group"
   val topic = "topic"
+  val partition = 0
+  val offset = 0L
+  val record: Record = new KafkaConsumerRecord(topic, partition, offset, null, Chunk.empty)
+  val exception = new RuntimeException("oops")
 
-  val bytes = Chunk.empty
-
-  def emptyHandler(topic: Topic): RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] =
-    RecordHandler(topic)(_ => ZIO.unit)
-}
-
-trait EmptyConsumer extends Consumer {
-  override def subscribe(topics: Set[Topic]): RIO[Blocking, Unit] =
-    ZIO.unit
-
-  override def poll(timeout: Duration): RIO[Blocking, Records] =
-    ZIO.succeed(ConsumerRecords.empty())
-
-  override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
-    ZIO.unit
-
-  override def pause(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-    ZIO.unit
-
-  override def resume(partitions: Set[TopicPartition]): RIO[Blocking, Unit] =
-    ZIO.unit
-
-  def recordsFrom(records: Consumer.Record*): UIO[Consumer.Records] = ZIO.succeed {
+  def recordsFrom(records: Record*): Records = {
     val recordsMap = records.groupBy(record => new KafkaTopicPartition(record.topic, record.partition))
     new ConsumerRecords(recordsMap.mapValues(_.asJava).asJava)
   }
+}
+
+trait EmptyConsumer[R] extends Consumer[R] {
+  override def subscribe(topics: Set[Topic],
+                         onPartitionsRevoked: RebalanceListener[R],
+                         onPartitionsAssigned: RebalanceListener[R]): RIO[R, Unit] =
+    onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit
+
+  override def poll(timeout: Duration): RIO[R, Records] =
+    ZIO.succeed(ConsumerRecords.empty())
+
+  override def commit(offsets: Map[TopicPartition, Offset]): RIO[R, Unit] =
+    ZIO.unit
+
+  override def pause(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit] =
+    ZIO.unit
+
+  override def resume(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit] =
+    ZIO.unit
+
+  override def seek(partition: TopicPartition, offset: Offset): ZIO[R, IllegalStateException, Unit] =
+    ZIO.unit
 }

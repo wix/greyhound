@@ -9,15 +9,16 @@ import org.apache.kafka.common.header.internals.RecordHeader
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
+import zio.duration._
 
 import scala.collection.JavaConverters._
 
-trait Producer {
-  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata]
+trait Producer[-R] {
+  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R, ProducerError, RecordMetadata]
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V]): IO[ProducerError, RecordMetadata] = {
+                    valueSerializer: Serializer[V]): ZIO[R, ProducerError, RecordMetadata] = {
     val serializedRecord = for {
       keyBytes <- ZIO.foreach(record.key)(keySerializer.serialize(record.topic, _))
       valueBytes <- valueSerializer.serialize(record.topic, record.value)
@@ -37,10 +38,10 @@ trait Producer {
 object Producer {
   private val serializer = new ByteArraySerializer
 
-  def make(config: ProducerConfig): RManaged[Blocking, Producer] = {
+  def make(config: ProducerConfig): RManaged[Blocking, Producer[Any]] = {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
-      new Producer {
+      new Producer[Any] {
         override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata] =
           ZIO.effectAsync[Any, ProducerError, RecordMetadata] { cb =>
             producer.send(recordFrom(record), new Callback {
@@ -68,12 +69,26 @@ object Producer {
   }
 }
 
-case class ProducerConfig(bootstrapServers: Set[String]) {
+case class ProducerConfig(bootstrapServers: Set[String],
+                          retryPolicy: ProducerRetryPolicy = ProducerRetryPolicy.Default,
+                          extraProperties: Map[String, String] = Map.empty) {
 
   def properties: Properties = {
     val props = new Properties
     props.setProperty(KafkaProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers.mkString(","))
+    props.setProperty(KafkaProducerConfig.RETRIES_CONFIG, retryPolicy.retries.toString)
+    props.setProperty(KafkaProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryPolicy.backoff.toMillis.toString)
+    extraProperties.foreach {
+      case (key, value) =>
+        props.setProperty(key, value)
+    }
     props
   }
 
+}
+
+case class ProducerRetryPolicy(retries: Int, backoff: Duration)
+
+object ProducerRetryPolicy {
+  val Default = ProducerRetryPolicy(30, 200.millis)
 }

@@ -1,8 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
+import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerError}
 import zio._
 import zio.clock.Clock
@@ -53,18 +52,6 @@ trait RecordHandler[-R, +E, K, V] { self =>
         self.handle(record) *> f(record)
     }
 
-  def withOffsetsMap: UIO[(Ref[Map[TopicPartition, Offset]], RecordHandler[R, E, K, V])] =
-    Ref.make(Map.empty[TopicPartition, Offset]).map { offsets =>
-      val handler = andThen { record =>
-        val topicPartition = TopicPartition(record)
-        offsets.update { map =>
-          val offset = map.get(topicPartition).foldLeft(record.offset)(_ max _)
-          map + (topicPartition -> offset)
-        }
-      }
-      (offsets, handler)
-    }
-
   def combine[R1 <: R, E1 >: E](other: RecordHandler[R1, E1, K, V]): RecordHandler[R1, E1, K, V] =
     new RecordHandler[R1, E1, K, V] {
       type Handler = ConsumerRecord[K, V] => ZIO[R1, E1, Any]
@@ -73,7 +60,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
         List(self, other).foldLeft(Map.empty[Topic, Handler]) { (acc, handler) =>
           handler.topics.foldLeft(acc) { (acc1, topic) =>
             val newHandler = acc1.get(topic).fold[Handler](handler.handle) { oldHandler =>
-              record => oldHandler(record) zipPar handler.handle(record)
+              record => oldHandler(record) zipParRight handler.handle(record)
             }
             acc1 + (topic -> newHandler)
           }
@@ -88,8 +75,8 @@ trait RecordHandler[-R, +E, K, V] { self =>
         }
     }
 
-  def deserialize(keyDeserializer: Deserializer[K],
-                  valueDeserializer: Deserializer[V]): RecordHandler[R, Either[SerializationError, E], Chunk[Byte], Chunk[Byte]] =
+  def withDeserializers(keyDeserializer: Deserializer[K],
+                        valueDeserializer: Deserializer[V]): RecordHandler[R, Either[SerializationError, E], Chunk[Byte], Chunk[Byte]] =
     mapError(Right(_)).contramapM { record =>
       (for {
         key <- ZIO.foreach(record.key)(keyDeserializer.deserialize(record.topic, record.headers, _))
@@ -103,50 +90,24 @@ trait RecordHandler[-R, +E, K, V] { self =>
         value = value)).mapError(e => Left(SerializationError(e)))
     }
 
-  def withRetries[R2](retryPolicy: RetryPolicy[R2, E], producer: Producer)
-                     (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] =
-    new RecordHandler[R with R2 with Clock, Either[ProducerError, E], K, V] {
+  def withRetries[R2, R3](retryPolicy: RetryPolicy[R2, E], producer: Producer[R3])
+                         (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with R3 with Clock, Either[ProducerError, E], K, V] =
+    new RecordHandler[R with R2 with R3 with Clock, Either[ProducerError, E], K, V] {
       override def topics: Set[Topic] = for {
-        topic <- self.topics
-        retryTopic <- retryPolicy.retryTopics(topic)
-      } yield retryTopic
+        originalTopic <- self.topics
+        topic <- retryPolicy.retryTopics(originalTopic) + originalTopic
+      } yield topic
 
-      override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock, Either[ProducerError, E], Any] =
+      override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with R3 with Clock, Either[ProducerError, E], Any] =
         retryPolicy.retryAttempt(record.topic, record.headers).flatMap { retryAttempt =>
           ZIO.foreach_(retryAttempt)(_.sleep) *> self.handle(record).catchAll { e =>
-            retryPolicy.retryRecord(retryAttempt, record.bimap(evK, evV), e).flatMap {
-              case Some(retryRecord) => producer.produce(retryRecord).mapError(Left(_))
-              case None => ZIO.fail(Right(e))
+            retryPolicy.retryDecision(retryAttempt, record.bimap(evK, evV), e).flatMap {
+              case RetryWith(retryRecord) => producer.produce(retryRecord).mapError(Left(_))
+              case NoMoreRetries => ZIO.fail(Right(e))
             }
           }
         }
     }
-
-  def parallel(n: Int, queueConfig: WatermarkedQueueConfig = WatermarkedQueueConfig.Default): URManaged[R with GreyhoundMetrics, RecordHandler[R with GreyhoundMetrics, E, K, V]] =
-    ZManaged.foreach(0 until n)(makeQueue(queueConfig)).map { queues =>
-      new RecordHandler[R with GreyhoundMetrics, E, K, V] {
-        override def topics: Set[Topic] = self.topics
-        override def handle(record: ConsumerRecord[K, V]): ZIO[R with GreyhoundMetrics, E, Any] =
-          Metrics.report(SubmittingRecord(record)) *>
-            queues(record.partition % queues.length).offer(record)
-      }
-    }
-
-  private def makeQueue(config: WatermarkedQueueConfig)(i: Int): URManaged[R with GreyhoundMetrics, WatermarkedQueue[K, V]] = {
-    val queue = for {
-      _ <- Metrics.report(StartingRecordsProcessor(i))
-      queue <- WatermarkedQueue.make[K, V](config)
-      _ <- queue.take.flatMap { record =>
-        Metrics.report(HandlingRecord(record, i)) *>
-          self.handle(record)
-      }.forever.fork
-    } yield queue
-
-    queue.toManaged { queue =>
-      Metrics.report(StoppingRecordsProcessor(i)) *>
-        queue.shutdown
-    }
-  }
 
 }
 
@@ -160,10 +121,10 @@ object RecordHandler {
       override def handle(record: ConsumerRecord[K, V]): ZIO[R, E, Any] = f(record)
     }
   }
-}
 
-sealed trait RecordHandlerMetric extends GreyhoundMetric
-case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends RecordHandlerMetric
-case class StartingRecordsProcessor(processor: Int) extends RecordHandlerMetric
-case class StoppingRecordsProcessor(processor: Int) extends RecordHandlerMetric
-case class HandlingRecord[K, V](record: ConsumerRecord[K, V], processor: Int) extends RecordHandlerMetric
+  def empty[K, V]: RecordHandler[Any, Nothing, K, V] =
+    new RecordHandler[Any, Nothing, K, V] {
+      override def topics: Set[Topic] = Set.empty
+      override def handle(record: ConsumerRecord[K, V]): UIO[Any] = ZIO.unit
+    }
+}
