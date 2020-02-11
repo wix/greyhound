@@ -23,7 +23,7 @@ trait Resource[-R] { self =>
 }
 
 object Resource {
-  val Empty: Resource[Any] = new Resource[Any] {
+  val Empty = new Resource[Any] {
     override val pause: UIO[Unit] = ZIO.unit
     override val resume: UIO[Unit] = ZIO.unit
     override val isAlive: UIO[Boolean] = ZIO.succeed(true)

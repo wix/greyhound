@@ -20,6 +20,11 @@ semantics such as parallel message handling or retry policies with ease.
 
 ## Usage
 
+Greyhound core relies on the [ZIO](https://zio.dev/) library which provides type-safe,
+composable asynchronous and concurrent programming environment for Scala. These docs
+assume the reader has basic familiarity with ZIO's core notions, like effects, managed
+resources etc.
+
 ### Basics
 
 First let's review some basic messaging terminology:
@@ -42,7 +47,8 @@ and deserialize your domain objects and custom types to/from bytes.
 ### Producing messages
 
 In order to produce a messages to Kafka, you need a producer. `Producer.make` will create a
-producer wrapped in a `ZManaged`. You can than use it like so:
+producer wrapped in a [`ZManaged`](https://zio.dev/docs/datatypes/datatypes_managed).
+You can then use it like so:
 
 ```scala
 import com.wixpress.dst.greyhound.core.producer._

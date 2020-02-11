@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import org.apache.kafka.clients.consumer.ConsumerRecords
@@ -9,12 +10,14 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
+trait EventLoop[-R] extends Resource[R]
+
 object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
   def make[R1, R2](consumer: Consumer[R1],
                    handler: Handler[R2],
-                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, Resource[R2 with GreyhoundMetrics with Clock]] = {
+                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
     val start = for {
       _ <- Metrics.report(StartingEventLoop)
       offsets <- Offsets.make
@@ -42,7 +45,7 @@ object EventLoop {
       } yield ()
     }.map {
       case (dispatcher, fiber, _, _) =>
-        new Resource[R2 with GreyhoundMetrics with Clock] {
+        new EventLoop[R2 with GreyhoundMetrics with Clock] {
           override def pause: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
             Metrics.report(PausingEventLoop) *> dispatcher.pause
 
@@ -128,13 +131,16 @@ object EventLoopConfig {
 }
 
 sealed trait EventLoopMetric extends GreyhoundMetric
-case object StartingEventLoop extends EventLoopMetric
-case object PausingEventLoop extends EventLoopMetric
-case object ResumingEventLoop extends EventLoopMetric
-case object StoppingEventLoop extends EventLoopMetric
-case object DrainTimeoutExceeded extends EventLoopMetric
-case class HighWatermarkReached(partition: TopicPartition) extends EventLoopMetric
-case class PartitionThrottled(partition: TopicPartition) extends EventLoopMetric
+
+object EventLoopMetric {
+  case object StartingEventLoop extends EventLoopMetric
+  case object PausingEventLoop extends EventLoopMetric
+  case object ResumingEventLoop extends EventLoopMetric
+  case object StoppingEventLoop extends EventLoopMetric
+  case object DrainTimeoutExceeded extends EventLoopMetric
+  case class HighWatermarkReached(partition: TopicPartition) extends EventLoopMetric
+  case class PartitionThrottled(partition: TopicPartition) extends EventLoopMetric
+}
 
 sealed trait EventLoopState
 
