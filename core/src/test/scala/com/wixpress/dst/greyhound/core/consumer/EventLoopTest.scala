@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer.{RebalanceListener, Record, Records}
+import com.wixpress.dst.greyhound.core.consumer.Consumer.{Record, Records}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
@@ -36,10 +36,10 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
       }
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       handler = RecordHandler(topic)(promise.succeed)
-      handled <- EventLoop.make(ReportingConsumer(group, consumer), handler).use_(promise.await)
+      handled <- EventLoop.make(ReportingConsumer(clientId, group, consumer), handler).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty))) and
-      (metrics must contain(PollingFailed(group, exception)))
+      (metrics must contain(PollingFailed(clientId, group, exception)))
   }
 
   "recover from consumer failing to commit" in {
@@ -54,16 +54,16 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
             case _ => ZIO.succeed(ConsumerRecords.empty())
           }
 
-        override def commit(offsets: Map[TopicPartition, Offset]): RIO[Any, Unit] =
+        override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Any, Unit] =
           commitInvocations.update(_ + 1).flatMap {
             case 1 => ZIO.fail(exception)
             case _ => promise.succeed(offsets).unit
           }
       }
-      committed <- EventLoop.make(ReportingConsumer(group, consumer), RecordHandler.empty).use_(promise.await)
+      committed <- EventLoop.make(ReportingConsumer(clientId, group, consumer), RecordHandler.empty).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
-      (metrics must contain(CommitFailed(group, exception)))
+      (metrics must contain(CommitFailed(clientId, group, exception)))
   }
 
   "expose event loop health" in {
@@ -82,6 +82,7 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
 }
 
 object EventLoopTest {
+  val clientId = "client-id"
   val group = "group"
   val topic = "topic"
   val partition = 0
@@ -97,14 +98,13 @@ object EventLoopTest {
 
 trait EmptyConsumer[R] extends Consumer[R] {
   override def subscribe(topics: Set[Topic],
-                         onPartitionsRevoked: RebalanceListener[R],
-                         onPartitionsAssigned: RebalanceListener[R]): RIO[R, Unit] =
-    onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit
+                         rebalanceListener: RebalanceListener[R]): RIO[R, Unit] =
+    rebalanceListener.onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit
 
   override def poll(timeout: Duration): RIO[R, Records] =
     ZIO.succeed(ConsumerRecords.empty())
 
-  override def commit(offsets: Map[TopicPartition, Offset]): RIO[R, Unit] =
+  override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[R, Unit] =
     ZIO.unit
 
   override def pause(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit] =

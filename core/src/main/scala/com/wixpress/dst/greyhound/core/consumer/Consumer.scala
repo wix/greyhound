@@ -4,7 +4,7 @@ import java.util
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
-import com.wixpress.dst.greyhound.core.{Offset, Topic}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
@@ -15,13 +15,11 @@ import zio.duration.Duration
 import scala.collection.JavaConverters._
 
 trait Consumer[R] {
-  def subscribe(topics: Set[Topic],
-                onPartitionsRevoked: RebalanceListener[R] = _ => ZIO.unit,
-                onPartitionsAssigned: RebalanceListener[R] = _ => ZIO.unit): RIO[R, Unit]
+  def subscribe(topics: Set[Topic], rebalanceListener: RebalanceListener[R] = RebalanceListener.Empty): RIO[R, Unit]
 
   def poll(timeout: Duration): RIO[R, Records]
 
-  def commit(offsets: Map[TopicPartition, Offset]): RIO[R, Unit]
+  def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean = false): RIO[R, Unit]
 
   def pause(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit]
 
@@ -38,7 +36,6 @@ trait Consumer[R] {
 object Consumer {
   type Record = KafkaConsumerRecord[Chunk[Byte], Chunk[Byte]]
   type Records = ConsumerRecords[Chunk[Byte], Chunk[Byte]]
-  type RebalanceListener[R] = Set[TopicPartition] => URIO[R, Any]
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
     override def configure(configs: util.Map[Topic, _], isKey: Boolean): Unit = ()
@@ -50,32 +47,28 @@ object Consumer {
     semaphore <- Semaphore.make(1).toManaged_
     consumer <- makeConsumer(config)
   } yield new Consumer[Blocking] {
-    override def subscribe(topics: Set[Topic],
-                           onPartitionsRevoked: RebalanceListener[Blocking],
-                           onPartitionsAssigned: RebalanceListener[Blocking]): RIO[Blocking, Unit] = {
-      val partitionsRevokedCallback = onPartitionsRevoked
-      val partitionsAssignedCallback = onPartitionsAssigned
+    override def subscribe(topics: Set[Topic], rebalanceListener: RebalanceListener[Blocking]): RIO[Blocking, Unit] =
       for {
         runtime <- ZIO.runtime[Blocking]
-        rebalanceListener = new ConsumerRebalanceListener {
+        consumerRebalanceListener = new ConsumerRebalanceListener {
           override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
-            runtime.unsafeRun(partitionsRevokedCallback(partitionsFor(partitions)))
+            runtime.unsafeRun(rebalanceListener.onPartitionsRevoked(partitionsFor(partitions)))
 
           override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
-            runtime.unsafeRun(partitionsAssignedCallback(partitionsFor(partitions)))
+            runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(partitionsFor(partitions)))
 
           private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
             partitions.asScala.map(TopicPartition(_)).toSet
         }
-        _ <- withConsumer(_.subscribe(topics.asJava, rebalanceListener))
+        _ <- withConsumer(_.subscribe(topics.asJava, consumerRebalanceListener))
       } yield ()
-    }
 
     override def poll(timeout: Duration): RIO[Blocking, Records] =
       withConsumer(_.poll(timeout.toMillis))
 
-    override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking, Unit] =
-      withConsumer(_.commitSync(kafkaOffsets(offsets)))
+    override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Blocking, Unit] =
+      if (calledOnRebalance) Task(consumer.commitSync(kafkaOffsets(offsets)))
+      else withConsumer(_.commitSync(kafkaOffsets(offsets)))
 
     override def pause(partitions: Set[TopicPartition]): ZIO[Blocking, IllegalStateException, Unit] =
       withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie {
@@ -120,8 +113,8 @@ object Consumer {
 }
 
 case class ConsumerConfig(bootstrapServers: Set[String],
-                          groupId: String,
-                          clientId: String,
+                          groupId: Group,
+                          clientId: ClientId,
                           offsetReset: OffsetReset = OffsetReset.Latest,
                           extraProperties: Map[String, String] = Map.empty) {
 

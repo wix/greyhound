@@ -39,6 +39,18 @@ class ConsumerIT extends BaseTest[Env] {
         _ <- kafka.createTopic(TopicConfig(topic, partitions, 1, delete))
       } yield topic
 
+      def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) = for {
+        latch <- CountDownLatch.make(partitions)
+        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          latch.countDown
+        }
+        _ <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use_ {
+          ZIO.foreachPar_(0 until partitions) { partition =>
+            producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
+          } *> latch.await
+        }
+      } yield ()
+
       val test1 = for {
         topic <- randomTopic()
         group <- randomGroup
@@ -80,7 +92,7 @@ class ConsumerIT extends BaseTest[Env] {
 
         success <- ParallelConsumer.make(kafka.bootstrapServers, group -> retryHandler).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-            done.await.timeout(30.seconds)
+            done.await.timeout(1.minute)
         }
       } yield "configure a handler with retry policy" in {
         success must beSome
@@ -162,7 +174,7 @@ class ConsumerIT extends BaseTest[Env] {
             a <- handledAllMessages.await.timeout(5.seconds)
             _ <- consumer.resume
             b <- handledAllMessages.await.timeout(5.seconds)
-          } yield "pause and resume event loop" in {
+          } yield "pause and resume consumer" in {
             (a must beNone) and (b must beSome)
           }
         }
@@ -206,25 +218,77 @@ class ConsumerIT extends BaseTest[Env] {
             handledSome.countDown *>
             handledAll.countDown
         }
-        eventLoop = ParallelConsumer.make(kafka.bootstrapServers, group -> handler)
+        consumer = ParallelConsumer.make(kafka.bootstrapServers, group -> handler)
 
         startProducing1 <- Promise.make[Nothing, Unit]
-        eventLoop1 <- eventLoop.use_(startProducing1.succeed(()) *> handledAll.await).fork
+        consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
         _ <- startProducing1.await *> ZIO.foreachPar(0 until someMessages)(_ => produce)
 
         _ <- handledSome.await
         startProducing2 <- Promise.make[Nothing, Unit]
-        eventLoop2 <- eventLoop.use_(startProducing2.succeed(()) *> handledAll.await).fork
+        consumer2 <- consumer.use_(startProducing2.succeed(()) *> handledAll.await).fork
         _ <- startProducing2.await *> ZIO.foreachPar(someMessages until allMessages)(_ => produce)
 
-        _ <- eventLoop1.join
-        _ <- eventLoop2.join
+        _ <- consumer1.join
+        _ <- consumer2.join
         allInvocations <- invocations.get
       } yield "don't reprocess messages after rebalance" in {
         allInvocations must equalTo(allMessages)
       }
 
-      all(test1, test2, test3, test4, test5, test6, test7)
+      val test8 = for {
+        group <- randomGroup
+
+        partitions = 2
+        messagesPerPartition = 2
+        topic <- randomTopic(partitions = partitions)
+        _ <- verifyGroupCommitted(topic, group, partitions)
+
+        latch <- CountDownLatch.make(messagesPerPartition * partitions)
+        blocker <- Promise.make[Nothing, Unit]
+        semaphore <- Semaphore.make(1)
+        handler1 = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          semaphore.withPermit(blocker.await *> latch.countDown)
+        }
+
+        startProducing <- Promise.make[Nothing, Unit]
+        config1 = ParallelConsumerConfig(
+          bootstrapServers = kafka.bootstrapServers,
+          clientId = "client-1",
+          eventLoopConfig = EventLoopConfig.Default.copy(
+            rebalanceListener = new RebalanceListener[Any] {
+              override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
+                ZIO.when(partitions.nonEmpty)(blocker.succeed(()))
+
+              override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
+                ZIO.unit
+            }))
+        consumer1 <- ParallelConsumer.make(config1, Map(group -> handler1)).use_ {
+          startProducing.succeed(()) *> latch.await
+        }.fork
+
+        _ <- startProducing.await
+        _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
+          producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(0))) zipPar
+            producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(1)))
+        }
+
+        handler2 = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          latch.countDown
+        }
+        config2 = ParallelConsumerConfig(kafka.bootstrapServers, "client-2")
+        consumer2 <- ParallelConsumer.make(config2, Map(group -> handler2)).use_ {
+          latch.await
+        }.fork
+
+        _ <- consumer1.join
+        _ <- consumer2.join
+        handled <- latch.count
+      } yield "drain queues and finish executing tasks on rebalance" in {
+        handled must equalTo(0)
+      }
+
+      all(test1, test2, test3, test4, test5, test6, test7, test8)
   }
 
   run(tests)

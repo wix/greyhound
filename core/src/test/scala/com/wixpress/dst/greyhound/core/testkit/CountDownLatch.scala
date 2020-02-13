@@ -5,6 +5,7 @@ import zio.{Promise, Ref, UIO, ZIO}
 trait CountDownLatch {
   def countDown: UIO[Unit]
   def await: UIO[Unit]
+  def count: UIO[Int]
 }
 
 object CountDownLatch {
@@ -19,5 +20,7 @@ object CountDownLatch {
       }
 
     override def await: UIO[Unit] = ready.await
+
+    override def count: UIO[Int] = ref.get
   }
 }

@@ -12,6 +12,7 @@ import zio.duration.Duration
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R, SubmitResult]
   def resumeablePartitions(paused: Set[TopicPartition]): URIO[R, Set[TopicPartition]]
+  def revoke(partitions: Set[TopicPartition]): URIO[R, Unit]
   def pause: URIO[R, Unit]
   def resume: URIO[R, Unit]
   def shutdown: URIO[R, Unit]
@@ -50,6 +51,17 @@ object Dispatcher {
           }
         }
 
+      override def revoke(partitions: Set[TopicPartition]): URIO[R with GreyhoundMetrics with Clock, Unit] =
+        workers.modify { workers =>
+          partitions.foldLeft((List.empty[(TopicPartition, Worker)], workers)) {
+            case ((revoked, remaining), partition) =>
+              remaining.get(partition) match {
+                case Some(worker) => ((partition, worker) :: revoked, remaining - partition)
+                case None => (revoked, remaining)
+              }
+          }
+        }.flatMap(shutdown)
+
       override def pause: UIO[Unit] = for {
         resume <- Promise.make[Nothing, Unit]
         _ <- state.updateSome {
@@ -67,13 +79,7 @@ object Dispatcher {
         state.modify(state => (state, State.ShuttingDown)).flatMap {
           case State.Paused(resume) => resume.succeed(()).unit
           case _ => ZIO.unit
-        } *> workers.get.flatMap { workers =>
-          ZIO.foreachPar_(workers) {
-            case (partition, worker) =>
-              Metrics.report(StoppingWorker(partition)) *>
-                worker.shutdown
-          }
-        }
+        } *> workers.get.flatMap(shutdown)
 
       /**
         * This implementation is not fiber-safe. Since the worker is used per partition,
@@ -97,6 +103,13 @@ object Dispatcher {
             case (duration, _) =>
               Metrics.report(RecordHandled(record, duration))
           }
+
+      private def shutdown(workers: Iterable[(TopicPartition, Worker)]) =
+        ZIO.foreachPar_(workers) {
+          case (partition, worker) =>
+            Metrics.report(StoppingWorker(partition)) *>
+              worker.shutdown
+        }
     }
 
   sealed trait State
@@ -119,26 +132,25 @@ object Dispatcher {
     def make[R](state: Ref[State],
                 handle: Record => URIO[R, Any],
                 capacity: Int): URIO[R, Worker] = for {
-      queue <- Queue.dropping[Option[Record]](capacity)
-      fiber <- loop(state, handle, queue).fork
+      queue <- Queue.dropping[Record](capacity)
+      fiber <- loop(state, handle, queue).interruptible.fork
     } yield new Worker {
       override def submit(record: Record): UIO[Boolean] =
-        queue.offer(Some(record))
+        queue.offer(record)
 
       override def pendingTasks: UIO[Int] =
         queue.size
 
       override def shutdown: UIO[Unit] =
-        queue.offer(None) *> fiber.join
+        fiber.interrupt.unit
     }
 
     private def loop[R](state: Ref[State],
                         handle: Record => URIO[R, Any],
-                        queue: Queue[Option[Record]]): URIO[R, Unit] =
+                        queue: Queue[Record]): URIO[R, Unit] =
       state.get.flatMap {
-        case State.Running => queue.take.flatMap {
-          case Some(record) => handle(record) *> loop(state, handle, queue)
-          case None => ZIO.unit
+        case State.Running => queue.take.flatMap { record =>
+          handle(record).uninterruptible *> loop(state, handle, queue)
         }
 
         case State.Paused(resume) =>
