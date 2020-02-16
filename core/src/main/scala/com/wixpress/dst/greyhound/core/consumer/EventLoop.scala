@@ -30,7 +30,7 @@ object EventLoop {
         topics = handler.topics,
         rebalanceListener = new RebalanceListener[R1] {
           override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
-            UIO {
+            ZIO.effectTotal {
               /**
                 * The rebalance listener is invoked while calling `poll`. Kafka forces you
                 * to call `commit` from the same thread, otherwise an exception will be thrown.

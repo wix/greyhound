@@ -41,9 +41,7 @@ class ConsumerIT extends BaseTest[Env] {
 
       def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) = for {
         latch <- CountDownLatch.make(partitions)
-        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-          latch.countDown
-        }
+        handler = RecordHandler(topic)((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
         _ <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use_ {
           ZIO.foreachPar_(0 until partitions) { partition =>
             producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
