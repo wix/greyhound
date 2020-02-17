@@ -109,7 +109,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
     }
 
   /**
-    * Combine this handler with another handler. The combined will subscribe to
+    * Combine this handler with another handler. The combined handler will subscribe to
     * all topics from both handlers, and will invoke the correct handler according
     * to the incoming record's topic.
     *
