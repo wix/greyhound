@@ -11,10 +11,31 @@ semantics such as parallel message handling or retry policies with ease.
 
 ### Notable features Greyhound provides:
 
- * Declarative API - _TODO_
- * Parallel message handling - _TODO_
+ * **Declarative API** - when you want to consume messages from Kafka using the consumer API
+   provided in the Java SDK, you need to run an infinite while loop which polls new records,
+   handle them and commit offsets. This might be fine for simple applications, however it's hard
+   to get all the subtleties right - especially when you want to ensure your processing guarantees
+   (when do you commit), handle consumer rebalance, handle exceptions, etc. This requires specific
+   know-how and adds a lot of boilerplate when all you want to do is process messages from a topic.
+   Greyhound tries to abstract away these complexities by providing a simple, declarative API, and
+   to allow the developers to focus on their business logic instead of how to operate Kafka correctly.
+   
+ * **Parallel message handling** - A single Kafka consumer is single-threaded, and if you want to
+   achieve parallelism with your message handling (which might be crucial for high throughput
+   topics) you need to manually manage your threads. Greyhound automatically handles parallelising
+   message handling for you with automatic throttling. Also, Greyhound uses a concurrency model
+   based on fibers (or green-threads) which are much more lightweight than JVM threads,
+   and makes async workloads extremely efficient.
+   
+ * **Retries** - error handling is tricky. Sometimes things fail without our control (database is
+   temporarily down, API limit exceeded, network call timed-out, etc.) and the only thing we can do
+   to recover is to retry the same operation after some backoff. However, we do not want to block
+   our consumer until the backoff expires, nor do we want to retry the action in a different thread
+   and risk losing the messages in case our process goes down. Greyhound provides a robust retry
+   mechanism, which produces failed records to special retry topics where they will be handled later,
+   allowing the main consumer to keep working while ensuring no messages will be lost.
+ 
  * Context propagation - _TODO_
- * Retries - _TODO_
  * Safety - _TODO_
  * Observability - _TODO_
 
