@@ -1,0 +1,17 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+scala_library(
+    name = "testkit",
+    testonly = 1,
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
+        "//data-streams/greyhound/future-interop/src/it/scala/com/wixpress/dst/greyhound/future",
+        "//data-streams/greyhound/java-interop/src/main/java/com/wixpress/dst/greyhound/java",
+    ],
+)

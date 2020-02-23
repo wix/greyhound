@@ -1,0 +1,21 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+specs2_ite2e_test(
+    name = "future",
+    size = "large",
+    testonly = 1,
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//data-streams/greyhound/core/src/test/resources",
+        "//data-streams/greyhound/core/src/it/scala/com/wixpress/dst/greyhound/testkit",
+        "//data-streams/greyhound/core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
+        "//data-streams/greyhound/future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
+        "@ch_qos_logback_logback_classic",
+        "@dev_zio_zio_2_12",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)
