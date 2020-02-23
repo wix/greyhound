@@ -3,11 +3,9 @@ package com.wixpress.dst.greyhound.future
 import com.wixpress.dst.greyhound.core.Serializer
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ParallelConsumer, ParallelConsumerConfig, RecordHandler}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Promise, Ref, Task, ZIO}
+import zio.{Promise, ZIO}
 
 import scala.concurrent.Future
 
@@ -17,21 +15,12 @@ trait Greyhound {
 }
 
 case class GreyhoundBuilder(config: GreyhoundConfig,
-                            consumers: Set[GreyhoundConsumer[_, _]] = Set.empty,
-                            metricsReporter: GreyhoundMetrics = GreyhoundMetric.Live) {
+                            consumers: Set[GreyhoundConsumer[_, _]] = Set.empty) {
 
   def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundBuilder =
     copy(consumers = consumers + consumer)
 
-  def withMetricsReporter(report: GreyhoundMetric => Unit): GreyhoundBuilder = {
-    val reporter = new GreyhoundMetrics {
-      override val metrics: Metrics.Service[GreyhoundMetric] =
-        (metric: GreyhoundMetric) => ZIO.effectTotal(report(metric))
-    }
-    copy(metricsReporter = reporter)
-  }
-
-  def build: Future[Greyhound] = GreyhoundRuntime.withMetrics(metricsReporter).unsafeRunToFuture {
+  def build: Future[Greyhound] = GreyhoundRuntime.Live.unsafeRunToFuture {
     for {
       ready <- Promise.make[Nothing, Unit]
       shutdownSignal <- Promise.make[Nothing, Unit]
@@ -43,23 +32,21 @@ case class GreyhoundBuilder(config: GreyhoundConfig,
       }
       consumerConfig = ParallelConsumerConfig(bootstrapServers)
       makeConsumers = ParallelConsumer.make(consumerConfig, handlers)
-      fiber <- makeConsumers.use_ {
+      _ <- makeConsumers.use_ {
         ready.succeed(()) *>
           shutdownSignal.await
       }.fork
       _ <- ready.await
-      producers <- Ref.make(List.empty[Task[Unit]])
       runtime <- ZIO.runtime[Env]
     } yield new Greyhound {
       override def producer(config: GreyhoundProducerConfig): Future[GreyhoundProducer] =
         runtime.unsafeRunToFuture {
           for {
             promise <- Promise.make[Nothing, Producer[Env]]
-            fiber <- Producer.make(ProducerConfig(bootstrapServers)).use { producer =>
+            _ <- Producer.make(ProducerConfig(bootstrapServers)).use { producer =>
               promise.succeed(ReportingProducer(producer)) *>
                 shutdownSignal.await
             }.fork
-            _ <- producers.update(fiber.join :: _)
             producer <- promise.await
           } yield new GreyhoundProducer {
             override def produce[K, V](record: ProducerRecord[K, V],
@@ -69,11 +56,8 @@ case class GreyhoundBuilder(config: GreyhoundConfig,
           }
         }
 
-      override def shutdown: Future[Unit] = runtime.unsafeRunToFuture {
-        shutdownSignal.succeed(()).unit *>
-          producers.get.flatMap(ZIO.collectAllPar(_)) *>
-          fiber.join
-      }
+      override def shutdown: Future[Unit] =
+        runtime.unsafeRunToFuture(shutdownSignal.succeed(()).unit)
     }
   }
 
