@@ -1,10 +1,9 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.{Deserializer, Group, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.ZIO
+import zio.{Chunk, ZIO}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -14,7 +13,7 @@ case class GreyhoundConsumer[K, V](topic: Topic,
                                    keyDeserializer: Deserializer[K],
                                    valueDeserializer: Deserializer[V]) {
 
-  def recordHandler: Handler[Env] = {
+  def recordHandler: CoreRecordHandler[Env, Nothing, Chunk[Byte], Chunk[Byte]] = {
     val baseHandler = CoreRecordHandler(topic) { record: ConsumerRecord[K, V] =>
       ZIO.fromFuture(ec => handler.handle(record)(ec))
     }
