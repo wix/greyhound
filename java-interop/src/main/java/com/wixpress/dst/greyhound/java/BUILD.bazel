@@ -8,9 +8,9 @@ scala_library(
         ":sources",
     ],
     deps = [
-        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core",
-        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
-        "//data-streams/greyhound/future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
         "@org_apache_kafka_kafka_clients",
     ],
 )

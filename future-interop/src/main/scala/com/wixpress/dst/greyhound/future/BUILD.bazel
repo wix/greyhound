@@ -8,8 +8,8 @@ scala_library(
         ":sources",
     ],
     deps = [
-        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core",
-        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
-        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
     ],
 )

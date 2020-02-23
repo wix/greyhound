@@ -9,9 +9,9 @@ scala_library(
         ":sources",
     ],
     deps = [
-        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core",
-        "//data-streams/greyhound/core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
-        "//data-streams/greyhound/future-interop/src/it/scala/com/wixpress/dst/greyhound/future",
-        "//data-streams/greyhound/java-interop/src/main/java/com/wixpress/dst/greyhound/java",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
+        "//future-interop/src/it/scala/com/wixpress/dst/greyhound/future",
+        "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
     ],
 )
