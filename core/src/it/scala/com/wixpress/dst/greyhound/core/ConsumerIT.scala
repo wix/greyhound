@@ -49,7 +49,7 @@ class ConsumerIT extends BaseTest[Env] {
         }
       } yield ()
 
-      val simpleTest = for {
+      val test1 = for {
         topic <- randomTopic()
         group <- randomGroup
 
@@ -67,7 +67,36 @@ class ConsumerIT extends BaseTest[Env] {
         message must (beRecordWithKey("foo") and beRecordWithValue("bar"))
       }
 
-      val combinedHandlersTest = for {
+      val test2 = for {
+        topic <- randomTopic()
+        group <- randomGroup
+        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-0", partitions, 1, delete))
+        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-1", partitions, 1, delete))
+        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-2", partitions, 1, delete))
+
+        invocations <- Ref.make(0)
+        done <- Promise.make[Nothing, Unit]
+        retryPolicy = RetryPolicy.default(topic, group, 1.second, 2.seconds, 3.seconds)
+        handler = RecordHandler(topic) { _: ConsumerRecord[String, String] =>
+          invocations.update(_ + 1).flatMap { n =>
+            if (n < 4) ZIO.fail(new RuntimeException("Oops!"))
+            else done.succeed(()) // Succeed on final retry
+          }
+        }
+        retryHandler = handler
+          .withDeserializers(StringSerde, StringSerde)
+          .withRetries(retryPolicy, producer)
+          .ignore
+
+        success <- ParallelConsumer.make(kafka.bootstrapServers, group -> retryHandler).use_ {
+          producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+            done.await.timeout(1.minute)
+        }
+      } yield "configure a handler with retry policy" in {
+        success must beSome
+      }
+
+      val test3 = for {
         topic1 <- randomTopic()
         topic2 <- randomTopic()
         group <- randomGroup
@@ -88,7 +117,7 @@ class ConsumerIT extends BaseTest[Env] {
           (record2 must (beRecordWithKey(1) and beRecordWithValue(2)))
       }
 
-      val throttlingTest = for {
+      val test4 = for {
         topic <- randomTopic(partitions = 2)
         group <- randomGroup
 
@@ -120,7 +149,7 @@ class ConsumerIT extends BaseTest[Env] {
         }
       } yield test
 
-      val pauseResumeTest = for {
+      val test5 = for {
         topic <- randomTopic()
         group <- randomGroup
 
@@ -149,7 +178,7 @@ class ConsumerIT extends BaseTest[Env] {
         }
       } yield test
 
-      val gracefulShutdownTest = for {
+      val test6 = for {
         topic <- randomTopic()
         group <- randomGroup
 
@@ -171,7 +200,7 @@ class ConsumerIT extends BaseTest[Env] {
         handled must equalTo(1)
       }
 
-      val commitOnRebalanceTest = for {
+      val test7 = for {
         topic <- randomTopic()
         group <- randomGroup
 
@@ -205,7 +234,7 @@ class ConsumerIT extends BaseTest[Env] {
         allInvocations must equalTo(allMessages)
       }
 
-      val gracefulRebalanceTest = for {
+      val test8 = for {
         group <- randomGroup
 
         partitions = 2
@@ -257,44 +286,7 @@ class ConsumerIT extends BaseTest[Env] {
         handled must equalTo(0)
       }
 
-      val retryTest = for {
-        topic <- randomTopic()
-        group <- randomGroup
-        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-0", partitions, 1, delete))
-        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-1", partitions, 1, delete))
-        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-2", partitions, 1, delete))
-
-        invocations <- Ref.make(0)
-        done <- Promise.make[Nothing, Unit]
-        retryPolicy = RetryPolicy.default(topic, group, 1.second, 2.seconds, 3.seconds)
-        handler = RecordHandler(topic) { _: ConsumerRecord[String, String] =>
-          invocations.update(_ + 1).flatMap { n =>
-            if (n < 4) ZIO.fail(new RuntimeException("Oops!"))
-            else done.succeed(()) // Succeed on final retry
-          }
-        }
-        retryHandler = handler
-          .withDeserializers(StringSerde, StringSerde)
-          .withRetries(retryPolicy, producer)
-          .ignore
-
-        success <- ParallelConsumer.make(kafka.bootstrapServers, group -> retryHandler).use_ {
-          producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-            done.await.timeout(1.minute)
-        }
-      } yield "configure a handler with retry policy" in {
-        success must beSome
-      }
-
-      all(
-        simpleTest,
-        combinedHandlersTest,
-        throttlingTest,
-        pauseResumeTest,
-        gracefulShutdownTest,
-        commitOnRebalanceTest,
-        gracefulRebalanceTest,
-        retryTest)
+      all(test1, test2, test3, test4, test5, test6, test7, test8)
   }
 
   run(tests)

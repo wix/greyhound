@@ -15,7 +15,8 @@ import org.junit.Test;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
+import static com.wixpress.dst.greyhound.java.GreyhoundProducerConfig.aGreyhoundProducerConfig;
+import static com.wixpress.dst.greyhound.java.RecordHandlers.aSyncRecordHandler;
 import static org.junit.Assert.assertEquals;
 
 public class GreyhoundBuilderTest {
@@ -41,19 +42,18 @@ public class GreyhoundBuilderTest {
     public void produce_and_consume_a_single_message() throws Exception {
         CompletableFuture<ConsumerRecord<Integer, String>> future = new CompletableFuture<>();
 
-        GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
-        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
-        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
+        DefaultGreyhoundConfig config = new DefaultGreyhoundConfig(environment.kafka().bootstrapServers());
+        GreyhoundBuilder builder = new DefaultGreyhoundBuilder(config)
                 .withConsumer(
                         new GreyhoundConsumer<>(
                                 topic,
                                 group,
-                                aBlockingRecordHandler(future::complete),
+                                aSyncRecordHandler(future::complete),
                                 new IntegerDeserializer(),
                                 new StringDeserializer()));
 
-        try (GreyhoundConsumers ignored = consumersBuilder.build();
-             GreyhoundProducer producer = producerBuilder.build()) {
+        try (Greyhound greyhound = builder.build()) {
+            GreyhoundProducer producer = greyhound.producer(aGreyhoundProducerConfig());
 
             producer.produce(
                     new ProducerRecord<>(topic, 123, "hello world"),
