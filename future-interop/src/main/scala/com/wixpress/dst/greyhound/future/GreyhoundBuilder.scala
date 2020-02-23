@@ -5,7 +5,7 @@ import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ParallelConsumer, ParallelConsumerConfig, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Promise, ZIO}
+import zio.{Promise, Ref, Task, ZIO}
 
 import scala.concurrent.Future
 
@@ -32,21 +32,23 @@ case class GreyhoundBuilder(config: GreyhoundConfig,
       }
       consumerConfig = ParallelConsumerConfig(bootstrapServers)
       makeConsumers = ParallelConsumer.make(consumerConfig, handlers)
-      _ <- makeConsumers.use_ {
+      fiber <- makeConsumers.use_ {
         ready.succeed(()) *>
           shutdownSignal.await
       }.fork
       _ <- ready.await
+      producers <- Ref.make(List.empty[Task[Unit]])
       runtime <- ZIO.runtime[Env]
     } yield new Greyhound {
       override def producer(config: GreyhoundProducerConfig): Future[GreyhoundProducer] =
         runtime.unsafeRunToFuture {
           for {
             promise <- Promise.make[Nothing, Producer[Env]]
-            _ <- Producer.make(ProducerConfig(bootstrapServers)).use { producer =>
+            fiber <- Producer.make(ProducerConfig(bootstrapServers)).use { producer =>
               promise.succeed(ReportingProducer(producer)) *>
                 shutdownSignal.await
             }.fork
+            _ <- producers.update(fiber.join :: _)
             producer <- promise.await
           } yield new GreyhoundProducer {
             override def produce[K, V](record: ProducerRecord[K, V],
@@ -56,8 +58,11 @@ case class GreyhoundBuilder(config: GreyhoundConfig,
           }
         }
 
-      override def shutdown: Future[Unit] =
-        runtime.unsafeRunToFuture(shutdownSignal.succeed(()).unit)
+      override def shutdown: Future[Unit] = runtime.unsafeRunToFuture {
+        shutdownSignal.succeed(()).unit *>
+          producers.get.flatMap(ZIO.collectAllPar(_)) *>
+          fiber.join
+      }
     }
   }
 

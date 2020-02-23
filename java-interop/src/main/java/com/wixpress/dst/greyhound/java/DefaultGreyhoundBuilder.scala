@@ -12,7 +12,7 @@ import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.clients.producer.{ProducerRecord => KafkaProducerRecord}
 import org.apache.kafka.common.serialization.{Serializer => KafkaSerializer}
-import zio.{Exit, Promise, ZIO}
+import zio._
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
@@ -40,20 +40,22 @@ class DefaultGreyhoundBuilder(val config: DefaultGreyhoundConfig) extends Greyho
       }
       consumerConfig = ParallelConsumerConfig(bootstrapServers)
       makeConsumers = ParallelConsumer.make(consumerConfig, handlers)
-      _ <- makeConsumers.use_ {
+      fiber <- makeConsumers.use_ {
         ready.succeed(()) *>
           shutdownSignal.await
       }.fork
       _ <- ready.await
+      producers <- Ref.make(List.empty[Task[Unit]])
       runtime <- ZIO.runtime[Env]
     } yield new Greyhound {
       override def producer(config: GreyhoundProducerConfig): GreyhoundProducer = runtime.unsafeRun {
         for {
           promise <- Promise.make[Nothing, Producer[Env]]
-          _ <- Producer.make(ProducerConfig(bootstrapServers)).use { producer =>
+          fiber <- Producer.make(ProducerConfig(bootstrapServers)).use { producer =>
             promise.succeed(ReportingProducer(producer)) *>
               shutdownSignal.await
           }.fork
+          _ <- producers.update(fiber.join :: _)
         } yield new GreyhoundProducer {
           override def produce[K, V](record: KafkaProducerRecord[K, V],
                                      keySerializer: KafkaSerializer[K],
@@ -81,7 +83,9 @@ class DefaultGreyhoundBuilder(val config: DefaultGreyhoundConfig) extends Greyho
       }
 
       override def close(): Unit = runtime.unsafeRun {
-        shutdownSignal.succeed(()).unit
+        shutdownSignal.succeed(()).unit *>
+          producers.get.flatMap(ZIO.collectAllPar(_)) *>
+          fiber.join
       }
     }
   }
