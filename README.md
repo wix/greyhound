@@ -1,8 +1,6 @@
-# Greyhound [![Build Status](https://travis-ci.com/wix-incubator/greyhound.svg?branch=master)](https://travis-ci.com/wix-incubator/greyhound)
+# Greyhound 🐕 [![Build Status](https://travis-ci.com/wix-incubator/greyhound.svg?branch=master)](https://travis-ci.com/wix-incubator/greyhound)
 
 Opinionated SDK for [Apache Kafka](https://kafka.apache.org/)
-
-![Greyhound](./docs/logo.png)
 
 ## Why Greyhound?
 
@@ -21,28 +19,25 @@ semantics such as parallel message handling or retry policies with ease.
    know-how and adds a lot of boilerplate when all you want to do is process messages from a topic.
    Greyhound tries to abstract away these complexities by providing a simple, declarative API, and
    to allow the developers to focus on their business logic instead of how to operate Kafka correctly.
-
+   
  * **Parallel message handling** - A single Kafka consumer is single-threaded, and if you want to
    achieve parallelism with your message handling (which might be crucial for high throughput
-   topics) you need to manually manage your threads and/or deploy more consumer instances.
-   Greyhound automatically handles parallelising message handling for you with automatic throttling.
-   Also, Greyhound uses a concurrency model based on fibers (or green-threads) which are much more
-   lightweight than JVM threads, and makes async workloads extremely efficient.
-
- * **Consumer retries** - error handling is tricky. Sometimes things fail without our control
-   (database is temporarily down, API limit exceeded, network call timed-out, etc.) and the only
-   thing we can do to recover is to retry the same operation after some backoff. However, we do not
-   want to block our consumer until the backoff expires, nor do we want to retry the action in a
-   different thread and risk losing the messages in case our process goes down. Greyhound provides
-   a robust retry mechanism, which produces failed records to special retry topics where they will be
-   handled later, allowing the main consumer to keep working while ensuring no messages will be lost.
-
- * **Observability** - Greyhound reports many useful metrics which are invaluable when trying to
-   debug your system, or understand how it is operating.
-
- * **Context propagation** - _TODO_ 
+   topics) you need to manually manage your threads. Greyhound automatically handles parallelising
+   message handling for you with automatic throttling. Also, Greyhound uses a concurrency model
+   based on fibers (or green-threads) which are much more lightweight than JVM threads,
+   and makes async workloads extremely efficient.
+   
+ * **Retries** - error handling is tricky. Sometimes things fail without our control (database is
+   temporarily down, API limit exceeded, network call timed-out, etc.) and the only thing we can do
+   to recover is to retry the same operation after some backoff. However, we do not want to block
+   our consumer until the backoff expires, nor do we want to retry the action in a different thread
+   and risk losing the messages in case our process goes down. Greyhound provides a robust retry
+   mechanism, which produces failed records to special retry topics where they will be handled later,
+   allowing the main consumer to keep working while ensuring no messages will be lost.
  
- * **Safety** - _TODO_
+ * Context propagation - _TODO_
+ * Safety - _TODO_
+ * Observability - _TODO_
 
 ## Usage
 
@@ -65,49 +60,6 @@ and deserialize your domain objects and custom types to/from bytes.
  * `Deserializer[+A]` - takes bytes and converts them to values of type `A`
  * `Serde[A]` is both a `Serializer[A]` and a `Deserializer[A]`
 
-#### Transforming
-
-Often serialization / deserialization could be created by modifying existing datatypes. For example,
-you could encode a timestamp as a `Long` if you use the epoch millis as the representation. You can
-use the built in combinators to transform existing deserializers:
-
-```scala
-import com.wixpress.dst.greyhound.core.{Serdes, Deserializer}
-import java.time.Instant
-
-val longDeserializer: Deserializer[Long] = Serdes.LongSerde
-
-val instantDeserializer: Deserializer[Instant] =
-  longDeserializer.map(millis => Instant.ofEpochMilli(millis))
-```
-
-You could also modify a serializer by adapting the input using the `contramap` combinator:
-
-```scala
-import com.wixpress.dst.greyhound.core.{Serdes, Serializer}
-import java.time.Instant
-
-val longSerializer: Serializer[Long] = Serdes.LongSerde
-
-val instantSerializer: Serializer[Instant] =
-  longSerializer.contramap(instant => instant.toEpochMilli)
-```
-
-Or do both simultaneously using the `inmap` combinator:
-
-```scala
-import com.wixpress.dst.greyhound.core.{Serdes, Serde}
-import java.time.Instant
-
-val longSerde: Serde[Long] = Serdes.LongSerde
-
-val instantSerde: Serde[Instant] =
-  longSerde.inmap(Instant.ofEpochMilli)(_.toEpochMilli)
-```
-
-This could be useful for your own custom domain types as well. For example, modifying a string
-or byte array serde to represent your own types encoded as JSON.
-
 ### Future API
 
 ```scala
@@ -115,68 +67,40 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.Serdes
 import com.wixpress.dst.greyhound.future._
-import com.wixpress.dst.greyhound.future.GreyhoundConsumer.aRecordHandler
 import scala.concurrent.{Future, ExecutionContext}
 
 val bootstrapServer = "localhost:6667"
 val config = GreyhoundConfig(Set(bootstrapServer))
 
-// Define your Greyhound topology
-val builder = GreyhoundConsumersBuilder(config)
+// Build greyhound with a consumer
+val greyhound = GreyhoundBuilder(config)
   .withConsumer(
     GreyhoundConsumer(
       topic = "some-topic",
       group = "some-group",
-      handle = aRecordHandler {
-        new RecordHandler[Int, String] {
-          override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
-            Future(/* Your handling logic */)
-        }
+      handler = new RecordHandler[Int, String] {
+        override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
+          Future {
+            // Your handling logic
+          }
       },
       keyDeserializer = Serdes.IntSerde,
       valueDeserializer = Serdes.StringSerde))
+  .build
 
+// Create a producer and produce to topic
 for {
-  // Start consuming
-  consumers <- builder.build
-  
-  // Create a producer and produce to topic
-  producer <- GreyhoundProducerBuilder(config).build
+  gh <- greyhound
+  producer <- gh.producer(GreyhoundProducerConfig())
   _ <- producer.produce(
     record = ProducerRecord("some-topic", "hello world", Some(123)),
     keySerializer = Serdes.IntSerde,
     valueSerializer = Serdes.StringSerde)
-
-  // Shutdown all consumers and producers
-  _ <- producer.shutdown
-  _ <- consumers.shutdown
 } yield ()
+
+// Shutdown all consumers and producers
+greyhound.flatMap(_.shutdown)
 ```
-
-#### Using a custom metrics reporter
-
-By default, all Greyhound metrics are reported using a simple [SLF4J](http://www.slf4j.org/) logger.
-You can easily swap it for your own custom reporter like so:
-
-```scala
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
-import com.wixpress.dst.greyhound.future._
-
-val runtime = GreyhoundRuntimeBuilder()
-  .withMetricsReporter { metric: GreyhoundMetric =>
-    // Report to Prometheus / StatsD / whatever
-  }
-  .build
-
-val config = GreyhoundConfig(???, runtime)
-val builder = GreyhoundConsumersBuilder(???)
-  // ...
-```
-
-### Java API
-
-Greyhound also offers a Java API - example usage can be found in the
-[tests](./java-interop/src/test/java/com/wixpress/dst/greyhound/java/GreyhoundBuilderTest.java). 
 
 ### ZIO API
 
