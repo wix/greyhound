@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.clients.consumer.{ConsumerRecord => KafkaConsumerRecord}
+import zio.ZIO
 
 case class ConsumerRecord[+K, +V](topic: Topic,
                                   partition: Partition,
@@ -20,6 +21,18 @@ case class ConsumerRecord[+K, +V](topic: Topic,
       headers = headers,
       key = key.map(fk),
       value = fv(value))
+
+  def bimapM[R, E, K2, V2](fk: K => ZIO[R, E, K2], fv: V => ZIO[R, E, V2]): ZIO[R, E, ConsumerRecord[K2, V2]] =
+    for {
+      key2 <- ZIO.foreach(key)(fk)
+      value2 <- fv(value)
+    } yield ConsumerRecord(
+      topic = topic,
+      partition = partition,
+      offset = offset,
+      headers = headers,
+      key = key2.headOption,
+      value = value2)
 
   def mapKey[K2](f: K => K2): ConsumerRecord[K2, V] = bimap(f, identity)
 

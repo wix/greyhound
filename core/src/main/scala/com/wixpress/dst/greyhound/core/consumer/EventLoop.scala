@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import org.apache.kafka.clients.consumer.ConsumerRecords
@@ -9,12 +10,14 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
+trait EventLoop[-R] extends Resource[R]
+
 object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
   def make[R1, R2](consumer: Consumer[R1],
                    handler: Handler[R2],
-                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, Resource[R2 with GreyhoundMetrics with Clock]] = {
+                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
     val start = for {
       _ <- Metrics.report(StartingEventLoop)
       offsets <- Offsets.make
@@ -22,10 +25,31 @@ object EventLoop {
       dispatcher <- Dispatcher.make(handle, config.lowWatermark, config.highWatermark)
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
+      runtime <- ZIO.runtime[R2 with GreyhoundMetrics with Clock]
       _ <- consumer.subscribe(
         topics = handler.topics,
-        onPartitionsAssigned = { _ =>
-          partitionsAssigned.succeed(())
+        rebalanceListener = new RebalanceListener[R1] {
+          override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
+            ZIO.effectTotal {
+              /**
+                * The rebalance listener is invoked while calling `poll`. Kafka forces you
+                * to call `commit` from the same thread, otherwise an exception will be thrown.
+                * This is needed in order to stay on the same thread and commit properly.
+                * ZIO might decide to shift, which will make the call to `commit` fail,
+                * however this is not very likely (it shifts every 1024 instructions by default),
+                * and even when that happens we still maintain the guarantee to process at least once.
+                */
+              runtime.unsafeRun {
+                config.rebalanceListener.onPartitionsRevoked(partitions) *>
+                  dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
+                    ZIO.when(drained.isEmpty)(Metrics.report(DrainTimeoutExceeded))
+                  }
+              }
+            } *> commitOffsets(consumer, offsets, calledOnRebalance = true)
+
+          override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] =
+            config.rebalanceListener.onPartitionsAssigned(partitions) *>
+              partitionsAssigned.succeed(())
         })
       running <- Ref.make(true)
       fiber <- loop(running, consumer, dispatcher, Set.empty, offsets, config).fork
@@ -42,7 +66,7 @@ object EventLoop {
       } yield ()
     }.map {
       case (dispatcher, fiber, _, _) =>
-        new Resource[R2 with GreyhoundMetrics with Clock] {
+        new EventLoop[R2 with GreyhoundMetrics with Clock] {
           override def pause: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
             Metrics.report(PausingEventLoop) *> dispatcher.pause
 
@@ -102,9 +126,11 @@ object EventLoop {
       }
     }
 
-  private def commitOffsets[R](consumer: Consumer[R], offsets: Offsets) =
+  private def commitOffsets[R](consumer: Consumer[R],
+                               offsets: Offsets,
+                               calledOnRebalance: Boolean = false) =
     offsets.committable.flatMap { committable =>
-      consumer.commit(committable).catchAll { _ =>
+      consumer.commit(committable, calledOnRebalance).catchAll { _ =>
         ZIO.foreach_(committable) {
           case (partition, offset) =>
             offsets.update(partition, offset)
@@ -117,24 +143,29 @@ object EventLoop {
 case class EventLoopConfig(pollTimeout: Duration,
                            drainTimeout: Duration,
                            lowWatermark: Int,
-                           highWatermark: Int)
+                           highWatermark: Int,
+                           rebalanceListener: RebalanceListener[Any]) // TODO parametrize?
 
 object EventLoopConfig {
   val Default = EventLoopConfig(
     pollTimeout = 100.millis,
     drainTimeout = 30.seconds,
     lowWatermark = 128,
-    highWatermark = 256)
+    highWatermark = 256,
+    rebalanceListener = RebalanceListener.Empty)
 }
 
 sealed trait EventLoopMetric extends GreyhoundMetric
-case object StartingEventLoop extends EventLoopMetric
-case object PausingEventLoop extends EventLoopMetric
-case object ResumingEventLoop extends EventLoopMetric
-case object StoppingEventLoop extends EventLoopMetric
-case object DrainTimeoutExceeded extends EventLoopMetric
-case class HighWatermarkReached(partition: TopicPartition) extends EventLoopMetric
-case class PartitionThrottled(partition: TopicPartition) extends EventLoopMetric
+
+object EventLoopMetric {
+  case object StartingEventLoop extends EventLoopMetric
+  case object PausingEventLoop extends EventLoopMetric
+  case object ResumingEventLoop extends EventLoopMetric
+  case object StoppingEventLoop extends EventLoopMetric
+  case object DrainTimeoutExceeded extends EventLoopMetric
+  case class HighWatermarkReached(partition: TopicPartition) extends EventLoopMetric
+  case class PartitionThrottled(partition: TopicPartition) extends EventLoopMetric
+}
 
 sealed trait EventLoopState
 

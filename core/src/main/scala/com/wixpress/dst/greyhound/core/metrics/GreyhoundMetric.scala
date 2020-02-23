@@ -14,4 +14,6 @@ object GreyhoundMetric {
     override val metrics: Metrics.Service[GreyhoundMetric] =
       (metric: GreyhoundMetric) => ZIO.effectTotal(logger.info(metric.toString))
   }
+
+  object Live extends Live
 }

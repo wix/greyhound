@@ -6,6 +6,9 @@ import zio.{Chunk, Task}
 trait Serializer[-A] {
   def serialize(topic: String, value: A): Task[Chunk[Byte]]
 
+  /**
+    * Return a serializer which adapts the input with function `f`.
+    */
   def contramap[B](f: B => A): Serializer[B] =
     (topic: String, value: B) => serialize(topic, f(value))
 }
