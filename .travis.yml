@@ -20,4 +20,4 @@ before_install:
 install: true
 
 script:
-  bazel test //... -k --test_output=streamed
+  bazel test //... -k --test_output=streamed --jobs=1
