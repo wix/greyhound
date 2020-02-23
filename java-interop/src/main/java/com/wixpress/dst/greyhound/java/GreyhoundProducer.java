@@ -6,7 +6,7 @@ import org.apache.kafka.common.serialization.Serializer;
 
 import java.util.concurrent.CompletableFuture;
 
-public interface GreyhoundProducer extends AutoCloseable {
+public interface GreyhoundProducer {
 
     /**
      * Produce a record to Kafka using the provided serializers to serialize the key and value.
