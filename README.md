@@ -27,17 +27,19 @@ semantics such as parallel message handling or retry policies with ease.
    based on fibers (or green-threads) which are much more lightweight than JVM threads,
    and makes async workloads extremely efficient.
    
- * **Retries** - error handling is tricky. Sometimes things fail without our control (database is
-   temporarily down, API limit exceeded, network call timed-out, etc.) and the only thing we can do
-   to recover is to retry the same operation after some backoff. However, we do not want to block
-   our consumer until the backoff expires, nor do we want to retry the action in a different thread
-   and risk losing the messages in case our process goes down. Greyhound provides a robust retry
-   mechanism, which produces failed records to special retry topics where they will be handled later,
-   allowing the main consumer to keep working while ensuring no messages will be lost.
+ * **Consumer retries** - error handling is tricky. Sometimes things fail without our control
+   (database is temporarily down, API limit exceeded, network call timed-out, etc.) and the only
+   thing we can do to recover is to retry the same operation after some backoff. However, we do not
+   want to block our consumer until the backoff expires, nor do we want to retry the action in a
+   different thread and risk losing the messages in case our process goes down. Greyhound provides
+   a robust retry mechanism, which produces failed records to special retry topics where they will be
+   handled later, allowing the main consumer to keep working while ensuring no messages will be lost.
+ 
+ * **Observability** - Greyhound reports many useful metrics which are invaluable when trying to
+   debug your system, or understand how it is operating.
  
  * Context propagation - _TODO_
  * Safety - _TODO_
- * Observability - _TODO_
 
 ## Usage
 
@@ -72,8 +74,8 @@ import scala.concurrent.{Future, ExecutionContext}
 val bootstrapServer = "localhost:6667"
 val config = GreyhoundConfig(Set(bootstrapServer))
 
-// Build greyhound with a consumer
-val greyhound = GreyhoundBuilder(config)
+// Define your Greyhound topology
+val builder = GreyhoundBuilder(config)
   .withConsumer(
     GreyhoundConsumer(
       topic = "some-topic",
@@ -86,20 +88,37 @@ val greyhound = GreyhoundBuilder(config)
       },
       keyDeserializer = Serdes.IntSerde,
       valueDeserializer = Serdes.StringSerde))
-  .build
 
-// Create a producer and produce to topic
 for {
-  gh <- greyhound
-  producer <- gh.producer(GreyhoundProducerConfig())
+  // Start consuming
+  greyhound <- builder.build
+  
+  // Create a producer and produce to topic
+  producer <- greyhound.producer(GreyhoundProducerConfig())
   _ <- producer.produce(
     record = ProducerRecord("some-topic", "hello world", Some(123)),
     keySerializer = Serdes.IntSerde,
     valueSerializer = Serdes.StringSerde)
-} yield ()
 
-// Shutdown all consumers and producers
-greyhound.flatMap(_.shutdown)
+  // Shutdown all consumers and producers
+  _ <- greyhound.shutdown
+} yield ()
+```
+
+#### Using a custom metrics reporter
+
+By default, all Greyhound metrics are reported using a simple [SLF4J](http://www.slf4j.org/) logger.
+You can easily swap it for your own custom reporter like so:
+
+```scala
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
+import com.wixpress.dst.greyhound.future._
+
+val builder = GreyhoundBuilder(???)
+  .withMetricsReporter { metric: GreyhoundMetric =>
+    // Report to Prometheus / StatsD / whatever 
+  }
+  .withConsumer(???)
 ```
 
 ### ZIO API
