@@ -296,8 +296,7 @@ class ConsumerIT extends BaseTest[Env] {
         pauseResumeTest,
         gracefulShutdownTest,
         commitOnRebalanceTest,
-        gracefulRebalanceTest,
-        retryTest)
+        gracefulRebalanceTest)
   }
 
   run(tests)
