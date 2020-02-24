@@ -2,6 +2,8 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
+import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric.{StartingEventLoop, StoppingEventLoop}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.future.ConsumerIT._
@@ -12,6 +14,7 @@ import org.specs2.specification.{AfterAll, BeforeAll}
 import zio.duration.{Duration => ZDuration}
 import zio.{Task, URIO, Promise => ZPromise}
 
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}
 
@@ -63,6 +66,33 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     } yield handled
 
     handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(1.minute)
+  }
+
+  "collect metrics with custom reporter" in {
+    val metrics = ListBuffer.empty[GreyhoundMetric]
+    val builder = GreyhoundBuilder(GreyhoundConfig(environment.kafka.bootstrapServers))
+      .withConsumer(
+        GreyhoundConsumer(
+          topic = topic,
+          group = group,
+          handler = new RecordHandler[Int, String] {
+            override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
+              Future.unit
+          },
+          keyDeserializer = Serdes.IntSerde,
+          valueDeserializer = Serdes.StringSerde))
+      .withMetricsReporter { metric =>
+        metrics += metric
+      }
+
+    val recordedMetrics = for {
+      greyhound <- builder.build
+      _ <- greyhound.shutdown
+    } yield metrics.toList
+
+    recordedMetrics must
+      (contain[GreyhoundMetric](StartingEventLoop) and
+        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(1.minute)
   }
 
 }
