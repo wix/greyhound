@@ -42,11 +42,12 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
   "produce and consume a single message" in {
     val promise = Promise[ConsumerRecord[Int, String]]
-    val builder = GreyhoundBuilder(GreyhoundConfig(environment.kafka.bootstrapServers))
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers)
+    val builder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
           topic = topic,
-          group = group,
+          group = "group-1",
           handler = new RecordHandler[Int, String] {
             override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
               Future.successful(promise.success(record))
@@ -56,34 +57,36 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
     val handled = for {
       greyhound <- builder.build
-      producer <- greyhound.producer(GreyhoundProducerConfig())
+      producer <- GreyhoundProducerBuilder(config).build
       _ <- producer.produce(
         record = ProducerRecord(topic, "hello world", Some(123)),
         keySerializer = Serdes.IntSerde,
         valueSerializer = Serdes.StringSerde)
       handled <- promise.future
+      _ <- producer.shutdown
       _ <- greyhound.shutdown
     } yield handled
 
-    handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(5.minutes)
+    handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(1.minute)
   }
 
   "collect metrics with custom reporter" in {
     val metrics = ListBuffer.empty[GreyhoundMetric]
-    val builder = GreyhoundBuilder(GreyhoundConfig(environment.kafka.bootstrapServers))
+    val runtime = GreyhoundRuntimeBuilder()
+      .withMetricsReporter(metric => metrics += metric)
+      .build
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers, runtime)
+    val builder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
           topic = topic,
-          group = group,
+          group = "group-2",
           handler = new RecordHandler[Int, String] {
             override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
               Future.unit
           },
           keyDeserializer = Serdes.IntSerde,
           valueDeserializer = Serdes.StringSerde))
-      .withMetricsReporter { metric =>
-        metrics += metric
-      }
 
     val recordedMetrics = for {
       greyhound <- builder.build
@@ -92,14 +95,13 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
     recordedMetrics must
       (contain[GreyhoundMetric](StartingEventLoop) and
-        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(5.minutes)
+        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(1.minute)
   }
 
 }
 
 object ConsumerIT {
   val topic: Topic = "some-topic"
-  val group: Group = "some-group"
   val runtime = GreyhoundRuntime.Live
 }
 
