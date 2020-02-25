@@ -260,17 +260,14 @@ class ConsumerIT extends BaseTest[Env] {
       val retryTest = for {
         topic <- randomTopic()
         group <- randomGroup
-        _ <- verifyGroupCommitted(topic, group, partitions)
-        _ <- ZIO.foreach(0 to 2) { retry =>
-          val retryTopic = s"$topic-$group-retry-$retry"
-          kafka.createTopic(TopicConfig(retryTopic, partitions, 1, delete)) *>
-            verifyGroupCommitted(retryTopic, group, partitions)
-        }
+        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-0", partitions, 1, delete))
+        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-1", partitions, 1, delete))
+        _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-2", partitions, 1, delete))
 
         invocations <- Ref.make(0)
         done <- Promise.make[Nothing, Unit]
         retryPolicy = RetryPolicy.default(topic, group, 1.second, 2.seconds, 3.seconds)
-        handler = RecordHandler(topic) { r: ConsumerRecord[String, String] =>
+        handler = RecordHandler(topic) { _: ConsumerRecord[String, String] =>
           invocations.update(_ + 1).flatMap { n =>
             if (n < 4) ZIO.fail(new RuntimeException("Oops!"))
             else done.succeed(()) // Succeed on final retry
