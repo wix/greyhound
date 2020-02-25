@@ -42,7 +42,8 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
   "produce and consume a single message" in {
     val promise = Promise[ConsumerRecord[Int, String]]
-    val builder = GreyhoundBuilder(GreyhoundConfig(environment.kafka.bootstrapServers))
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers)
+    val builder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
           topic = topic,
@@ -56,12 +57,13 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
     val handled = for {
       greyhound <- builder.build
-      producer <- greyhound.producer(GreyhoundProducerConfig())
+      producer <- GreyhoundProducerBuilder(config).build
       _ <- producer.produce(
         record = ProducerRecord(topic, "hello world", Some(123)),
         keySerializer = Serdes.IntSerde,
         valueSerializer = Serdes.StringSerde)
       handled <- promise.future
+      _ <- producer.shutdown
       _ <- greyhound.shutdown
     } yield handled
 
@@ -70,7 +72,11 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
   "collect metrics with custom reporter" in {
     val metrics = ListBuffer.empty[GreyhoundMetric]
-    val builder = GreyhoundBuilder(GreyhoundConfig(environment.kafka.bootstrapServers))
+    val runtime = GreyhoundRuntimeBuilder()
+      .withMetricsReporter(metric => metrics += metric)
+      .build
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers, runtime)
+    val builder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
           topic = topic,
@@ -81,9 +87,6 @@ class ConsumerIT(implicit ee: ExecutionEnv)
           },
           keyDeserializer = Serdes.IntSerde,
           valueDeserializer = Serdes.StringSerde))
-      .withMetricsReporter { metric =>
-        metrics += metric
-      }
 
     val recordedMetrics = for {
       greyhound <- builder.build
