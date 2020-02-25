@@ -65,7 +65,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
       _ <- greyhound.shutdown
     } yield handled
 
-    handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(1.minute)
+    handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(5.minutes)
   }
 
   "collect metrics with custom reporter" in {
@@ -92,7 +92,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
     recordedMetrics must
       (contain[GreyhoundMetric](StartingEventLoop) and
-        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(1.minute)
+        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(5.minutes)
   }
 
 }
