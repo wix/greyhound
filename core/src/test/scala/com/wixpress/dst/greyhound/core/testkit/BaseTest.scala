@@ -15,7 +15,7 @@ trait BaseTest[R]
     unsafeRun(env.use(zio.provide))
 
   def all[R1 >: R, E](fragments: ZIO[R1, E, Fragment]*): ZIO[R1, E, Fragments] =
-    ZIO.sequence(fragments).map(fragments => Fragments(fragments: _*))
+    ZIO.collectAllPar(fragments).map(fragments => Fragments(fragments: _*))
 
   implicit def zioAsResult[R1 >: R, E, A](implicit ev: AsResult[A]): AsResult[ZIO[R1, E, A]] =
     new AsResult[ZIO[R1, E, A]] {
