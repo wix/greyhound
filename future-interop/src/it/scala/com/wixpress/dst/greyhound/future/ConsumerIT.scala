@@ -46,7 +46,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
       .withConsumer(
         GreyhoundConsumer(
           topic = topic,
-          group = group,
+          group = "group-1",
           handler = new RecordHandler[Int, String] {
             override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
               Future.successful(promise.success(record))
@@ -65,7 +65,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
       _ <- greyhound.shutdown
     } yield handled
 
-    handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(5.minutes)
+    handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(1.minute)
   }
 
   "collect metrics with custom reporter" in {
@@ -74,7 +74,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
       .withConsumer(
         GreyhoundConsumer(
           topic = topic,
-          group = group,
+          group = "group-2",
           handler = new RecordHandler[Int, String] {
             override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
               Future.unit
@@ -92,14 +92,13 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
     recordedMetrics must
       (contain[GreyhoundMetric](StartingEventLoop) and
-        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(5.minutes)
+        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(1.minute)
   }
 
 }
 
 object ConsumerIT {
   val topic: Topic = "some-topic"
-  val group: Group = "some-group"
   val runtime = GreyhoundRuntime.Live
 }
 
