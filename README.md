@@ -75,7 +75,7 @@ val bootstrapServer = "localhost:6667"
 val config = GreyhoundConfig(Set(bootstrapServer))
 
 // Define your Greyhound topology
-val builder = GreyhoundBuilder(config)
+val builder = GreyhoundConsumersBuilder(config)
   .withConsumer(
     GreyhoundConsumer(
       topic = "some-topic",
@@ -91,17 +91,18 @@ val builder = GreyhoundBuilder(config)
 
 for {
   // Start consuming
-  greyhound <- builder.build
+  consumers <- builder.build
   
   // Create a producer and produce to topic
-  producer <- greyhound.producer(GreyhoundProducerConfig())
+  producer <- GreyhoundProducerBuilder(config).build
   _ <- producer.produce(
     record = ProducerRecord("some-topic", "hello world", Some(123)),
     keySerializer = Serdes.IntSerde,
     valueSerializer = Serdes.StringSerde)
 
   // Shutdown all consumers and producers
-  _ <- greyhound.shutdown
+  _ <- producer.shutdown
+  _ <- consumers.shutdown
 } yield ()
 ```
 
@@ -114,11 +115,15 @@ You can easily swap it for your own custom reporter like so:
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.future._
 
-val builder = GreyhoundBuilder(???)
+val runtime = GreyhoundRuntimeBuilder()
   .withMetricsReporter { metric: GreyhoundMetric =>
-    // Report to Prometheus / StatsD / whatever 
+    // Report to Prometheus / StatsD / whatever
   }
-  .withConsumer(???)
+  .build
+
+val config = GreyhoundConfig(???, runtime)
+val builder = GreyhoundConsumersBuilder(???)
+  // ...
 ```
 
 ### ZIO API
