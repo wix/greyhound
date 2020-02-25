@@ -1,0 +1,26 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+java_library(
+    name = "java",
+    testonly = 1,
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//java-interop/src/test/java/com/wixpress/dst/greyhound/java/testkit",
+        "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
+        "@org_apache_kafka_kafka_clients",
+        "@junit_junit",
+    ],
+)
+
+java_test(
+    name = "GreyhoundBuilderTest",
+    size = "small",
+    testonly = 1,
+    runtime_deps = [
+        ":java",
+    ],
+)
