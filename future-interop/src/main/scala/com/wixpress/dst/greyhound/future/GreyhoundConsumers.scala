@@ -4,13 +4,11 @@ import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ParallelConsumer, ParallelConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Promise, ZIO}
+import zio.{Exit, ZIO}
 
 import scala.concurrent.Future
 
-trait GreyhoundConsumers {
-  def shutdown: Future[Unit]
-}
+trait GreyhoundConsumers extends Closeable
 
 case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
                                      handlers: Map[Group, Handler[Env]] = Map.empty) {
@@ -23,18 +21,14 @@ case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
-      ready <- Promise.make[Nothing, Unit]
-      shutdownSignal <- Promise.make[Nothing, Unit]
-      consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
-      fiber <- ParallelConsumer.make(consumerConfig, handlers).use_ {
-        ready.succeed(()) *> shutdownSignal.await
-      }.fork
-      _ <- ready.await
       runtime <- ZIO.runtime[Env]
+      consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
+      makeConsumer = ParallelConsumer.make(consumerConfig, handlers)
+      reservation <- makeConsumer.reserve
+      _ <- reservation.acquire
     } yield new GreyhoundConsumers {
-      override def shutdown: Future[Unit] = runtime.unsafeRunToFuture {
-        shutdownSignal.succeed(()) *> fiber.join
-      }
+      override def shutdown: Future[Unit] =
+        runtime.unsafeRunToFuture(reservation.release(Exit.Success(())).unit)
     }
   }
 
