@@ -26,10 +26,12 @@ case class GreyhoundRuntimeBuilder(metricsReporter: GreyhoundMetrics = Greyhound
     copy(metricsReporter = reporter)
 
   def withMetricsReporter(report: GreyhoundMetric => Unit): GreyhoundRuntimeBuilder =
-    withMetricsReporter(new GreyhoundMetrics {
-      override val metrics: Metrics.Service[GreyhoundMetric] =
-        (metric: GreyhoundMetric) => ZIO.effectTotal(report(metric))
-    })
+    withMetricsReporter {
+      new GreyhoundMetrics {
+        override val metrics: Metrics.Service[GreyhoundMetric] =
+          (metric: GreyhoundMetric) => ZIO.effectTotal(report(metric))
+      }
+    }
 
   def build: GreyhoundRuntime =
     new GreyhoundRuntime {
