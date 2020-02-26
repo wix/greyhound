@@ -3,30 +3,26 @@ package com.wixpress.dst.greyhound.java
 import java.util.concurrent.CompletableFuture
 
 import com.wixpress.dst.greyhound.core.Serializer
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord, ReportingProducer}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.clients.producer.{ProducerRecord => KafkaProducerRecord}
 import org.apache.kafka.common.serialization.{Serializer => KafkaSerializer}
-import zio.{Exit, Promise, ZIO}
+import zio.{Exit, ZIO}
 
 class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
   def build: GreyhoundProducer = config.runtime.unsafeRun {
     for {
-      shutdownSignal <- Promise.make[Nothing, Unit]
-      promise <- Promise.make[Nothing, Producer[Env]]
-      producerConfig = ProducerConfig(config.bootstrapServers)
-      fiber <- Producer.make(producerConfig).use { producer =>
-        promise.succeed(ReportingProducer(producer)) *>
-          shutdownSignal.await
-      }.fork
       runtime <- ZIO.runtime[Env]
+      producerConfig = ProducerConfig(config.bootstrapServers)
+      makeProducer = Producer.make(producerConfig)
+      reservation <- makeProducer.reserve
+      producer <- reservation.acquire
     } yield new GreyhoundProducer {
       override def produce[K, V](record: KafkaProducerRecord[K, V],
                                  keySerializer: KafkaSerializer[K],
                                  valueSerializer: KafkaSerializer[V]): CompletableFuture[OffsetAndMetadata] = {
         val result = for {
-          producer <- promise.await
           metadata <- producer.produce(
             ProducerRecord(
               topic = record.topic,
@@ -46,7 +42,7 @@ class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
       }
 
       override def close(): Unit = runtime.unsafeRun {
-        shutdownSignal.succeed(()).unit *> fiber.join
+        reservation.release(Exit.Success(())).unit
       }
     }
   }
