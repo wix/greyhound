@@ -23,8 +23,17 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
       consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
       makeConsumer = ParallelConsumer.make(consumerConfig, handlers)
       reservation <- makeConsumer.reserve
-      _ <- reservation.acquire
+      consumer <- reservation.acquire
     } yield new GreyhoundConsumers {
+      override def pause(): Unit =
+        runtime.unsafeRun(consumer.pause)
+
+      override def resume(): Unit =
+        runtime.unsafeRun(consumer.resume)
+
+      override def isAlive(): Boolean =
+        runtime.unsafeRun(consumer.isAlive)
+
       override def close(): Unit = runtime.unsafeRun {
         reservation.release(Exit.Success(())).unit
       }
