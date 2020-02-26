@@ -19,17 +19,14 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
 
   def build(): GreyhoundConsumers = config.runtime.unsafeRun {
     for {
-      ready <- Promise.make[Nothing, Unit]
-      shutdownSignal <- Promise.make[Nothing, Unit]
-      consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
-      fiber <- ParallelConsumer.make(consumerConfig, handlers).use_ {
-        ready.succeed(()) *> shutdownSignal.await
-      }.fork
-      _ <- ready.await
       runtime <- ZIO.runtime[Env]
+      consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
+      makeConsumer = ParallelConsumer.make(consumerConfig, handlers)
+      reservation <- makeConsumer.reserve
+      _ <- reservation.acquire
     } yield new GreyhoundConsumers {
       override def close(): Unit = runtime.unsafeRun {
-        shutdownSignal.succeed(()).unit *> fiber.join
+        reservation.release(Exit.Success(())).unit
       }
     }
   }
