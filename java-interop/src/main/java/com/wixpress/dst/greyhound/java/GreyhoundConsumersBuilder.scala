@@ -1,25 +1,23 @@
-package com.wixpress.dst.greyhound.future
+package com.wixpress.dst.greyhound.java
 
 import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ParallelConsumer, ParallelConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Exit, ZIO}
+import zio._
 
-import scala.concurrent.Future
+class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
 
-trait GreyhoundConsumers extends Closeable
+  private var handlers = Map.empty[Group, Handler[Env]]
 
-case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
-                                     handlers: Map[Group, Handler[Env]] = Map.empty) {
-
-  def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder = {
+  def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder = synchronized {
     val group = consumer.group
     val handler = handlers.get(group).foldLeft(consumer.recordHandler)(_ combine _)
-    copy(handlers = handlers + (group -> handler))
+    handlers += (group -> handler)
+    this
   }
 
-  def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
+  def build(): GreyhoundConsumers = config.runtime.unsafeRun {
     for {
       runtime <- ZIO.runtime[Env]
       consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
@@ -27,8 +25,9 @@ case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
       reservation <- makeConsumer.reserve
       _ <- reservation.acquire
     } yield new GreyhoundConsumers {
-      override def shutdown: Future[Unit] =
-        runtime.unsafeRunToFuture(reservation.release(Exit.Success(())).unit)
+      override def close(): Unit = runtime.unsafeRun {
+        reservation.release(Exit.Success(())).unit
+      }
     }
   }
 

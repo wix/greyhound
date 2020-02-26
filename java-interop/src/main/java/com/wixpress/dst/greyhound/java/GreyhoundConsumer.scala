@@ -1,10 +1,12 @@
 package com.wixpress.dst.greyhound.java
 
+import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.{Deserializer => CoreDeserializer}
+import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.serialization.Deserializer
-import zio.{Chunk, ZIO}
+import zio.ZIO
 
 class GreyhoundConsumer[K, V](val topic: String,
                               val group: String,
@@ -12,7 +14,7 @@ class GreyhoundConsumer[K, V](val topic: String,
                               val keyDeserializer: Deserializer[K],
                               val valueDeserializer: Deserializer[V]) {
 
-  def recordHandler: CoreRecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] = {
+  def recordHandler: Handler[Env] = {
     val baseHandler = CoreRecordHandler(topic) { record: CoreConsumerRecord[K, V] =>
       ZIO.effectAsync[Any, Throwable, Unit] { cb =>
         val kafkaRecord = new ConsumerRecord(
