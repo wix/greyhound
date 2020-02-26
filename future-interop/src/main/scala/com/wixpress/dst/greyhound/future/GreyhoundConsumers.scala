@@ -8,7 +8,13 @@ import zio.{Exit, ZIO}
 
 import scala.concurrent.Future
 
-trait GreyhoundConsumers extends Closeable
+trait GreyhoundConsumers extends Closeable {
+  def pause: Future[Unit]
+
+  def resume: Future[Unit]
+
+  def isAlive: Future[Boolean]
+}
 
 case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
                                      handlers: Map[Group, Handler[Env]] = Map.empty) {
@@ -25,8 +31,17 @@ case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
       consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
       makeConsumer = ParallelConsumer.make(consumerConfig, handlers)
       reservation <- makeConsumer.reserve
-      _ <- reservation.acquire
+      consumer <- reservation.acquire
     } yield new GreyhoundConsumers {
+      override def pause: Future[Unit] =
+        runtime.unsafeRunToFuture(consumer.pause)
+
+      override def resume: Future[Unit] =
+        runtime.unsafeRunToFuture(consumer.resume)
+
+      override def isAlive: Future[Boolean] =
+        runtime.unsafeRunToFuture(consumer.isAlive)
+
       override def shutdown: Future[Unit] =
         runtime.unsafeRunToFuture(reservation.release(Exit.Success(())).unit)
     }
