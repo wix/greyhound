@@ -64,6 +64,49 @@ and deserialize your domain objects and custom types to/from bytes.
  * `Deserializer[+A]` - takes bytes and converts them to values of type `A`
  * `Serde[A]` is both a `Serializer[A]` and a `Deserializer[A]`
 
+#### Transforming
+
+Often serialization / deserialization could be created by modifying existing datatypes. For example,
+you could encode a timestamp as a `Long` if you use the epoch millis as the representation. You can
+use the built in combinators to transform existing deserializers:
+
+```scala
+import com.wixpress.dst.greyhound.core.{Serdes, Deserializer}
+import java.time.Instant
+
+val longDeserializer: Deserializer[Long] = Serdes.LongSerde
+
+val instantDeserializer: Deserializer[Instant] =
+  longDeserializer.map(millis => Instant.ofEpochMilli(millis))
+```
+
+You could also modify a serializer by adapting the input using the `contramap` combinator:
+
+```scala
+import com.wixpress.dst.greyhound.core.{Serdes, Serializer}
+import java.time.Instant
+
+val longSerializer: Serializer[Long] = Serdes.LongSerde
+
+val instantSerializer: Serializer[Instant] =
+  longSerializer.contramap(instant => instant.toEpochMilli)
+```
+
+Or do both simultaneously using the `inmap` combinator:
+
+```scala
+import com.wixpress.dst.greyhound.core.{Serdes, Serde}
+import java.time.Instant
+
+val longSerde: Serde[Long] = Serdes.LongSerde
+
+val instantSerde: Serde[Instant] =
+  longSerde.inmap(Instant.ofEpochMilli)(_.toEpochMilli)
+```
+
+This could be useful for your own custom domain types as well. For example, modifying a string
+or byte array serde to represent your own types encoded as JSON.
+
 ### Future API
 
 ```scala
@@ -71,6 +114,7 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.Serdes
 import com.wixpress.dst.greyhound.future._
+import com.wixpress.dst.greyhound.future.GreyhoundConsumer.aRecordHandler
 import scala.concurrent.{Future, ExecutionContext}
 
 val bootstrapServer = "localhost:6667"
@@ -82,11 +126,11 @@ val builder = GreyhoundConsumersBuilder(config)
     GreyhoundConsumer(
       topic = "some-topic",
       group = "some-group",
-      handler = new RecordHandler[Int, String] {
-        override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
-          Future {
-            // Your handling logic
-          }
+      handle = aRecordHandler {
+        new RecordHandler[Int, String] {
+          override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
+            Future(/* Your handling logic */)
+        }
       },
       keyDeserializer = Serdes.IntSerde,
       valueDeserializer = Serdes.StringSerde))
@@ -127,6 +171,11 @@ val config = GreyhoundConfig(???, runtime)
 val builder = GreyhoundConsumersBuilder(???)
   // ...
 ```
+
+### Java API
+
+Greyhound also offers a Java API - example usage can be found in the
+[tests](./java-interop/src/test/java/com/wixpress/dst/greyhound/java/GreyhoundBuilderTest.java). 
 
 ### ZIO API
 
