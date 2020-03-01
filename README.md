@@ -1,4 +1,5 @@
-# Greyhound 🐕 [![Build Status](https://travis-ci.com/wix-incubator/greyhound.svg?branch=master)](https://travis-ci.com/wix-incubator/greyhound)
+# Greyhound 🐕 [![Build Status](https://api.cirrus-ci.com/github/wix-incubator/greyhound.svg)](https://cirrus-ci.com/github/wix-incubator/greyhound/master)
+
 
 Opinionated SDK for [Apache Kafka](https://kafka.apache.org/)
 
