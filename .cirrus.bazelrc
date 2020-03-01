@@ -7,3 +7,4 @@ build --genrule_strategy=sandboxed
 test --test_output=errors
 
 build --experimental_multi_threaded_digest=true
+test --test_strategy=sandboxed
