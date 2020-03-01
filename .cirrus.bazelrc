@@ -1,5 +1,5 @@
 build --strategy=Scalac=worker
-
+build --jobs=2
 build --spawn_strategy=sandboxed
 build --genrule_strategy=sandboxed
 
@@ -7,4 +7,9 @@ build --genrule_strategy=sandboxed
 test --test_output=errors
 
 build --experimental_multi_threaded_digest=true
-test --test_strategy=sandboxed
+
+test:ut-only --test_tag_filters=UT,-IT
+
+# TEST - unique flags for running IT because we can't have network sandboxing on cirrus
+test:it --test_tag_filters=IT
+test:it --local_test_jobs=1
