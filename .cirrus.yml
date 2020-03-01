@@ -4,7 +4,7 @@ bazel_build:
   task:
     bazel_repository_cache:
       folder: /.repo_cache
-      fingerprint_script: cat */**.bzl && cat WORKSPACE
+      fingerprint_script: cat WORKSPACE
       populate_script: mkdir -p /.repo_cache && bazel fetch --repository_cache=/.repo_cache //...
     test_script:
     - bazel test --jobs=2 --flaky_test_attempts=3 --repository_cache=/.repo_cache -k --remote_http_cache=http://$CIRRUS_HTTP_CACHE_HOST //...
