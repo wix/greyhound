@@ -1,0 +1,9 @@
+build --strategy=Scalac=worker
+
+build --spawn_strategy=sandboxed
+build --genrule_strategy=sandboxed
+
+# Shows errors clearly
+test --test_output=error
+
+build --experimental_multi_threaded_digest=true
