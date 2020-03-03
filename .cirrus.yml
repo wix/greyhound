@@ -2,10 +2,6 @@ docker_builder:
   name: test
   environment:
     V: 2.1.0
-  bazel_repository_cache:
-    folder: /.repo_cache
-    fingerprint_script: cat WORKSPACE
-    populate_script: mkdir -p /.repo_cache && bazel  --bazelrc=.cirrus.bazelrc fetch --repository_cache=/.repo_cache //...
   bazel_installation_script:
       - |
           URL="https://github.com/bazelbuild/bazel/releases/download/${V}/bazel-${V}-installer-linux-x86_64.sh"
@@ -13,6 +9,10 @@ docker_builder:
           chmod +x install.sh
           ./install.sh --user
           rm -f install.sh
+  bazel_repository_cache:
+    folder: /.repo_cache
+    fingerprint_script: cat WORKSPACE
+    populate_script: mkdir -p /.repo_cache && bazel  --bazelrc=.cirrus.bazelrc fetch --repository_cache=/.repo_cache //...
 
   test_script:
   - bazel  --bazelrc=.cirrus.bazelrc test --repository_cache=/.repo_cache -k --remote_http_cache=http://$CIRRUS_HTTP_CACHE_HOST //...
