@@ -1,5 +1,7 @@
 package com.wixpress.dst.greyhound.java
 
+import java.util.concurrent.Executor
+
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.{Deserializer => CoreDeserializer}
@@ -14,7 +16,7 @@ class GreyhoundConsumer[K, V](val topic: String,
                               val keyDeserializer: Deserializer[K],
                               val valueDeserializer: Deserializer[V]) {
 
-  def recordHandler: Handler[Env] = {
+  def recordHandler(executor: Executor): Handler[Env] = {
     val baseHandler = CoreRecordHandler(topic) { record: CoreConsumerRecord[K, V] =>
       ZIO.effectAsync[Any, Throwable, Unit] { cb =>
         val kafkaRecord = new ConsumerRecord(
@@ -25,7 +27,7 @@ class GreyhoundConsumer[K, V](val topic: String,
           record.value) // TODO headers
 
         handler
-          .handle(kafkaRecord)
+          .handle(kafkaRecord, executor)
           .handle[Unit] { (_, error) =>
             if (error != null) cb(ZIO.fail(error))
             else cb(ZIO.unit)
