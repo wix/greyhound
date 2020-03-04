@@ -15,7 +15,7 @@ import org.junit.Test;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import static com.wixpress.dst.greyhound.java.RecordHandlers.aSyncRecordHandler;
+import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
 import static org.junit.Assert.assertEquals;
 
 public class GreyhoundBuilderTest {
@@ -48,7 +48,7 @@ public class GreyhoundBuilderTest {
                         new GreyhoundConsumer<>(
                                 topic,
                                 group,
-                                aSyncRecordHandler(future::complete),
+                                aBlockingRecordHandler(future::complete),
                                 new IntegerDeserializer(),
                                 new StringDeserializer()));
 
