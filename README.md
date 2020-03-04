@@ -21,14 +21,14 @@ semantics such as parallel message handling or retry policies with ease.
    know-how and adds a lot of boilerplate when all you want to do is process messages from a topic.
    Greyhound tries to abstract away these complexities by providing a simple, declarative API, and
    to allow the developers to focus on their business logic instead of how to operate Kafka correctly.
-   
+
  * **Parallel message handling** - A single Kafka consumer is single-threaded, and if you want to
    achieve parallelism with your message handling (which might be crucial for high throughput
-   topics) you need to manually manage your threads. Greyhound automatically handles parallelising
-   message handling for you with automatic throttling. Also, Greyhound uses a concurrency model
-   based on fibers (or green-threads) which are much more lightweight than JVM threads,
-   and makes async workloads extremely efficient.
-   
+   topics) you need to manually manage your threads and/or deploy more consumer instances.
+   Greyhound automatically handles parallelising message handling for you with automatic throttling.
+   Also, Greyhound uses a concurrency model based on fibers (or green-threads) which are much more
+   lightweight than JVM threads, and makes async workloads extremely efficient.
+
  * **Consumer retries** - error handling is tricky. Sometimes things fail without our control
    (database is temporarily down, API limit exceeded, network call timed-out, etc.) and the only
    thing we can do to recover is to retry the same operation after some backoff. However, we do not
@@ -36,12 +36,13 @@ semantics such as parallel message handling or retry policies with ease.
    different thread and risk losing the messages in case our process goes down. Greyhound provides
    a robust retry mechanism, which produces failed records to special retry topics where they will be
    handled later, allowing the main consumer to keep working while ensuring no messages will be lost.
- 
+
  * **Observability** - Greyhound reports many useful metrics which are invaluable when trying to
    debug your system, or understand how it is operating.
+
+ * **Context propagation** - _TODO_ 
  
- * Context propagation - _TODO_
- * Safety - _TODO_
+ * **Safety** - _TODO_
 
 ## Usage
 
