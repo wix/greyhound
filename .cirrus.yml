@@ -4,11 +4,9 @@ docker_builder:
     V: 2.1.0
   bazel_installation_script:
       - |
-          URL="https://github.com/bazelbuild/bazel/releases/download/${V}/bazel-${V}-installer-linux-x86_64.sh"
-          wget -O install.sh "${URL}"
-          chmod +x install.sh
-          ./install.sh --user
-          rm -f install.sh
+          curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
+          mv bazelisk-linux-amd64 "/usr/bin/bazel"
+          chmod +x /usr/bin/bazel
   bazel_repository_cache:
     folder: /.repo_cache
     fingerprint_script: cat WORKSPACE
