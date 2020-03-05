@@ -2,11 +2,19 @@ docker_builder:
   name: test
   environment:
     V: 2.1.0
-  bazel_installation_script:
+    XDG_CACHE_HOME: /xdg_cache
+
+  bazelisk_installation_script:
       - |
           curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
           mv bazelisk-linux-amd64 "/usr/bin/bazel"
           chmod +x /usr/bin/bazel
+          
+  bazelisk_cache:
+    folder: $XDG_CACHE_HOME
+    fingerprint_script: cat .bazelversion
+    populate_script: mkdir -p  $XDG_CACHE_HOME && bazel version
+
   bazel_repository_cache:
     folder: /.repo_cache
     fingerprint_script: cat WORKSPACE
