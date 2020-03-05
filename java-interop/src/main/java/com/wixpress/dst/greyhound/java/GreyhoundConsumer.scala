@@ -10,11 +10,11 @@ import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.serialization.Deserializer
 import zio.ZIO
 
-class GreyhoundConsumer[K, V](val topic: String,
-                              val group: String,
-                              val handler: RecordHandler[K, V],
-                              val keyDeserializer: Deserializer[K],
-                              val valueDeserializer: Deserializer[V]) {
+class GreyhoundConsumer[K >: AnyRef, V](val topic: String,
+                                        val group: String,
+                                        val handler: RecordHandler[K, V],
+                                        val keyDeserializer: Deserializer[K],
+                                        val valueDeserializer: Deserializer[V]) {
 
   def recordHandler(executor: Executor): Handler[Env] = {
     val baseHandler = CoreRecordHandler(topic) { record: CoreConsumerRecord[K, V] =>
@@ -23,7 +23,7 @@ class GreyhoundConsumer[K, V](val topic: String,
           record.topic,
           record.partition,
           record.offset,
-          record.key.get, // TODO .get
+          record.key.orNull,
           record.value) // TODO headers
 
         handler
