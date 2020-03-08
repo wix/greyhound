@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
@@ -15,14 +16,15 @@ trait EventLoop[-R] extends Resource[R]
 object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
-  def make[R1, R2](consumer: Consumer[R1],
+  def make[R1, R2](group: Group,
+                   consumer: Consumer[R1],
                    handler: Handler[R2],
                    config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
     val start = for {
       _ <- Metrics.report(StartingEventLoop)
       offsets <- Offsets.make
       handle = handler.andThen(offsets.update).handle(_)
-      dispatcher <- Dispatcher.make(handle, config.lowWatermark, config.highWatermark)
+      dispatcher <- Dispatcher.make(group, handle, config.lowWatermark, config.highWatermark)
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
       runtime <- ZIO.runtime[R2 with GreyhoundMetrics with Clock]
@@ -32,13 +34,13 @@ object EventLoop {
           override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
             ZIO.effectTotal {
               /**
-                * The rebalance listener is invoked while calling `poll`. Kafka forces you
-                * to call `commit` from the same thread, otherwise an exception will be thrown.
-                * This is needed in order to stay on the same thread and commit properly.
-                * ZIO might decide to shift, which will make the call to `commit` fail,
-                * however this is not very likely (it shifts every 1024 instructions by default),
-                * and even when that happens we still maintain the guarantee to process at least once.
-                */
+               * The rebalance listener is invoked while calling `poll`. Kafka forces you
+               * to call `commit` from the same thread, otherwise an exception will be thrown.
+               * This is needed in order to stay on the same thread and commit properly.
+               * ZIO might decide to shift, which will make the call to `commit` fail,
+               * however this is not very likely (it shifts every 1024 instructions by default),
+               * and even when that happens we still maintain the guarantee to process at least once.
+               */
               runtime.unsafeRun {
                 config.rebalanceListener.onPartitionsRevoked(partitions) *>
                   dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
@@ -158,19 +160,31 @@ object EventLoopConfig {
 sealed trait EventLoopMetric extends GreyhoundMetric
 
 object EventLoopMetric {
+
   case object StartingEventLoop extends EventLoopMetric
+
   case object PausingEventLoop extends EventLoopMetric
+
   case object ResumingEventLoop extends EventLoopMetric
+
   case object StoppingEventLoop extends EventLoopMetric
+
   case object DrainTimeoutExceeded extends EventLoopMetric
+
   case class HighWatermarkReached(partition: TopicPartition) extends EventLoopMetric
+
   case class PartitionThrottled(partition: TopicPartition) extends EventLoopMetric
+
 }
 
 sealed trait EventLoopState
 
 object EventLoopState {
+
   case object Running extends EventLoopState
+
   case object Paused extends EventLoopState
+
   case object ShuttingDown extends EventLoopState
+
 }

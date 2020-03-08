@@ -22,7 +22,7 @@ object ParallelConsumer {
     ZManaged.foreachPar(handlers) {
       case (group, handler) => for {
         consumer <- Consumer.make(ConsumerConfig(config.bootstrapServers, group, config.clientId))
-        eventLoop <- EventLoop.make(ReportingConsumer(config.clientId, group, consumer), handler, config.eventLoopConfig)
+        eventLoop <- EventLoop.make(group, ReportingConsumer(config.clientId, group, consumer), handler, config.eventLoopConfig)
       } yield eventLoop
     }.map { eventLoops =>
       val combined = eventLoops.foldLeft[Resource[R with Env]](Resource.Empty)(_ combine _)
