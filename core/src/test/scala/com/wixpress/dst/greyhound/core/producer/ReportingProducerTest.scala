@@ -1,11 +1,15 @@
 package com.wixpress.dst.greyhound.core.producer
 
+import java.util.concurrent.TimeUnit
+
 import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.ReportingProducerTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, FakeProducer, TestMetrics}
 import zio._
 import zio.duration._
 import zio.test.environment.{TestClock, TestEnvironment}
+
+import scala.concurrent.duration.FiniteDuration
 
 class ReportingProducerTest extends BaseTest[TestClock with TestMetrics] {
 
@@ -50,7 +54,7 @@ class ReportingProducerTest extends BaseTest[TestClock with TestMetrics] {
       _ <- TestClock.adjust(1.second)
       _ <- promise.succeed(()) *> fiber.join
       metrics <- TestMetrics.reported
-    } yield metrics must contain(RecordProduced(metadata, 1.second))
+    } yield metrics must contain(RecordProduced(metadata, FiniteDuration(1, TimeUnit.SECONDS)))
   }
 
   "report metric when produce fails" in {
