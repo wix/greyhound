@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
@@ -21,7 +22,8 @@ trait Dispatcher[-R] {
 object Dispatcher {
   type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
 
-  def make[R](handle: Record => URIO[R, Any],
+  def make[R](group: Group,
+              handle: Record => URIO[R, Any],
               lowWatermark: Int,
               highWatermark: Int): UIO[Dispatcher[R with GreyhoundMetrics with Clock]] =
     for {
@@ -101,7 +103,7 @@ object Dispatcher {
         Metrics.report(HandlingRecord(record)) *>
           handle(record).timed.flatMap {
             case (duration, _) =>
-              Metrics.report(RecordHandled(record, duration))
+              Metrics.report(RecordHandled(record, group, duration))
           }
 
       private def shutdown(workers: Iterable[(TopicPartition, Worker)]) =
@@ -176,5 +178,5 @@ object DispatcherMetric {
   case class StoppingWorker(partition: TopicPartition) extends DispatcherMetric
   case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
   case class HandlingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
-  case class RecordHandled[K, V](record: ConsumerRecord[K, V], duration: Duration) extends DispatcherMetric
+  case class RecordHandled[K, V](record: ConsumerRecord[K, V], group: Group, duration: Duration) extends DispatcherMetric
 }
