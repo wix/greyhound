@@ -49,13 +49,13 @@ repositories {
 <dependency>
   <groupId>com.wix.greyhound</groupId>
   <artifactId>greyhound-scala-futures_2.12</artifactId>
-  <version>0.1.0-416ec1</version>
+  <version>0.1.1</version>
   <type>pom</type>
 </dependency>
 ```
 ##### Gradle:
 ```groovy
-implementation 'com.wix.greyhound:greyhound-scala-futures_2.12:0.1.0-416ec1'
+implementation 'com.wix.greyhound:greyhound-scala-futures_2.12:0.1.1'
 ```
 
 ### Greyhound - Java
@@ -64,13 +64,13 @@ implementation 'com.wix.greyhound:greyhound-scala-futures_2.12:0.1.0-416ec1'
 <dependency>
   <groupId>com.wix.greyhound</groupId>
   <artifactId>greyhound-java_2.12</artifactId>
-  <version>0.1.0-416ec1</version>
+  <version>0.1.1</version>
   <type>pom</type>
 </dependency>
 ```
 ##### Gradle:
 ```groovy
-implementation 'com.wix.greyhound:greyhound-java_2.12:0.1.0-416ec1'
+implementation 'com.wix.greyhound:greyhound-java_2.12:0.1.1'
 ```
 
 ## Why Greyhound?
