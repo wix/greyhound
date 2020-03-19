@@ -278,4 +278,4 @@ val bootstrapServers = Set("localhost:6667")
 ParallelConsumer.make(bootstrapServers, group -> handler).useForever
 ```
 
-###[Publishing Maven Artifacts](docs/publishing.md)
+### [Publishing Maven Artifacts](docs/publishing.md)
