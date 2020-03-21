@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.Group
+import com.wixpress.dst.greyhound.core.{Group, Topic}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.ParallelConsumer.Env
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
@@ -10,15 +10,17 @@ import zio.clock.Clock
 
 trait ParallelConsumer[-R] extends Resource[R] {
   def state: URIO[R with Env, ParallelConsumerExposedState]
+
+  def topology: URIO[R with Env, ParallelConsumerTopology]
 }
 
 object ParallelConsumer {
   type Env = GreyhoundMetrics with Blocking with Clock
 
   /**
-   * Creates parallel consumer, that when used will start consuming messages
+   * Creates a parallel consumer, that when used will start consuming messages
    * from Kafka and invoke the appropriate handlers. Handling is concurrent between
-   * partitions, order is guaranteed to be maintained within the same partition.
+   * partitions; order is guaranteed to be maintained within the same partition.
    */
   def make[R](config: ParallelConsumerConfig,
               handlers: Map[Group, Handler[R]]): ZManaged[R with Env, Throwable, ParallelConsumer[R with Env]] =
@@ -41,6 +43,9 @@ object ParallelConsumer {
         override def state: URIO[R with Env, ParallelConsumerExposedState] =
           ZIO.foreach(consumers) { case (_, eventLoop, group) => eventLoop.state.map(state => (group, state)) }.map(_.toMap)
             .map(ParallelConsumerExposedState.apply)
+
+        override def topology: URIO[R with Env with Env, ParallelConsumerTopology] =
+          UIO(handlers.mapValues(_.topics)).map(ParallelConsumerTopology.apply)
       }
     }
 
@@ -50,6 +55,8 @@ object ParallelConsumer {
 }
 
 case class ParallelConsumerExposedState(dispatcherStates: Map[Group, DispatcherExposedState])
+
+case class ParallelConsumerTopology(subscriptions: Map[Group, Set[Topic]])
 
 case class ParallelConsumerConfig(bootstrapServers: Set[String],
                                   clientId: String = ParallelConsumerConfig.DefaultClientId,
