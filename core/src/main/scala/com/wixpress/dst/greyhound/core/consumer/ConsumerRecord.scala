@@ -9,7 +9,9 @@ case class ConsumerRecord[+K, +V](topic: Topic,
                                   offset: Offset,
                                   headers: Headers,
                                   key: Option[K],
-                                  value: V) {
+                                  value: V,
+                                  pollTime: Long,
+                                  bytesTotal: Long) {
 
   def id: String = s"$topic:$partition:$offset"
 
@@ -20,7 +22,9 @@ case class ConsumerRecord[+K, +V](topic: Topic,
       offset = offset,
       headers = headers,
       key = key.map(fk),
-      value = fv(value))
+      value = fv(value),
+      pollTime = pollTime,
+      bytesTotal = bytesTotal)
 
   def bimapM[R, E, K2, V2](fk: K => ZIO[R, E, K2], fv: V => ZIO[R, E, V2]): ZIO[R, E, ConsumerRecord[K2, V2]] =
     for {
@@ -32,7 +36,9 @@ case class ConsumerRecord[+K, +V](topic: Topic,
       offset = offset,
       headers = headers,
       key = key2.headOption,
-      value = value2)
+      value = value2,
+      pollTime = pollTime,
+      bytesTotal = bytesTotal)
 
   def mapKey[K2](f: K => K2): ConsumerRecord[K2, V] = bimap(f, identity)
 
@@ -48,5 +54,7 @@ object ConsumerRecord {
       offset = record.offset,
       headers = Headers(record.headers),
       key = Option(record.key),
-      value = record.value)
+      value = record.value,
+      pollTime = record.timestamp,
+      bytesTotal = record.serializedValueSize() + record.serializedKeySize() + record.headers().toArray.map(h => h.key.length + h.value.length).sum)
 }
