@@ -9,6 +9,6 @@ scala_library(
     ],
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
-        "@org_apache_kafka_kafka_clients",
+        "@org_apache_kafka_kafka_clients241",
     ],
 )

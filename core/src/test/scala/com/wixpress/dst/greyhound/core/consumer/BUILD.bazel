@@ -18,6 +18,6 @@ specs2_unit_test(
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_streams_2_12",
         "@dev_zio_zio_test_2_12",
-        "@org_apache_kafka_kafka_clients",
+        "@org_apache_kafka_kafka_clients241",
     ],
 )

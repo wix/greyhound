@@ -11,6 +11,6 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
-        "@org_apache_kafka_kafka_clients",
+        "@org_apache_kafka_kafka_clients241",
     ],
 )
