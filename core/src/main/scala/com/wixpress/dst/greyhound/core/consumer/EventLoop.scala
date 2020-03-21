@@ -11,8 +11,10 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
-trait EventLoop[-R] extends Resource[R]
-
+trait EventLoop[-R] extends Resource[R] {
+  self =>
+  def state: URIO[R with GreyhoundMetrics, DispatcherExposedState]
+}
 object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
@@ -79,6 +81,8 @@ object EventLoop {
             case Some(Exit.Failure(_)) => false
             case _ => true
           }
+
+          override def state: URIO[R2 with GreyhoundMetrics with Clock, DispatcherExposedState] = dispatcher.expose
         }
     }
   }
