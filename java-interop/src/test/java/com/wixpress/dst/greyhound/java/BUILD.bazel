@@ -11,7 +11,7 @@ java_library(
     deps = [
         "//java-interop/src/test/java/com/wixpress/dst/greyhound/java/testkit",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
-        "@org_apache_kafka_kafka_clients",
+        "@org_apache_kafka_kafka_clients241",
         "@junit_junit",
     ],
 )
