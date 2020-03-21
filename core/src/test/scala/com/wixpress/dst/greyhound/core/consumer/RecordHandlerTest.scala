@@ -44,7 +44,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         retryHandler = failingHandler.withRetries(retryPolicy, producer)
         key <- bytes
         value <- bytes
-        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value))
+        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0l, 0l))
         record <- producer.records.take
         now <- currentTime
         retryAttempt <- IntSerde.serialize(retryTopic, 0)
@@ -67,7 +67,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         producer <- FakeProducer.make
         retryHandler = failingHandler.withRetries(retryPolicy, producer.failing)
         value <- bytes
-        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value, 0l, 0l)).flip
       } yield result must beLeft
     }
 
@@ -88,7 +88,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
           "retry-attempt" -> retryAttempt,
           "retry-submitted-at" -> submittedAt,
           "retry-backoff" -> backoff)
-        _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value)).fork
+        _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0l, 0l)).fork
         _ <- TestClock.adjust(1.second)
         end <- executionTime.await
       } yield end must equalTo(begin.plusSeconds(1))
@@ -100,7 +100,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         failingHandler = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](topic)(_ => ZIO.fail(NonRetriableError))
         retryHandler = failingHandler.withRetries(retryPolicy, producer)
         value <- bytes
-        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value, 0l, 0l)).flip
       } yield result must beRight[HandlerError](NonRetriableError)
     }
   }
@@ -124,8 +124,8 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 
         combined = handler1 combine handler2
 
-        _ <- combined.handle(ConsumerRecord("topic1", partition, offset, Headers.Empty, None, "value1"))
-        _ <- combined.handle(ConsumerRecord("topic2", partition, offset, Headers.Empty, None, "value2"))
+        _ <- combined.handle(ConsumerRecord("topic1", partition, offset, Headers.Empty, None, "value1", 0l, 0l))
+        _ <- combined.handle(ConsumerRecord("topic2", partition, offset, Headers.Empty, None, "value2", 0l, 0l))
         record1 <- records1.take
         record2 <- records2.take
       } yield (record1 must beRecordWithValue("value1")) and
@@ -142,7 +142,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 
         combined = handler1 combine handler2
 
-        _ <- combined.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value"))
+        _ <- combined.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value", 0l, 0l))
         record1 <- records1.take
         record2 <- records2.take
       } yield (record1 must beRecordWithValue("value")) and
@@ -154,7 +154,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         RecordHandler[Any, Throwable, String, String]("topic1")(_ => ZIO.unit) combine
           RecordHandler[Any, Throwable, String, String]("topic2")(_ => ZIO.unit)
 
-      val record = ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value")
+      val record = ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value", 0l, 0l)
 
       handler.handle(record).either.map(_ must beRight)
     }
