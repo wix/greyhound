@@ -10,12 +10,12 @@ specs2_ite2e_test(
         ":sources",
     ],
     deps = [
-        "//core/src/test/resources",
         "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//core/src/test/resources",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/consumer",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@ch_qos_logback_logback_classic",
