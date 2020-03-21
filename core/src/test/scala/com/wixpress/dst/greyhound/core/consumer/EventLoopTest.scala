@@ -38,7 +38,7 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
       handler = RecordHandler(topic)(promise.succeed)
       handled <- EventLoop.make("group", ReportingConsumer(clientId, group, consumer), handler).use_(promise.await)
       metrics <- TestMetrics.reported
-    } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty))) and
+    } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty, -1L, -2L))) and
       (metrics must contain(PollingFailed(clientId, group, exception)))
   }
 
@@ -63,7 +63,7 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
       committed <- EventLoop.make("group", ReportingConsumer(clientId, group, consumer), RecordHandler.empty).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
-      (metrics must contain(CommitFailed(clientId, group, exception)))
+      (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic(), record.partition()) -> (offset + 1)))))
   }
 
   "expose event loop health" in {

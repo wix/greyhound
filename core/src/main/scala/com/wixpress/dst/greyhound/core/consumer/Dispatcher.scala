@@ -12,11 +12,19 @@ import zio.duration.Duration
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R, SubmitResult]
+
   def resumeablePartitions(paused: Set[TopicPartition]): URIO[R, Set[TopicPartition]]
+
   def revoke(partitions: Set[TopicPartition]): URIO[R, Unit]
+
   def pause: URIO[R, Unit]
+
   def resume: URIO[R, Unit]
+
   def shutdown: URIO[R, Unit]
+
+  def expose: URIO[R, DispatcherExposedState]
+
 }
 
 object Dispatcher {
@@ -43,8 +51,8 @@ object Dispatcher {
           ZIO.foldLeft(paused)(Set.empty[TopicPartition]) { (acc, partition) =>
             workers.get(partition) match {
               case Some(worker) =>
-                worker.pendingTasks.map { tasks =>
-                  if (tasks <= lowWatermark) acc + partition
+                worker.expose.map { tasks =>
+                  if (tasks.queuedTasks <= lowWatermark) acc + partition
                   else acc
                 }
 
@@ -52,6 +60,11 @@ object Dispatcher {
             }
           }
         }
+
+      override def expose: URIO[R with GreyhoundMetrics with Clock, DispatcherExposedState] =
+        workers.get.flatMap(workers =>
+          ZIO.foreach(workers) { case (tp, worker) => worker.expose.map(pending => (tp, pending)) }.map(_.toMap)
+        ).map(DispatcherExposedState.apply)
 
       override def revoke(partitions: Set[TopicPartition]): URIO[R with GreyhoundMetrics with Clock, Unit] =
         workers.modify { workers =>
@@ -84,9 +97,9 @@ object Dispatcher {
         } *> workers.get.flatMap(shutdown)
 
       /**
-        * This implementation is not fiber-safe. Since the worker is used per partition,
-        * and all operations performed on a single partition are linearizable this is fine.
-        */
+       * This implementation is not fiber-safe. Since the worker is used per partition,
+       * and all operations performed on a single partition are linearizable this is fine.
+       */
       private def workerFor(partition: TopicPartition) =
         workers.get.flatMap { workers1 =>
           workers1.get(partition) match {
@@ -100,7 +113,7 @@ object Dispatcher {
         }
 
       private def handleWithMetrics(record: Record) =
-        Metrics.report(HandlingRecord(record)) *>
+        Metrics.report(HandlingRecord(record, System.currentTimeMillis() - record.pollTime, group)) *>
           handle(record).timed.flatMap {
             case (duration, _) =>
               Metrics.report(RecordHandled(record, group, duration))
@@ -117,66 +130,106 @@ object Dispatcher {
   sealed trait State
 
   object State {
+
     case object Running extends State
+
     case class Paused(resume: Promise[Nothing, Unit]) extends State
+
     case object ShuttingDown extends State
+
   }
 
   case class Task(record: Record, complete: UIO[Unit])
 
   trait Worker {
     def submit(record: Record): UIO[Boolean]
-    def pendingTasks: UIO[Int]
+
+    def expose: UIO[WorkerExposedState]
+
     def shutdown: UIO[Unit]
   }
 
   object Worker {
-    def make[R](state: Ref[State],
+    def make[R](status: Ref[State],
                 handle: Record => URIO[R, Any],
                 capacity: Int): URIO[R, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
-      fiber <- loop(state, handle, queue).interruptible.fork
+      internalState <- Ref.make(WorkerInternalState.empty)
+      fiber <- loop(status, internalState, handle, queue).interruptible.fork
     } yield new Worker {
       override def submit(record: Record): UIO[Boolean] =
         queue.offer(record)
 
-      override def pendingTasks: UIO[Int] =
-        queue.size
+      override def expose: UIO[WorkerExposedState] =
+        (queue.size zip internalState.get)
+          .map { case (queued, state) => WorkerExposedState(
+            queued, state.currentExecutionStarted.map(System.currentTimeMillis - _))
+          }
 
       override def shutdown: UIO[Unit] =
         fiber.interrupt.unit
     }
 
     private def loop[R](state: Ref[State],
+                        internalState: Ref[WorkerInternalState],
                         handle: Record => URIO[R, Any],
                         queue: Queue[Record]): URIO[R, Unit] =
-      state.get.flatMap {
-        case State.Running => queue.take.flatMap { record =>
-          handle(record).uninterruptible *> loop(state, handle, queue)
+      internalState.update(_.cleared) *>
+        state.get.flatMap {
+          case State.Running => queue.take.flatMap { record =>
+            internalState.update(_.started) *>
+              handle(record).uninterruptible *> loop(state, internalState, handle, queue)
+          }
+
+          case State.Paused(resume) =>
+            resume.await *> loop(state, internalState, handle, queue)
+
+          case State.ShuttingDown => ZIO.unit
         }
-
-        case State.Paused(resume) =>
-          resume.await *> loop(state, handle, queue)
-
-        case State.ShuttingDown => ZIO.unit
-      }
   }
 
+}
+
+case class WorkerInternalState(currentExecutionStarted: Option[Long]) {
+  def cleared = copy(currentExecutionStarted = None)
+
+  def started = copy(currentExecutionStarted = Some(System.currentTimeMillis()))
+}
+
+object WorkerInternalState {
+  def empty = WorkerInternalState(None)
 }
 
 sealed trait SubmitResult
 
 object SubmitResult {
+
   case object Submitted extends SubmitResult
+
   case object Rejected extends SubmitResult
+
 }
 
 sealed trait DispatcherMetric extends GreyhoundMetric
 
 object DispatcherMetric {
+
   case class StartingWorker(partition: TopicPartition) extends DispatcherMetric
+
   case class StoppingWorker(partition: TopicPartition) extends DispatcherMetric
+
   case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
-  case class HandlingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
+
+  case class HandlingRecord[K, V](record: ConsumerRecord[K, V], timeInQueue: Long, group: Group) extends DispatcherMetric
+
   case class RecordHandled[K, V](record: ConsumerRecord[K, V], group: Group, duration: Duration) extends DispatcherMetric
+
+}
+
+case class DispatcherExposedState(queuedTasks: Map[TopicPartition, WorkerExposedState])
+
+case class WorkerExposedState(queuedTasks: Int, currentExecutionDuration: Option[Long])
+
+object DispatcherExposedState {
+  def empty = DispatcherExposedState(Map.empty)
 }
