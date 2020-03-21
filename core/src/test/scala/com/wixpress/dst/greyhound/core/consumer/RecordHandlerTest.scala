@@ -44,7 +44,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         retryHandler = failingHandler.withRetries(retryPolicy, producer)
         key <- bytes
         value <- bytes
-        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0l, 0l))
+        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0l, 0l, 0L))
         record <- producer.records.take
         now <- currentTime
         retryAttempt <- IntSerde.serialize(retryTopic, 0)
@@ -67,7 +67,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         producer <- FakeProducer.make
         retryHandler = failingHandler.withRetries(retryPolicy, producer.failing)
         value <- bytes
-        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value, 0l, 0l)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value, 0l, 0l, 0L)).flip
       } yield result must beLeft
     }
 
@@ -88,19 +88,19 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
           "retry-attempt" -> retryAttempt,
           "retry-submitted-at" -> submittedAt,
           "retry-backoff" -> backoff)
-        _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0l, 0l)).fork
+        _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0l, 0l, 0L)).fork
         _ <- TestClock.adjust(1.second)
         end <- executionTime.await
       } yield end must equalTo(begin.plusSeconds(1))
     }
 
-    "fail with original error when retry policy decides not to continue" in {
+    "fail with original error when retry p0Licy decides not to continue" in {
       for {
         producer <- FakeProducer.make
         failingHandler = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](topic)(_ => ZIO.fail(NonRetriableError))
         retryHandler = failingHandler.withRetries(retryPolicy, producer)
         value <- bytes
-        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value, 0l, 0l)).flip
+        result <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, value, 0l, 0l, 0L)).flip
       } yield result must beRight[HandlerError](NonRetriableError)
     }
   }
@@ -124,8 +124,8 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 
         combined = handler1 combine handler2
 
-        _ <- combined.handle(ConsumerRecord("topic1", partition, offset, Headers.Empty, None, "value1", 0l, 0l))
-        _ <- combined.handle(ConsumerRecord("topic2", partition, offset, Headers.Empty, None, "value2", 0l, 0l))
+        _ <- combined.handle(ConsumerRecord("topic1", partition, offset, Headers.Empty, None, "value1", 0l, 0l, 0L))
+        _ <- combined.handle(ConsumerRecord("topic2", partition, offset, Headers.Empty, None, "value2", 0l, 0l, 0L))
         record1 <- records1.take
         record2 <- records2.take
       } yield (record1 must beRecordWithValue("value1")) and
@@ -142,7 +142,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 
         combined = handler1 combine handler2
 
-        _ <- combined.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value", 0l, 0l))
+        _ <- combined.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value", 0l, 0l, 0L))
         record1 <- records1.take
         record2 <- records2.take
       } yield (record1 must beRecordWithValue("value")) and
@@ -154,7 +154,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         RecordHandler[Any, Throwable, String, String]("topic1")(_ => ZIO.unit) combine
           RecordHandler[Any, Throwable, String, String]("topic2")(_ => ZIO.unit)
 
-      val record = ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value", 0l, 0l)
+      val record = ConsumerRecord(topic, partition, offset, Headers.Empty, None, "value", 0l, 0l, 0L)
 
       handler.handle(record).either.map(_ must beRight)
     }

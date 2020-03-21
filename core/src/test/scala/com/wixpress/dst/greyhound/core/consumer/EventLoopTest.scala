@@ -38,8 +38,7 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
       handler = RecordHandler(topic)(promise.succeed)
       handled <- EventLoop.make("group", ReportingConsumer(clientId, group, consumer), handler).use_(promise.await)
       metrics <- TestMetrics.reported
-    } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty, -1L, -2L))) and
-      (metrics must contain(PollingFailed(clientId, group, exception)))
+    } yield ((handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception))))
   }
 
   "recover from consumer failing to commit" in {
