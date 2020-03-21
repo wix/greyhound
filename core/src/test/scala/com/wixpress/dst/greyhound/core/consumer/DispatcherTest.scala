@@ -63,9 +63,9 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
       queue <- Queue.bounded[Record](1)
       dispatcher <- Dispatcher.make("group", queue.offer, lowWatermark, highWatermark)
       _ <- ZIO.foreach(0 to (highWatermark + 1)) { offset =>
-        dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L))
+        dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
       }
-      _ <- dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L)) // Will be dropped
+      _ <- dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
       partitionsToResume1 <- dispatcher.resumeablePartitions(Set(topicPartition))
       _ <- queue.take *> queue.take
       partitionsToResume2 <- dispatcher.resumeablePartitions(Set(topicPartition))
@@ -127,5 +127,5 @@ object DispatcherTest {
   val topic = "topic"
   val partition = 0
   val topicPartition = TopicPartition(topic, partition)
-  val record = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 0L, Headers.Empty, None, Chunk.empty, 0L, 0L)
+  val record = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 0L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
 }
