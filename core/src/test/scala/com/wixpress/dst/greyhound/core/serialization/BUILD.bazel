@@ -9,6 +9,6 @@ specs2_unit_test(
     ],
     deps = [
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
-        "@org_apache_kafka_kafka_clients",
+        "@org_apache_kafka_kafka_clients241",
     ],
 )

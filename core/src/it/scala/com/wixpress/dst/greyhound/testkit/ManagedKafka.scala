@@ -26,7 +26,7 @@ object ManagedKafka {
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
     kafka <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir))
   } yield new ManagedKafka {
-    private val adminZkClient = kafka.apis.adminZkClient
+    private val adminZkClient = kafka.dataPlaneRequestProcessor.adminZkClient
 
     override val bootstrapServers: Set[String] =
       Set(s"localhost:${config.kafkaPort}")
