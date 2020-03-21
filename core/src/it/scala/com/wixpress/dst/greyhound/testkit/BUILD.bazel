@@ -12,7 +12,8 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "@dev_zio_zio_2_12",
         "@org_apache_curator_curator_test",
+        "@org_apache_kafka_kafka241_2_12",
         "@org_apache_kafka_kafka_2_12",
-        "@org_apache_kafka_kafka_clients",
+        "@org_apache_kafka_kafka_clients241",
     ],
 )
