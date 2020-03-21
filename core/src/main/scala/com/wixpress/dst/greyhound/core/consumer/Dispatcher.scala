@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.Group
+import com.wixpress.dst.greyhound.core.{Group, Topic}
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
@@ -163,7 +163,7 @@ object Dispatcher {
       override def expose: UIO[WorkerExposedState] =
         (queue.size zip internalState.get)
           .map { case (queued, state) => WorkerExposedState(
-            queued, state.currentExecutionStarted.map(System.currentTimeMillis - _))
+            Math.max(0, queued), state.currentExecutionStarted.map(System.currentTimeMillis - _))
           }
 
       override def shutdown: UIO[Unit] =
@@ -226,7 +226,13 @@ object DispatcherMetric {
 
 }
 
-case class DispatcherExposedState(queuedTasks: Map[TopicPartition, WorkerExposedState])
+case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState]) {
+  def totalQueuedTasksPerTopic: Map[Topic, Int] = workersState.groupBy(_._1.topic).map{case (topic, partitionStates) => (topic, partitionStates.map(_._2.queuedTasks).sum)}
+
+  def maxTaskDuration = workersState.groupBy(_._1.topic).map{case (topic, partitionStates) => (topic, partitionStates.map(_._2.currentExecutionDuration.getOrElse(0L)).max)}
+
+  def topics = workersState.groupBy(_._1.topic).keys
+}
 
 case class WorkerExposedState(queuedTasks: Int, currentExecutionDuration: Option[Long])
 
