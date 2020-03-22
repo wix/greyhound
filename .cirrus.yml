@@ -9,11 +9,11 @@ bazel_build:
   task:
     bazelisk_installation_script:
       - |
-        curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
+        rm /usr/loca/bin/bazel
+        curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.3.0/bazelisk-linux-amd64"
         mv bazelisk-linux-amd64 "/usr/bin/bazel"
         chmod +x /usr/bin/bazel
         which bazel
-        bazel version
             
     bazelisk_cache:
       folder: $XDG_CACHE_HOME
