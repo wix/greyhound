@@ -1,28 +1,33 @@
-docker_builder:
+bazel_build:
   name: test
+  container:
+    image: l.gcr.io/google/bazel:2.1.0
+  
   environment:
-    V: 2.1.0
     XDG_CACHE_HOME: /xdg_cache
 
-  bazelisk_installation_script:
-      - |
-          curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
-          mv bazelisk-linux-amd64 "/usr/bin/bazel"
-          chmod +x /usr/bin/bazel
-          
-  bazelisk_cache:
-    folder: $XDG_CACHE_HOME
-    fingerprint_script: cat .bazelversion
-    populate_script: mkdir -p  $XDG_CACHE_HOME && bazel version
+  task:
+    bazelisk_installation_script:
+        - |
+            curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
+            mv bazelisk-linux-amd64 "/usr/bin/bazel"
+            chmod +x /usr/bin/bazel
+            
+    bazelisk_cache:
+      folder: $XDG_CACHE_HOME
+      fingerprint_script: cat .bazelversion
+      populate_script: mkdir -p  $XDG_CACHE_HOME && bazel version
 
-  bazel_repository_cache:
-    folder: /.repo_cache
-    fingerprint_script: cat WORKSPACE
-    populate_script: mkdir -p /.repo_cache && bazel  --bazelrc=.cirrus.bazelrc fetch --repository_cache=/.repo_cache //...
+    bazel_repository_cache:
+      folder: /.repo_cache
+      fingerprint_script: cat WORKSPACE
+      populate_script: mkdir -p /.repo_cache && bazel  --bazelrc=.cirrus.bazelrc fetch --repository_cache=/.repo_cache //...
 
-  test_script:
-  - bazel  --bazelrc=.cirrus.bazelrc test --repository_cache=/.repo_cache -k --remote_http_cache=http://$CIRRUS_HTTP_CACHE_HOST //...
-  always:
-    junit_result_artifacts:
-      path: "bazel-testlogs/**/test.xml"
-      format: junit
+    test_script:
+    - bazel  --bazelrc=.cirrus.bazelrc test --config=ut-only --repository_cache=/.repo_cache -k --remote_http_cache=http://$CIRRUS_HTTP_CACHE_HOST //...
+    - bazel  --bazelrc=.cirrus.bazelrc test --connfig=it  --flaky_test_attempts=3 --repository_cache=/.repo_cache -k --remote_http_cache=http://$CIRRUS_HTTP_CACHE_HOST //...
+    
+    always:
+      junit_result_artifacts:
+        path: "bazel-testlogs/**/test.xml"
+        format: junit
