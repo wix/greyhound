@@ -26,7 +26,7 @@ load("@wix_oss_infra//dependencies/rules_scala:rules_scala.bzl", "rules_scala")
 rules_scala()
 
 load("@wix_oss_infra//test-agent/src/shared:tests_external_repository.bzl", "tests_external_repository")
-tests_external_repository(name = "tests")
+tests_external_repository(name = "tests", jdk_version="11")
 
 load("@wix_oss_infra//dependencies/google_protobuf:google_protobuf.bzl", "google_protobuf")
 google_protobuf()
