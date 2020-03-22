@@ -12,11 +12,13 @@ bazel_build:
         curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
         mv bazelisk-linux-amd64 "/usr/bin/bazel"
         chmod +x /usr/bin/bazel
+        which bazel
+        bazel version
             
     bazelisk_cache:
       folder: $XDG_CACHE_HOME
       fingerprint_script: cat .bazelversion
-      populate_script: mkdir -p  $XDG_CACHE_HOME && bazel version
+      populate_script: mkdir -p $XDG_CACHE_HOME && bazel version
 
     bazel_repository_cache:
       folder: /.repo_cache
