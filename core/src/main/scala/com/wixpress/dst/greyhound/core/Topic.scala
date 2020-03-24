@@ -29,7 +29,6 @@ case class TopicConfig(name: Topic,
       case CleanupPolicy.Compact =>
         Map("cleanup.policy" -> "compact")
     }) ++ extraProperties
-
 }
 
 sealed trait CleanupPolicy
