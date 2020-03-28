@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.admin
 
 import java.util.Properties
+import java.util.concurrent.TimeUnit.SECONDS
 
 import com.wixpress.dst.greyhound.core.TopicConfig
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
@@ -11,6 +12,8 @@ import scala.collection.JavaConverters._
 
 trait AdminClient {
   def createTopics(configs: Set[TopicConfig]): RIO[Blocking, Map[String, Option[Throwable]]]
+
+  def numberOfBrokers: RIO[Blocking, Int]
 }
 
 object AdminClient {
@@ -29,6 +32,12 @@ object AdminClient {
                 }
             }.map(_.toMap)
           }
+
+        override def numberOfBrokers: RIO[Blocking, Int] =
+          effectBlocking(client.describeCluster()).flatMap(result =>
+            effectBlocking {
+              result.nodes().get(30, SECONDS)
+            }.map(x => x.asScala.toSeq.size))
 
         private def toNewTopic(config: TopicConfig): NewTopic =
           new NewTopic(config.name, config.partitions, config.replicationFactor.toShort)
