@@ -306,7 +306,7 @@ object ConsumerIT {
 
   val clientId = "greyhound-consumers"
   val partitions = 8
-  val delete = CleanupPolicy.Delete(1.hour)
+  val delete = CleanupPolicy.Delete(1.hour.toMillis)
   val randomAlphaLowerChar = {
     val low = 97
     val high = 122

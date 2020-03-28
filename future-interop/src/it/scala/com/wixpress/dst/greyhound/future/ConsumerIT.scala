@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.admin.AdminClientConfig
 import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric.{StartingEventLoop, StoppingEventLoop}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
@@ -14,7 +15,6 @@ import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import org.specs2.concurrent.ExecutionEnv
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.{AfterAll, BeforeAll}
-import zio.duration.{Duration => ZDuration}
 import zio.{Task, URIO, Promise => ZPromise}
 
 import scala.collection.mutable.ListBuffer
@@ -28,17 +28,16 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
   private var environment: Environment = _
 
-  override def beforeAll(): Unit =
-    environment = runtime.unsafeRun {
-      Environment.make.tap { environment =>
-        environment.kafka.createTopic(
-          TopicConfig(
-            name = topic,
-            partitions = 8,
-            replicationFactor = 1,
-            cleanupPolicy = CleanupPolicy.Delete(ZDuration.fromScala(1.hour))))
-      }
-    }
+  override def beforeAll(): Unit = {
+    environment = runtime.unsafeRun(Environment.make)
+
+    AdminClient.create(AdminClientConfig(environment.kafka.bootstrapServers)).createTopic(
+      TopicConfig(
+        name = topic,
+        partitions = 8,
+        replicationFactor = 1,
+        cleanupPolicy = CleanupPolicy.Delete(1.hour.toMillis)))
+  }
 
   override def afterAll(): Unit =
     runtime.unsafeRun(environment.shutdown)
@@ -155,6 +154,7 @@ object ConsumerIT {
 
 trait Environment {
   def kafka: ManagedKafka
+
   def shutdown: Task[Unit]
 }
 
