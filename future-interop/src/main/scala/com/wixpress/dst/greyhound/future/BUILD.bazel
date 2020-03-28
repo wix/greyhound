@@ -9,6 +9,7 @@ scala_library(
     ],
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
     ],
