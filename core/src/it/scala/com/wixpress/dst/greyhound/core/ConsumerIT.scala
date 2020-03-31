@@ -287,6 +287,7 @@ class ConsumerIT extends BaseTest[Env] {
       }
 
       all(
+        retryTest,
         simpleTest,
         combinedHandlersTest,
         throttlingTest,
@@ -294,7 +295,7 @@ class ConsumerIT extends BaseTest[Env] {
         gracefulShutdownTest,
         commitOnRebalanceTest,
         gracefulRebalanceTest,
-        retryTest)
+        )
   }
 
   run(tests)
