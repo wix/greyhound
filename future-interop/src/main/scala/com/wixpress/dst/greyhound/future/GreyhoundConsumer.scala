@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, OffsetReset, RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.{Deserializer, Group, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handle
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
@@ -13,7 +13,8 @@ case class GreyhoundConsumer[K, V](topic: Topic,
                                    group: Group,
                                    handle: Handle[K, V],
                                    keyDeserializer: Deserializer[K],
-                                   valueDeserializer: Deserializer[V]) {
+                                   valueDeserializer: Deserializer[V],
+                                   offsetReset: OffsetReset = OffsetReset.Latest) {
 
   def recordHandler: Handler[Env] =
     CoreRecordHandler(topic)(handle)
