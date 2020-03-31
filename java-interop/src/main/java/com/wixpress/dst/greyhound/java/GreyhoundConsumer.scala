@@ -14,7 +14,8 @@ class GreyhoundConsumer[K >: AnyRef, V](val topic: String,
                                         val group: String,
                                         val handler: RecordHandler[K, V],
                                         val keyDeserializer: Deserializer[K],
-                                        val valueDeserializer: Deserializer[V]) {
+                                        val valueDeserializer: Deserializer[V],
+                                        val offsetReset: OffsetReset) {
 
   def recordHandler(executor: Executor): Handler[Env] = {
     val baseHandler = CoreRecordHandler(topic) { record: CoreConsumerRecord[K, V] =>

@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.{ParallelConsumer, ParallelConsumerConfig}
+import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, ParallelConsumer, ParallelConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Exit, ZIO}
 
@@ -17,12 +17,12 @@ trait GreyhoundConsumers extends Closeable {
 }
 
 case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
-                                     handlers: Map[Group, Handler[Env]] = Map.empty) {
+                                     handlers: Map[(OffsetReset, Group), Handler[Env]] = Map.empty) {
 
   def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder = {
-    val group = consumer.group
-    val handler = handlers.get(group).foldLeft(consumer.recordHandler)(_ combine _)
-    copy(handlers = handlers + (group -> handler))
+    val (group, offsetReset) = (consumer.group, consumer.offsetReset)
+    val handler = handlers.get((offsetReset, group)).foldLeft(consumer.recordHandler)(_ combine _)
+    copy(handlers = handlers + ((offsetReset, group) -> handler))
   }
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {

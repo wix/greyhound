@@ -23,10 +23,10 @@ object ParallelConsumer {
    * partitions; order is guaranteed to be maintained within the same partition.
    */
   def make[R](config: ParallelConsumerConfig,
-              handlers: Map[Group, Handler[R]]): ZManaged[R with Env, Throwable, ParallelConsumer[R with Env]] =
+              handlers: Map[(OffsetReset, Group), Handler[R]]): ZManaged[R with Env, Throwable, ParallelConsumer[R with Env]] =
     ZManaged.foreachPar(handlers) {
-      case (group, handler) => for {
-        consumer <- Consumer.make(ConsumerConfig(config.bootstrapServers, group, config.clientId))
+      case ((offsetReset, group), handler) => for {
+        consumer <- Consumer.make(ConsumerConfig(config.bootstrapServers, group, config.clientId, offsetReset))
         eventLoop <- EventLoop.make(group, ReportingConsumer(config.clientId, group, consumer), handler, config.eventLoopConfig)
       } yield (consumer, eventLoop, group)
     }.map { consumers: Seq[(Consumer[Blocking], EventLoop[R with GreyhoundMetrics with Clock], Group)] =>
@@ -49,14 +49,14 @@ object ParallelConsumer {
       }
     }
 
-  def make[R](bootstrapServers: Set[String],
-              handlers: (Group, Handler[R])*): ZManaged[R with Env, Throwable, Resource[R with Env]] =
+  def makeFrom[R](bootstrapServers: Set[String],
+                  handlers: ((OffsetReset, Group), Handler[R])*): ZManaged[R with Env, Throwable, Resource[R with Env]] =
     make(ParallelConsumerConfig(bootstrapServers), handlers.toMap)
 }
 
 case class ParallelConsumerExposedState(dispatcherStates: Map[Group, DispatcherExposedState])
 
-case class ParallelConsumerTopology(subscriptions: Map[Group, Set[Topic]])
+case class ParallelConsumerTopology(subscriptions: Map[(OffsetReset, Group), Set[Topic]])
 
 case class ParallelConsumerConfig(bootstrapServers: Set[String],
                                   clientId: String = ParallelConsumerConfig.DefaultClientId,

@@ -17,6 +17,7 @@ import zio.duration._
 import zio.random.Random
 
 class ConsumerIT extends BaseTest[Env] {
+  sequential
 
   override def env: UManaged[Env] =
     Managed.succeed {
@@ -42,7 +43,7 @@ class ConsumerIT extends BaseTest[Env] {
       def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) = for {
         latch <- CountDownLatch.make(partitions)
         handler = RecordHandler(topic)((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
-        _ <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use_ {
+        _ <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
           ZIO.foreachPar_(0 until partitions) { partition =>
             producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
           } *> latch.await
@@ -58,7 +59,7 @@ class ConsumerIT extends BaseTest[Env] {
           .withDeserializers(StringSerde, StringSerde)
           .ignore
 
-        message <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use_ {
+        message <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
           val record = ProducerRecord(topic, "bar", Some("foo"))
           producer.produce(record, StringSerde, StringSerde) *>
             queue.take
@@ -78,7 +79,7 @@ class ConsumerIT extends BaseTest[Env] {
         handler2 = RecordHandler(topic2)(records2.offer(_: ConsumerRecord[Int, Int]))
         handler = handler1.withDeserializers(StringSerde, StringSerde) combine handler2.withDeserializers(IntSerde, IntSerde)
 
-        (record1, record2) <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler.ignore).use_ {
+        (record1, record2) <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler.ignore)).use_ {
           producer.produce(ProducerRecord(topic1, "bar", Some("foo")), StringSerde, StringSerde) *>
             producer.produce(ProducerRecord(topic2, 2, Some(1)), IntSerde, IntSerde) *>
             (records1.take zip records2.take)
@@ -103,7 +104,7 @@ class ConsumerIT extends BaseTest[Env] {
           }
         }
 
-        test <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use_ {
+        test <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
           val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
           val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
           for {
@@ -133,7 +134,7 @@ class ConsumerIT extends BaseTest[Env] {
           handledSomeMessages.countDown zipParRight handledAllMessages.countDown
         }
 
-        test <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use { consumer =>
+        test <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use { consumer =>
           val record = ProducerRecord(topic, Chunk.empty)
           for {
             _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
@@ -161,7 +162,7 @@ class ConsumerIT extends BaseTest[Env] {
             ref.update(_ + 1)
         }
 
-        _ <- ParallelConsumer.make(kafka.bootstrapServers, group -> handler).use_ {
+        _ <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
           producer.produce(ProducerRecord(topic, Chunk.empty)) *>
             startedHandling.await
         }
@@ -187,7 +188,7 @@ class ConsumerIT extends BaseTest[Env] {
             handledSome.countDown *>
             handledAll.countDown
         }
-        consumer = ParallelConsumer.make(kafka.bootstrapServers, group -> handler)
+        consumer = ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler))
 
         startProducing1 <- Promise.make[Nothing, Unit]
         consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
@@ -232,7 +233,7 @@ class ConsumerIT extends BaseTest[Env] {
               override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
                 ZIO.unit
             }))
-        consumer1 <- ParallelConsumer.make(config1, Map(group -> handler1)).use_ {
+        consumer1 <- ParallelConsumer.make(config1, Map((OffsetReset.Latest, group) -> handler1)).use_ {
           startProducing.succeed(()) *> latch.await
         }.fork
 
@@ -246,7 +247,7 @@ class ConsumerIT extends BaseTest[Env] {
           latch.countDown
         }
         config2 = ParallelConsumerConfig(kafka.bootstrapServers, "client-2")
-        consumer2 <- ParallelConsumer.make(config2, Map(group -> handler2)).use_ {
+        consumer2 <- ParallelConsumer.make(config2, Map((OffsetReset.Latest, group) -> handler2)).use_ {
           latch.await
         }.fork
 
@@ -266,11 +267,16 @@ class ConsumerIT extends BaseTest[Env] {
 
         invocations <- Ref.make(0)
         done <- Promise.make[Nothing, Unit]
-        retryPolicy = RetryPolicy.default(topic, group, 1.second, 2.seconds, 3.seconds)
+        retryPolicy = RetryPolicy.default(topic, group, 1.second, 1.seconds, 1.seconds)
         handler = RecordHandler(topic) { _: ConsumerRecord[String, String] =>
           invocations.update(_ + 1).flatMap { n =>
-            if (n < 4) ZIO.fail(new RuntimeException("Oops!"))
-            else done.succeed(()) // Succeed on final retry
+            if (n < 4) {
+              println(s"failling.. $n")
+              ZIO.fail(new RuntimeException("Oops!"))
+            } else {
+              println(s"success!  $n")
+              done.succeed(()) // Succeed on final retry
+            }
           }
         }
         retryHandler = handler
@@ -278,7 +284,7 @@ class ConsumerIT extends BaseTest[Env] {
           .withRetries(retryPolicy, producer)
           .ignore
 
-        success <- ParallelConsumer.make(kafka.bootstrapServers, group -> retryHandler).use_ {
+        success <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> retryHandler)).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
             done.await.timeout(1.minute)
         }
@@ -286,16 +292,35 @@ class ConsumerIT extends BaseTest[Env] {
         success must beSome
       }
 
+      val earliestTest = for {
+        topic <- randomTopic()
+        group <- randomGroup
+
+        queue <- Queue.unbounded[ConsumerRecord[String, String]]
+        handler = RecordHandler(topic)(queue.offer(_: ConsumerRecord[String, String]))
+          .withDeserializers(StringSerde, StringSerde)
+          .ignore
+
+        record = ProducerRecord(topic, "bar", Some("foo"))
+        _ <- producer.produce(record, StringSerde, StringSerde)
+
+        message <- ParallelConsumer.makeFrom(kafka.bootstrapServers, (OffsetReset.Earliest, group) -> handler).use_ {
+          queue.take
+        }.timeout(10.seconds)
+      } yield "consumer from earliest offset" in {
+        message.get must (beRecordWithKey("foo") and beRecordWithValue("bar"))
+      }
+
       all(
         retryTest,
+        earliestTest,
         simpleTest,
         combinedHandlersTest,
         throttlingTest,
         pauseResumeTest,
         gracefulShutdownTest,
         commitOnRebalanceTest,
-        gracefulRebalanceTest,
-        )
+        gracefulRebalanceTest)
   }
 
   run(tests)
@@ -308,11 +333,13 @@ object ConsumerIT {
   val clientId = "greyhound-consumers"
   val partitions = 8
   val delete = CleanupPolicy.Delete(1.hour.toMillis)
-  val randomAlphaLowerChar = {
+
+  def randomAlphaLowerChar = {
     val low = 97
     val high = 122
     random.nextInt(high - low).map(i => (i + low).toChar)
   }
+
   val randomId = ZIO.collectAll(List.fill(6)(randomAlphaLowerChar)).map(_.mkString)
   val randomGroup = randomId.map(id => s"group-$id")
 }
