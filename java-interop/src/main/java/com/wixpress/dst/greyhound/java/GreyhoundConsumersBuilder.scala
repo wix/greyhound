@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.Executor
 
+import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ParallelConsumer, ParallelConsumerConfig}
@@ -53,11 +54,16 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
     }
 
   private def handlers(executor: Executor) =
-    consumers.foldLeft(Map.empty[Group, Handler[Env]]) { (acc, consumer) =>
-      val group = consumer.group
+    consumers.foldLeft(Map.empty[(core.consumer.OffsetReset, Group), Handler[Env]]) { (acc, consumer) =>
+      val (offsetReset, group) = (convert(consumer.offsetReset), consumer.group)
       val handler = consumer.recordHandler(executor)
-      val combined = acc.get(group).foldLeft(handler)(_ combine _)
-      acc + (group -> combined)
+      val combined = acc.get((offsetReset, group)).foldLeft(handler)(_ combine _)
+      acc + ((offsetReset, group) -> combined)
     }
 
+  private def convert(offsetReset: OffsetReset): core.consumer.OffsetReset =
+    offsetReset match {
+      case OffsetReset.Earliest => core.consumer.OffsetReset.Earliest
+      case OffsetReset.Latest => core.consumer.OffsetReset.Latest
+    }
 }
