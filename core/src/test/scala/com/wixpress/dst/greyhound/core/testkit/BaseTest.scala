@@ -14,8 +14,11 @@ trait BaseTest[R]
   def run[R1 >: R, E, A](zio: ZIO[R1, E, A]): A =
     unsafeRun(env.use(zio.provide))
 
-  def all[R1 >: R, E](fragments: ZIO[R1, E, Fragment]*): ZIO[R1, E, Fragments] =
+  def allPar[R1 >: R, E](fragments: ZIO[R1, E, Fragment]*): ZIO[R1, E, Fragments] =
     ZIO.collectAllPar(fragments).map(fragments => Fragments(fragments: _*))
+
+  def all[R1 >: R, E](fragments: ZIO[R1, E, Fragment]*): ZIO[R1, E, Fragments] =
+    ZIO.collectAll(fragments).map(fragments => Fragments(fragments: _*))
 
   implicit def zioAsResult[R1 >: R, E, A](implicit ev: AsResult[A]): AsResult[ZIO[R1, E, A]] =
     new AsResult[ZIO[R1, E, A]] {
