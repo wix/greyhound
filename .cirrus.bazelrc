@@ -1,0 +1,11 @@
+build --strategy=Scalac=worker
+build --jobs=2
+
+# Shows errors clearly
+test:ut-only --test_output=errors
+test:ut-only --test_tag_filters=UT,-IT
+
+# TEST - unique flags for running IT because we can't have network sandboxing on cirrus
+test:it --test_tag_filters=IT
+test:it --local_test_jobs=1
+test:it --test_output=streamed
