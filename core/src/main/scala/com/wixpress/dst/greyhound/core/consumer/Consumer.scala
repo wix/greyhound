@@ -134,7 +134,6 @@ case class ConsumerConfig(bootstrapServers: Set[String],
     }
     props
   }
-
 }
 
 sealed trait OffsetReset
