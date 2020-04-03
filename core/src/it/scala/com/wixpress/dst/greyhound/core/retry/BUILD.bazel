@@ -1,0 +1,26 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+specs2_ite2e_test(
+    name = "retry",
+    size = "large",
+    testonly = 1,
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//core/src/it/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//core/src/test/resources",
+        "//core/src/test/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
+        "@ch_qos_logback_logback_classic",
+        "@dev_zio_zio_2_12",
+        "@org_apache_kafka_kafka_clients241",
+    ],
+)
