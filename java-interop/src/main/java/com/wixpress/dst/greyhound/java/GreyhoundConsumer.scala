@@ -37,11 +37,11 @@ class GreyhoundConsumer[K >: AnyRef, V](val topic: String,
     }
     baseHandler
       .withDeserializers(CoreDeserializer(keyDeserializer), CoreDeserializer(valueDeserializer))
-      .withErrorHandler {
+      .withErrorHandler { case (error, _) => error match {
         // TODO handle errors
-        case Left(serializationError) => ZIO.unit
-        case Right(userError) => ZIO.unit
+        case Left(_) => ZIO.unit
+        case Right(_) => ZIO.unit
+      }
       }
   }
-
 }
