@@ -239,7 +239,7 @@ val handler1: RecordHandler[Any, RuntimeException, EmailId, EmailRequest] =
 
 // Recover from errors
 val handler2: RecordHandler[Console, Nothing, EmailId, EmailRequest] =
-  handler1.withErrorHandler { error =>
+  handler1.withErrorHandler { case (error, record) =>
     putStrLn(error.getMessage)
   }
 
