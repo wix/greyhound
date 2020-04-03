@@ -4,6 +4,8 @@ Opinionated SDK for [Apache Kafka](https://kafka.apache.org/)
 
 ![Greyhound](./docs/logo.png)
 
+## [Adding Greyhound to your build](docs/adding-to-your-build.md)
+
 ## Why Greyhound?
 
 Kafka is shipped with a Java SDK which allows developers to interact with a Kafka cluster.
@@ -275,3 +277,5 @@ val handler: RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] = ???
 val bootstrapServers = Set("localhost:6667")
 ParallelConsumer.make(bootstrapServers, group -> handler).useForever
 ```
+
+### [Publishing Maven Artifacts](docs/publishing.md)
