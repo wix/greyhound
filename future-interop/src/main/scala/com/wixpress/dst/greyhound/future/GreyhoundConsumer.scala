@@ -19,12 +19,13 @@ case class GreyhoundConsumer[K, V](topic: Topic,
   def recordHandler: Handler[Env] =
     CoreRecordHandler(topic)(handle)
       .withDeserializers(keyDeserializer, valueDeserializer)
-      .withErrorHandler {
-        // TODO handle errors
-        case Left(serializationError) => ZIO.unit
-        case Right(userError) => ZIO.unit
+      .withErrorHandler { case (error, _) =>
+        error match {
+          // TODO handle errors
+          case Left(_) => ZIO.unit
+          case Right(_) => ZIO.unit
+        }
       }
-
 }
 
 object GreyhoundConsumer {
