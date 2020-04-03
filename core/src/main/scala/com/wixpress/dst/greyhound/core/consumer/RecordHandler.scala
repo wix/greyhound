@@ -74,18 +74,18 @@ trait RecordHandler[-R, +E, K, V] { self =>
     *     }
     * }}}
     */
-  def withErrorHandler[R1 <: R, E2](f: E => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
+  def withErrorHandler[R1 <: R, E2](f: (E, ConsumerRecord[K, V]) => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
     new RecordHandler[R1, E2, K, V] {
       override def topics: Set[Topic] = self.topics
       override def handle(record: ConsumerRecord[K, V]): ZIO[R1, E2, Any] =
-        self.handle(record).catchAll(f)
+        self.handle(record).catchAll(e => f(e, record))
     }
 
   /**
     * Recover from all errors by ignoring them.
     */
   def ignore: RecordHandler[R, Nothing, K, V] =
-    withErrorHandler(_ => ZIO.unit)
+    withErrorHandler((_,_) => ZIO.unit)
 
   /**
     * Provides the handler with its required environment, which eliminates
