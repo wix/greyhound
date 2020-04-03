@@ -30,7 +30,7 @@ class DefaultEnvironment extends Environment {
           partitions = config.partitions,
           replicationFactor = config.replicationFactor,
           cleanupPolicy = config.cleanupPolicy.fold(
-            retention => CleanupPolicy.Delete(Duration.fromJava(retention)),
+            retention => CleanupPolicy.Delete(retention.toMillis),
             () => CleanupPolicy.Compact),
           extraProperties = config.extraProperties.asScala.toMap))
     }

@@ -1,5 +1,7 @@
 package com.wixpress.dst.greyhound.future
 
+import java.util.concurrent.Executors
+
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
@@ -11,11 +13,15 @@ import zio.random.Random
 import zio.system.System
 import zio.{Runtime, ZEnv, ZIO}
 
+import scala.concurrent.ExecutionContext
+
 trait GreyhoundRuntime extends Runtime[ZEnv with GreyhoundMetrics] {
   override val platform: Platform = PlatformLive.Default
 }
 
 object GreyhoundRuntime {
+  implicit val executionContext = ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
+
   type Env = ZEnv with GreyhoundMetrics
 
   val Live = GreyhoundRuntimeBuilder().build

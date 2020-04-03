@@ -50,7 +50,8 @@ public class GreyhoundBuilderTest {
                                 group,
                                 aBlockingRecordHandler(future::complete),
                                 new IntegerDeserializer(),
-                                new StringDeserializer()));
+                                new StringDeserializer(),
+                                OffsetReset.Latest));
 
         try (GreyhoundConsumers ignored = consumersBuilder.build();
              GreyhoundProducer producer = producerBuilder.build()) {

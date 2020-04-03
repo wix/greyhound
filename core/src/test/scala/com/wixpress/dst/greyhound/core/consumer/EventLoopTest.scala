@@ -36,10 +36,9 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
       }
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       handler = RecordHandler(topic)(promise.succeed)
-      handled <- EventLoop.make(ReportingConsumer(clientId, group, consumer), handler).use_(promise.await)
+      handled <- EventLoop.make("group", ReportingConsumer(clientId, group, consumer), handler).use_(promise.await)
       metrics <- TestMetrics.reported
-    } yield (handled must equalTo(ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty))) and
-      (metrics must contain(PollingFailed(clientId, group, exception)))
+    } yield ((handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception))))
   }
 
   "recover from consumer failing to commit" in {
@@ -60,10 +59,10 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
             case _ => promise.succeed(offsets).unit
           }
       }
-      committed <- EventLoop.make(ReportingConsumer(clientId, group, consumer), RecordHandler.empty).use_(promise.await)
+      committed <- EventLoop.make("group", ReportingConsumer(clientId, group, consumer), RecordHandler.empty).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
-      (metrics must contain(CommitFailed(clientId, group, exception)))
+      (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic(), record.partition()) -> (offset + 1)))))
   }
 
   "expose event loop health" in {
@@ -73,7 +72,7 @@ class EventLoopTest extends BaseTest[Clock with TestMetrics] {
         override def poll(timeout: Duration): Task[Records] =
           ZIO.dieMessage("cough :(")
       }
-      died <- EventLoop.make(sickConsumer, RecordHandler.empty).use { eventLoop =>
+      died <- EventLoop.make("group", sickConsumer, RecordHandler.empty).use { eventLoop =>
         eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.doUntil(alive => !alive)).unit
       }.catchAllCause(_ => ZIO.unit).timeout(1.second)
     } yield died must beSome

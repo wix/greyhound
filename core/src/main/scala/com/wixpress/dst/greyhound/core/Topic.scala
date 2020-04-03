@@ -23,18 +23,17 @@ case class TopicConfig(name: Topic,
     (cleanupPolicy match {
       case CleanupPolicy.Delete(retention) =>
         Map(
-          "retention.ms" -> retention.toMillis.toString,
+          "retention.ms" -> retention.toString,
           "cleanup.policy" -> "delete")
 
       case CleanupPolicy.Compact =>
         Map("cleanup.policy" -> "compact")
     }) ++ extraProperties
-
 }
 
 sealed trait CleanupPolicy
 
 object CleanupPolicy {
-  case class Delete(retention: Duration) extends CleanupPolicy
+  case class Delete(retentionMillis: Long) extends CleanupPolicy
   case object Compact extends CleanupPolicy
 }
