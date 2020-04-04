@@ -41,7 +41,8 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
     "produce a message to the retry topic after failure" in {
       for {
         producer <- FakeProducer.make
-        retryHandler = failingHandler.withRetries(retryPolicy, producer)
+        retryProbeCalledOnTopicsRef <- Ref.make(Seq[Topic]())
+        retryHandler = failingHandler.withRetries(retryPolicy, producer, (_, record) => addToProbe(retryProbeCalledOnTopicsRef, record).unit)
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0l, 0l, 0L))
@@ -50,16 +51,20 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
         retryAttempt <- IntSerde.serialize(retryTopic, 0)
         submittedAt <- InstantSerde.serialize(retryTopic, now)
         backoff <- DurationSerde.serialize(retryTopic, 1.second)
-      } yield record must equalTo(
-        ProducerRecord(
-          topic = retryTopic,
-          value = value,
-          key = Some(key),
-          partition = None,
-          headers = Headers(
-            "retry-attempt" -> retryAttempt,
-            "retry-submitted-at" -> submittedAt,
-            "retry-backoff" -> backoff)))
+        retryProbeCalledOnTopics <- retryProbeCalledOnTopicsRef.get
+      } yield {
+        record must equalTo(
+          ProducerRecord(
+            topic = retryTopic,
+            value = value,
+            key = Some(key),
+            partition = None,
+            headers = Headers(
+              "retry-attempt" -> retryAttempt,
+              "retry-submitted-at" -> submittedAt,
+              "retry-backoff" -> backoff))) and
+          (retryProbeCalledOnTopics === Seq(topic))
+      }
     }
 
     "fail when producer fails" in {
@@ -104,6 +109,9 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
       } yield result must beRight[HandlerError](NonRetriableError)
     }
   }
+
+  private def addToProbe(retryProbeCalledOnTopicsRef: Ref[Seq[Topic]], record: ConsumerRecord[_, _]) =
+    retryProbeCalledOnTopicsRef.update(_ :+ record.topic)
 
   "combine" should {
     "consume topics from both handlers" in {
@@ -163,7 +171,7 @@ class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetr
 }
 
 object RecordHandlerTest {
-  val topic = "some-topic"
+  val topic: Topic = "some-topic"
   val retryTopic = s"$topic-retry"
   val group = "some-group"
   val partition = 0
