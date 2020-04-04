@@ -154,13 +154,13 @@ trait RecordHandler[-R, +E, K, V] { self =>
     }
 
   /**
-    * Return a handler with added retry behavior based on the provided `RetryPolicy`.
-    * Upon failures, the `producer` will be used to send the failing records to designated
-    * retry topics where the handling will be retried, after an optional delay. This
-    * allows the handler to keep processing records in the original topic - however,
-    * ordering will be lost for retried records!
-    */
-  def withRetries[R2, R3](retryPolicy: RetryPolicy[R2, E], producer: Producer[R3])
+   * Return a handler with added retry behavior based on the provided `RetryPolicy`.
+   * Upon failures, the `producer` will be used to send the failing records to designated
+   * retry topics where the handling will be retried, after an optional delay. This
+   * allows the handler to keep processing records in the original topic - however,
+   * ordering will be lost for retried records!
+   */
+  def withRetries[R2, R3](retryPolicy: RetryPolicy[R2, E], producer: Producer[R3], onIntermediateError: (E, ConsumerRecord[_, _]) => UIO[Unit] = (_, _) => ZIO.unit)
                          (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with R3 with Clock, Either[ProducerError, E], K, V] =
     new RecordHandler[R with R2 with R3 with Clock, Either[ProducerError, E], K, V] {
       override def topics: Set[Topic] = for {
@@ -172,7 +172,7 @@ trait RecordHandler[-R, +E, K, V] { self =>
         retryPolicy.retryAttempt(record.topic, record.headers).flatMap { retryAttempt =>
           ZIO.foreach_(retryAttempt)(_.sleep) *> self.handle(record).catchAll { e =>
             retryPolicy.retryDecision(retryAttempt, record.bimap(evK, evV), e).flatMap {
-              case RetryWith(retryRecord) => producer.produce(retryRecord).mapError(Left(_))
+              case RetryWith(retryRecord) => onIntermediateError(e, record) *> producer.produce(retryRecord).mapError(Left(_))
               case NoMoreRetries => ZIO.fail(Right(e))
             }
           }
