@@ -8,6 +8,8 @@ import zio.{UIO, URIO, ZIO, ZManaged}
 import zio.blocking.Blocking
 import zio.clock.Clock
 
+import scala.util.Random
+
 trait ParallelConsumer[-R] extends Resource[R] {
   def state: URIO[R with Env, ParallelConsumerExposedState]
 
@@ -26,7 +28,7 @@ object ParallelConsumer {
               handlers: Map[(OffsetReset, Group), Handler[R]]): ZManaged[R with Env, Throwable, ParallelConsumer[R with Env]] =
     ZManaged.foreachPar(handlers) {
       case ((offsetReset, group), handler) => for {
-        consumer <- Consumer.make(ConsumerConfig(config.bootstrapServers, group, config.clientId, offsetReset))
+        consumer <- Consumer.make(ConsumerConfig(config.bootstrapServers, group, config.clientId, offsetReset, config.extraProperties))
         eventLoop <- EventLoop.make(group, ReportingConsumer(config.clientId, group, consumer), handler, config.eventLoopConfig)
       } yield (consumer, eventLoop, group)
     }.map { consumers: Seq[(Consumer[Blocking], EventLoop[R with GreyhoundMetrics with Clock], Group)] =>
@@ -59,9 +61,10 @@ case class ParallelConsumerExposedState(dispatcherStates: Map[Group, DispatcherE
 case class ParallelConsumerTopology(subscriptions: Map[(OffsetReset, Group), Set[Topic]])
 
 case class ParallelConsumerConfig(bootstrapServers: Set[String],
-                                  clientId: String = ParallelConsumerConfig.DefaultClientId,
-                                  eventLoopConfig: EventLoopConfig = EventLoopConfig.Default)
+                                  clientId: String = ParallelConsumerConfig.makeClientId,
+                                  eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
+                                  extraProperties: Map[String, String] = Map.empty)
 
 object ParallelConsumerConfig {
-  val DefaultClientId = "greyhound-consumers"
+  def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
 }
