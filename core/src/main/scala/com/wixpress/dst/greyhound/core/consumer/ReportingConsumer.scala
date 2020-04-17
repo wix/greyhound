@@ -11,10 +11,9 @@ import zio.{RIO, UIO, ZIO}
 case class ReportingConsumer[R](clientId: ClientId, group: Group, internal: Consumer[R])
   extends Consumer[R with GreyhoundMetrics] {
 
-  override def subscribe(topics: Set[Topic],
-                         rebalanceListener: RebalanceListener[R with GreyhoundMetrics]): RIO[R with GreyhoundMetrics, Unit] =
+  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R with GreyhoundMetrics with R1, Unit] =
     for {
-      r <- ZIO.environment[R with GreyhoundMetrics]
+      r <- ZIO.environment[R with R1 with GreyhoundMetrics]
       _ <- Metrics.report(SubscribingToTopics(clientId, group, topics))
       _ <- internal.subscribe(
         topics = topics,

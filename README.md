@@ -40,10 +40,6 @@ semantics such as parallel message handling or retry policies with ease.
  * **Observability** - Greyhound reports many useful metrics which are invaluable when trying to
    debug your system, or understand how it is operating.
 
- * **Context propagation** - _TODO_ 
- 
- * **Safety** - _TODO_
-
 ## Usage
 
 ### Basics
@@ -273,5 +269,5 @@ val handler: RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] = ???
 
 // Start consumer, will close on interruption
 val bootstrapServers = Set("localhost:6667")
-ParallelConsumer.make(bootstrapServers, group -> handler).useForever
+ParallelConsumer.make(ParallelConsumerConfig(bootstrapServers, group), handler).useForever
 ```

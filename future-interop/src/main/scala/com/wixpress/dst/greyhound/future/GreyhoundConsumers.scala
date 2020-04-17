@@ -4,7 +4,7 @@ import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, ParallelConsumer, ParallelConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Exit, ZIO}
+import zio.{Exit, ZIO, ZManaged}
 
 import scala.concurrent.Future
 
@@ -28,19 +28,20 @@ case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
       runtime <- ZIO.runtime[Env]
-      consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
-      makeConsumer = ParallelConsumer.make(consumerConfig, handlers)
+      makeConsumer = ZManaged.foreach(handlers) { case ((offsetReset, group), handler) =>
+        ParallelConsumer.make(ParallelConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
+      }
       reservation <- makeConsumer.reserve
-      consumer <- reservation.acquire
+      consumers <- reservation.acquire
     } yield new GreyhoundConsumers {
       override def pause: Future[Unit] =
-        runtime.unsafeRunToFuture(consumer.pause)
+        runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.pause).unit)
 
       override def resume: Future[Unit] =
-        runtime.unsafeRunToFuture(consumer.resume)
+        runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.resume).unit)
 
       override def isAlive: Future[Boolean] =
-        runtime.unsafeRunToFuture(consumer.isAlive)
+        runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.isAlive).map(_.forall(_ == true)))
 
       override def shutdown: Future[Unit] =
         runtime.unsafeRunToFuture(reservation.release(Exit.Success(())).unit)
