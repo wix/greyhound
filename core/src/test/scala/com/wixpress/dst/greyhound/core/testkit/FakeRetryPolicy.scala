@@ -24,7 +24,7 @@ case class FakeRetryPolicy(topic: Topic)
       attempt <- headers.get(Header.Attempt, IntSerde)
       submittedAt <- headers.get(Header.SubmittedAt, InstantSerde)
       backoff <- headers.get(Header.Backoff, DurationSerde)
-    } yield retryAttempt(attempt, submittedAt, backoff)).orElse(ZIO.none)
+    } yield retryAttempt(topic, attempt, submittedAt, backoff)).orElse(ZIO.none)
 
   override def retryDecision(retryAttempt: Option[RetryAttempt],
                              record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
@@ -38,14 +38,15 @@ case class FakeRetryPolicy(topic: Topic)
         ZIO.succeed(NoMoreRetries)
     }
 
-  private def retryAttempt(attempt: Option[Int],
+  private def retryAttempt(topic: Topic,
+                           attempt: Option[Int],
                            submittedAt: Option[Instant],
                            backoff: Option[Duration]) =
     for {
       a <- attempt
       s <- submittedAt
       b <- backoff
-    } yield RetryAttempt(a, s, b)
+    } yield RetryAttempt(topic, a, s, b)
 
   private def recordFrom(retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) =
     for {
