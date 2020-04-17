@@ -22,7 +22,7 @@ class RetryIT extends BaseTest[Env] {
       implicit val _kafka: ManagedKafka = kafka
 
       val retryTest = for {
-        topic <- randomTopic()
+        topic <- createRandomTopic()
         group <- randomGroup
         _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-0", partitions, 1, delete))
         _ <- kafka.createTopic(TopicConfig(s"$topic-$group-retry-1", partitions, 1, delete))
@@ -30,7 +30,7 @@ class RetryIT extends BaseTest[Env] {
 
         invocations <- Ref.make(0)
         done <- Promise.make[Nothing, Unit]
-        retryPolicy = RetryPolicy.default(topic, group, 1.second, 1.seconds, 1.seconds)
+        retryPolicy = RetryPolicy.default(group, 1.second, 1.seconds, 1.seconds)
         handler = RecordHandler(topic) { _: ConsumerRecord[String, String] =>
           invocations.update(_ + 1).flatMap { n =>
             if (n < 4) {
@@ -47,7 +47,7 @@ class RetryIT extends BaseTest[Env] {
           .withRetries(retryPolicy, producer)
           .ignore
 
-        success <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> retryHandler)).use_ {
+        success <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), retryHandler).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
             done.await.timeout(1.minute)
         }

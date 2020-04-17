@@ -2,10 +2,12 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
+import com.wixpress.dst.greyhound.core.consumer.ParallelConsumer.Env
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
 import org.apache.kafka.clients.consumer.ConsumerRecords
 import zio._
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
 
@@ -21,7 +23,7 @@ object EventLoop {
   def make[R1, R2](group: Group,
                    consumer: Consumer[R1],
                    handler: Handler[R2],
-                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Clock, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
+                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Env, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
     val start = for {
       _ <- Metrics.report(StartingEventLoop)
       offsets <- Offsets.make
@@ -30,11 +32,12 @@ object EventLoop {
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
       runtime <- ZIO.runtime[R2 with GreyhoundMetrics with Clock]
-      _ <- consumer.subscribe(
+      _ <- consumer.subscribe[Blocking with R1](
         topics = handler.topics,
-        rebalanceListener = new RebalanceListener[R1] {
+        rebalanceListener = new RebalanceListener[Blocking with R1] {
           override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
             ZIO.effectTotal {
+            //todo: isn't this just boxing and unboxing? can't we eliminate it?
               /**
                * The rebalance listener is invoked while calling `poll`. Kafka forces you
                * to call `commit` from the same thread, otherwise an exception will be thrown.
@@ -154,7 +157,7 @@ case class EventLoopConfig(pollTimeout: Duration,
 
 object EventLoopConfig {
   val Default = EventLoopConfig(
-    pollTimeout = 100.millis,
+    pollTimeout = 500.millis,
     drainTimeout = 30.seconds,
     lowWatermark = 128,
     highWatermark = 256,
