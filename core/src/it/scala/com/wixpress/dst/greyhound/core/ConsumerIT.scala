@@ -83,9 +83,9 @@ class ConsumerIT extends BaseTest[Env] {
               producer.produce(recordPartition0) zipPar producer.produce(recordPartition1)
             }
 
-            handledAllFromPartition0 <- handledPartition0.await.timeout(5.seconds)
+            handledAllFromPartition0 <- handledPartition0.await.timeout(10.seconds)
             _ <- delayPartition1.succeed(())
-            handledAllFromPartition1 <- handledPartition1.await.timeout(5.seconds)
+            handledAllFromPartition1 <- handledPartition1.await.timeout(10.seconds)
           } yield "not lose any messages on a slow consumer (drives the message dispatcher to throttling)" in {
             (handledAllFromPartition0 must beSome) and (handledAllFromPartition1 must beSome)
           }
