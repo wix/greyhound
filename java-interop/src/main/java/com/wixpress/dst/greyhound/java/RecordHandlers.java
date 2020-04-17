@@ -28,7 +28,7 @@ public class RecordHandlers {
      * NOTE: This should NOT be used if your code involves blocking I/O!
      * TODO: rename
      */
-    public static <K, V> RecordHandler<K, V> aDangerousHandler(Consumer<ConsumerRecord<K, V>> handle) {
+    public static <K, V> RecordHandler<K, V> sameThreadHandler(Consumer<ConsumerRecord<K, V>> handle) {
         return (record, executor) -> {
             handle.accept(record);
             return CompletableFuture.completedFuture(null);

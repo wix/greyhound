@@ -10,16 +10,18 @@ import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.future.ConsumerIT._
 import com.wixpress.dst.greyhound.future.ContextDecoder.aHeaderContextDecoder
 import com.wixpress.dst.greyhound.future.ContextEncoder.aHeaderContextEncoder
+import com.wixpress.dst.greyhound.future.ErrorHandler.anErrorHandler
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer._
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import org.specs2.concurrent.ExecutionEnv
 import org.specs2.mutable.SpecificationWithJUnit
-import org.specs2.specification.{AfterAll, BeforeAll}
+import org.specs2.specification.{AfterAll, BeforeAll, Scope}
 import zio.{Task, URIO, Promise => ZPromise}
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.concurrent.{Await, ExecutionContext, Future, Promise}
+import scala.util.Random
 
 class ConsumerIT(implicit ee: ExecutionEnv)
   extends SpecificationWithJUnit
@@ -28,21 +30,13 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
   private var environment: Environment = _
 
-  override def beforeAll(): Unit = {
+  override def beforeAll(): Unit =
     environment = runtime.unsafeRun(Environment.make)
-
-    AdminClient.create(AdminClientConfig(environment.kafka.bootstrapServers)).createTopic(
-      TopicConfig(
-        name = topic,
-        partitions = 8,
-        replicationFactor = 1,
-        cleanupPolicy = CleanupPolicy.Delete(1.hour.toMillis)))
-  }
 
   override def afterAll(): Unit =
     runtime.unsafeRun(environment.shutdown)
 
-  "produce and consume a single message" in {
+  "produce and consume a single message" in new Ctx {
     val promise = Promise[ConsumerRecord[Int, String]]
     val config = GreyhoundConfig(environment.kafka.bootstrapServers)
     val consumersBuilder = GreyhoundConsumersBuilder(config)
@@ -74,7 +68,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(1.minute)
   }
 
-  "propagate context from producer to consumer" in {
+  "propagate context from producer to consumer" in new Ctx {
     implicit val context = Context("some-context")
 
     val promise = Promise[Context]
@@ -115,7 +109,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     handled must equalTo(context).awaitFor(1.minute)
   }
 
-  "collect metrics with custom reporter" in {
+  "collect metrics with custom reporter" in new Ctx {
     val metrics = ListBuffer.empty[GreyhoundMetric]
     val runtime = GreyhoundRuntimeBuilder()
       .withMetricsReporter(metric => metrics += metric)
@@ -145,10 +139,60 @@ class ConsumerIT(implicit ee: ExecutionEnv)
         contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(1.minute)
   }
 
+  "handle errors" in new Ctx {
+    val errorRecord = Promise[ConsumerRecord[Int, String]]
+    val errorMessage = Promise[String]
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers)
+    val consumersBuilder = GreyhoundConsumersBuilder(config)
+      .withConsumer(
+        GreyhoundConsumer(
+          topic = topic,
+          group = "group-2",
+          handle = aRecordHandler {
+            new RecordHandler[Partition, String] {
+              override def handle(record: ConsumerRecord[Partition, String])(implicit ec: ExecutionContext): Future[Any] =
+                Future.failed(new RuntimeException("Expected_Error"))
+            }
+          },
+          keyDeserializer = Serdes.IntSerde,
+          valueDeserializer = Serdes.StringSerde,
+          errorHandler = anErrorHandler[Int, String]((e, record) => Future.successful {
+            errorMessage.trySuccess(e.getLocalizedMessage)
+            errorRecord.trySuccess(record)
+          })
+        ))
+
+    val (err, recordOnErrorHandler) = Await.result(for {
+      consumers <- consumersBuilder.build
+      producer <- GreyhoundProducerBuilder(config).build
+      _ <- producer.produce(
+        record = ProducerRecord(topic, "hello world", Some(123)),
+        keySerializer = Serdes.IntSerde,
+        valueSerializer = Serdes.StringSerde)
+      errorRecord <- errorRecord.future
+      errorMessage <- errorMessage.future
+      _ <- producer.shutdown
+      _ <- consumers.shutdown
+    } yield (errorMessage, errorRecord)
+      , 20.seconds)
+
+    recordOnErrorHandler must (beRecordWithKey(123) and beRecordWithValue("hello world"))
+    err === "Expected_Error"
+  }
+
+  class Ctx extends Scope {
+    val topic: Topic = s"some-topic-${Random.alphanumeric.take(5).mkString}"
+    AdminClient.create(AdminClientConfig(environment.kafka.bootstrapServers)).createTopic(
+      TopicConfig(
+        name = topic,
+        partitions = 4,
+        replicationFactor = 1,
+        cleanupPolicy = CleanupPolicy.Delete(1.hour.toMillis)))
+  }
+
 }
 
 object ConsumerIT {
-  val topic: Topic = "some-topic"
   val runtime = GreyhoundRuntime.Live
 }
 
