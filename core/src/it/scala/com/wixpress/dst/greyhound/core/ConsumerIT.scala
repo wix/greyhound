@@ -2,6 +2,8 @@ package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.ConsumerIT._
 import com.wixpress.dst.greyhound.core.Serdes._
+import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
+import com.wixpress.dst.greyhound.core.consumer.OffsetReset.Earliest
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
@@ -9,7 +11,7 @@ import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, Produ
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, CountDownLatch}
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
-import zio._
+import zio.{console, _}
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.console.Console
@@ -30,27 +32,36 @@ class ConsumerIT extends BaseTest[Env] {
       val simpleTest = for {
         _ <- console.putStrLn(">>>> starting test: simpleTest")
 
-        topic <- randomTopic()
+        topic <- createRandomTopic()
+        topic2 <- createRandomTopic()
         group <- randomGroup
 
         queue <- Queue.unbounded[ConsumerRecord[String, String]]
         handler = RecordHandler(topic)(queue.offer(_: ConsumerRecord[String, String]))
           .withDeserializers(StringSerde, StringSerde)
           .ignore
+        cId <- clientId
+        config = ParallelConsumerConfig(kafka.bootstrapServers, group, cId, extraProperties = fastConsumerMetadataFetching)
+        record = ProducerRecord(topic, "bar", Some("foo"))
 
-        message <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
-          val record = ProducerRecord(topic, "bar", Some("foo"))
+        messages <- ParallelConsumer.make(config, handler).use { consumer =>
           producer.produce(record, StringSerde, StringSerde) *>
-            queue.take
+            consumer.resubscribe(Set(topic, topic2)).delay(3.seconds) *>
+            producer.produce(record.copy(topic = topic2, value = "BAR"), StringSerde, StringSerde) *>
+            (queue.take zip queue.take)
+              .timeout(20.seconds)
+              .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
         }
+        msgs <- ZIO.fromOption(messages)
       } yield "produce and consume a single message" in {
-        message must (beRecordWithKey("foo") and beRecordWithValue("bar"))
+        msgs._1 must (beRecordWithKey("foo") and beRecordWithValue("bar")) and (
+          msgs._2 must (beRecordWithKey("foo") and beRecordWithValue("BAR")))
       }
 
       val throttlingTest = for {
         _ <- console.putStrLn(">>>> starting test: throttlingTest")
 
-        topic <- randomTopic(partitions = 2)
+        topic <- createRandomTopic(partitions = 2)
         group <- randomGroup
 
         messagesPerPartition = 500 // Exceeds queue's capacity
@@ -64,7 +75,7 @@ class ConsumerIT extends BaseTest[Env] {
           }
         }
 
-        test <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
+        test <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
           val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
           val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
           for {
@@ -84,7 +95,7 @@ class ConsumerIT extends BaseTest[Env] {
       val pauseResumeTest = for {
         _ <- console.putStrLn(">>>> starting test: pauseResumeTest")
 
-        topic <- randomTopic()
+        topic <- createRandomTopic()
         group <- randomGroup
 
         numberOfMessages = 32
@@ -96,7 +107,7 @@ class ConsumerIT extends BaseTest[Env] {
           handledSomeMessages.countDown zipParRight handledAllMessages.countDown
         }
 
-        test <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use { consumer =>
+        test <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler).use { consumer =>
           val record = ProducerRecord(topic, Chunk.empty)
           for {
             _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
@@ -114,18 +125,18 @@ class ConsumerIT extends BaseTest[Env] {
 
       val gracefulShutdownTest = for {
         _ <- console.putStrLn(">>>> starting test: gracefulShutdownTest")
-        topic <- randomTopic()
+        topic <- createRandomTopic()
         group <- randomGroup
 
         ref <- Ref.make(0)
         startedHandling <- Promise.make[Nothing, Unit]
-        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handler: Handler[Clock] = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           startedHandling.succeed(()) *>
             clock.sleep(5.seconds) *>
             ref.update(_ + 1)
         }
 
-        _ <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
+        _ <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
           producer.produce(ProducerRecord(topic, Chunk.empty)) *>
             startedHandling.await
         }
@@ -137,7 +148,7 @@ class ConsumerIT extends BaseTest[Env] {
 
       val earliestTest = for {
         _ <- console.putStrLn(">>>> starting test: earliestTest")
-        topic <- randomTopic()
+        topic <- createRandomTopic()
         group <- randomGroup
 
         queue <- Queue.unbounded[ConsumerRecord[String, String]]
@@ -148,7 +159,7 @@ class ConsumerIT extends BaseTest[Env] {
         record = ProducerRecord(topic, "bar", Some("foo"))
         _ <- producer.produce(record, StringSerde, StringSerde)
 
-        message <- ParallelConsumer.makeFrom(kafka.bootstrapServers, (OffsetReset.Earliest, group) -> handler).use_ {
+        message <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group, offsetReset = Earliest), handler).use_ {
           queue.take
         }.timeout(10.seconds)
       } yield "consumer from earliest offset" in {
@@ -162,6 +173,9 @@ class ConsumerIT extends BaseTest[Env] {
         pauseResumeTest,
         gracefulShutdownTest)
   }
+
+  private def fastConsumerMetadataFetching =
+    Map("metadata.max.age.ms" -> "0")
 
   run(tests)
 
@@ -187,13 +201,14 @@ object ConsumerIT {
     } yield (kafka, ReportingProducer(producer))
   }
 
-  def randomTopic(partitions: Int = ConsumerIT.partitions)(implicit kafka: ManagedKafka) = for {
+  def createRandomTopic(partitions: Int = ConsumerIT.partitions)(implicit kafka: ManagedKafka) = for {
     topic <- randomId.map(id => s"topic-$id")
     _ <- kafka.createTopic(TopicConfig(topic, partitions, 1, delete))
   } yield topic
 
-  val clientId = "greyhound-consumers"
-  val partitions = 8
+  def clientId = randomId.map(id => s"greyhound-consumers-$id")
+
+  val partitions = 4
   val delete = CleanupPolicy.Delete(1.hour.toMillis)
 
   def randomAlphaLowerChar = {

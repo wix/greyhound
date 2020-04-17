@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.rabalance
 
-import com.wixpress.dst.greyhound.core.ConsumerIT.{Env, randomGroup, randomTopic, testResources}
+import com.wixpress.dst.greyhound.core.ConsumerIT.{Env, randomGroup, createRandomTopic, testResources}
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, CountDownLatch}
@@ -22,7 +22,7 @@ class RebalanceIT extends BaseTest[Env] {
       def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) = for {
         latch <- CountDownLatch.make(partitions)
         handler = RecordHandler(topic)((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
-        _ <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler)).use_ {
+        _ <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
           ZIO.foreachPar_(0 until partitions) { partition =>
             producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
           } *> latch.await
@@ -30,7 +30,7 @@ class RebalanceIT extends BaseTest[Env] {
       } yield ()
 
       val commitOnRebalanceTest = for {
-        topic <- randomTopic()
+        topic <- createRandomTopic()
         group <- randomGroup
 
         allMessages = 400
@@ -45,7 +45,7 @@ class RebalanceIT extends BaseTest[Env] {
             handledSome.countDown *>
             handledAll.countDown
         }
-        consumer = ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler))
+        consumer = ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler)
 
         startProducing1 <- Promise.make[Nothing, Unit]
         consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
@@ -68,7 +68,7 @@ class RebalanceIT extends BaseTest[Env] {
 
         partitions = 2
         messagesPerPartition = 2
-        topic <- randomTopic(partitions = partitions)
+        topic <- createRandomTopic(partitions = partitions)
         _ <- verifyGroupCommitted(topic, group, partitions)
 
         latch <- CountDownLatch.make(messagesPerPartition * partitions)
@@ -82,6 +82,7 @@ class RebalanceIT extends BaseTest[Env] {
         config1 = ParallelConsumerConfig(
           bootstrapServers = kafka.bootstrapServers,
           clientId = "client-1",
+          group = group,
           eventLoopConfig = EventLoopConfig.Default.copy(
             rebalanceListener = new RebalanceListener[Any] {
               override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
@@ -90,7 +91,7 @@ class RebalanceIT extends BaseTest[Env] {
               override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
                 ZIO.unit
             }))
-        consumer1 <- ParallelConsumer.make(config1, Map((OffsetReset.Latest, group) -> handler1)).use_ {
+        consumer1 <- ParallelConsumer.make(config1, handler1).use_ {
           startProducing.succeed(()) *> latch.await
         }.fork
 
@@ -103,8 +104,8 @@ class RebalanceIT extends BaseTest[Env] {
         handler2 = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           latch.countDown
         }
-        config2 = ParallelConsumerConfig(kafka.bootstrapServers, "client-2")
-        consumer2 <- ParallelConsumer.make(config2, Map((OffsetReset.Latest, group) -> handler2)).use_ {
+        config2 = ParallelConsumerConfig(kafka.bootstrapServers, group, "client-2")
+        consumer2 <- ParallelConsumer.make(config2, handler2).use_ {
           latch.await
         }.fork
 
