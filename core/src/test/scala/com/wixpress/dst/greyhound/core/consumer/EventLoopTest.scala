@@ -4,22 +4,25 @@ import com.wixpress.dst.greyhound.core.consumer.Consumer.{Record, Records}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
-import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic}
+import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
 
 import scala.collection.JavaConverters._
 
-class EventLoopTest extends BaseTest[Clock with TestMetrics] {
+class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
 
-  override def env: UManaged[Clock with TestMetrics] =
+  override def env: UManaged[Blocking with Clock with TestMetrics] =
     TestMetrics.make.map { testMetrics =>
-      new TestMetrics with Clock.Live {
+      new TestMetrics with Clock.Live with Blocking {
         override val metrics: TestMetrics.Service =
           testMetrics.metrics
+        override val blocking: Blocking.Service[Any] =
+          Blocking.Live.blocking
       }
     }
 
@@ -96,8 +99,8 @@ object EventLoopTest {
 }
 
 trait EmptyConsumer[R] extends Consumer[R] {
-  override def subscribe(topics: Set[Topic],
-                         rebalanceListener: RebalanceListener[R]): RIO[R, Unit] =
+
+  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R with R1, Unit] =
     rebalanceListener.onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit
 
   override def poll(timeout: Duration): RIO[R, Records] =

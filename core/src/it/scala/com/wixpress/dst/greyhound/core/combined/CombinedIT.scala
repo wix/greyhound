@@ -24,8 +24,8 @@ class CombinedIT extends BaseTest[Env] {
       val combinedHandlersTest = for {
         _ <- console.putStrLn(">>>> starting test: combinedHandlersTest")
 
-        topic1 <- randomTopic()
-        topic2 <- randomTopic()
+        topic1 <- createRandomTopic()
+        topic2 <- createRandomTopic()
         group <- randomGroup
 
         records1 <- Queue.unbounded[ConsumerRecord[String, String]]
@@ -34,7 +34,7 @@ class CombinedIT extends BaseTest[Env] {
         handler2 = RecordHandler(topic2)(records2.offer(_: ConsumerRecord[Int, Int]))
         handler = handler1.withDeserializers(StringSerde, StringSerde) combine handler2.withDeserializers(IntSerde, IntSerde)
 
-        (record1, record2) <- ParallelConsumer.makeFrom(kafka.bootstrapServers, ((OffsetReset.Latest, group) -> handler.ignore)).use_ {
+        (record1, record2) <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler.ignore).use_ {
           producer.produce(ProducerRecord(topic1, "bar", Some("foo")), StringSerde, StringSerde) *>
             producer.produce(ProducerRecord(topic2, 2, Some(1)), IntSerde, IntSerde) *>
             (records1.take zip records2.take)

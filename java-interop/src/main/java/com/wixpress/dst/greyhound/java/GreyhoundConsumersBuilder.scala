@@ -25,19 +25,20 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
     for {
       runtime <- ZIO.runtime[Env]
       executor <- createExecutor
-      consumerConfig = ParallelConsumerConfig(config.bootstrapServers)
-      makeConsumer = ParallelConsumer.make(consumerConfig, handlers(executor))
+      makeConsumer = ZManaged.foreach(handlers(executor)) { case ((offsetReset, group), handler) =>
+        ParallelConsumer.make(ParallelConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
+      }
       reservation <- makeConsumer.reserve
-      consumer <- reservation.acquire
+      consumers <- reservation.acquire
     } yield new GreyhoundConsumers {
       override def pause(): Unit =
-        runtime.unsafeRun(consumer.pause)
+        runtime.unsafeRun(ZIO.foreach(consumers)(_.pause))
 
       override def resume(): Unit =
-        runtime.unsafeRun(consumer.resume)
+        runtime.unsafeRun(ZIO.foreach(consumers)(_.resume))
 
       override def isAlive(): Boolean =
-        runtime.unsafeRun(consumer.isAlive)
+        runtime.unsafeRun(ZIO.foreach(consumers)(_.isAlive).map(_.forall(_ == true)))
 
       override def close(): Unit = runtime.unsafeRun {
         reservation.release(Exit.Success(())).unit

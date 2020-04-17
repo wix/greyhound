@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.util
+import java.{time, util}
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
@@ -15,7 +15,7 @@ import zio.duration.Duration
 import scala.collection.JavaConverters._
 
 trait Consumer[R] {
-  def subscribe(topics: Set[Topic], rebalanceListener: RebalanceListener[R] = RebalanceListener.Empty): RIO[R, Unit]
+  def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[R with R1, Unit]
 
   def poll(timeout: Duration): RIO[R, Records]
 
@@ -47,9 +47,10 @@ object Consumer {
     semaphore <- Semaphore.make(1).toManaged_
     consumer <- makeConsumer(config)
   } yield new Consumer[Blocking] {
-    override def subscribe(topics: Set[Topic], rebalanceListener: RebalanceListener[Blocking]): RIO[Blocking, Unit] =
-      for {
-        runtime <- ZIO.runtime[Blocking]
+
+    override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
+    for {
+        runtime <- ZIO.runtime[Blocking with R1]
         consumerRebalanceListener = new ConsumerRebalanceListener {
           override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
             runtime.unsafeRun(rebalanceListener.onPartitionsRevoked(partitionsFor(partitions)))
@@ -64,7 +65,7 @@ object Consumer {
       } yield ()
 
     override def poll(timeout: Duration): RIO[Blocking, Records] =
-      withConsumer(_.poll(timeout.toMillis))
+      withConsumer(_.poll(time.Duration.ofMillis(timeout.toMillis)))
 
     override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Blocking, Unit] =
       if (calledOnRebalance) Task(consumer.commitSync(kafkaOffsets(offsets)))

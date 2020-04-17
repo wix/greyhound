@@ -12,6 +12,8 @@ import zio._
 import zio.clock.Clock
 import zio.duration.Duration
 
+import scala.util.Try
+
 trait RetryPolicy[-R, -E] {
   def retryTopics(originalTopic: Topic): Set[Topic]
 
@@ -25,9 +27,8 @@ trait RetryPolicy[-R, -E] {
 object RetryPolicy {
 
   // TODO this is Wix retry logic, maybe move to Wix adapter?
-  def default[E](topic: Topic, group: Group, backoffs: Duration*): RetryPolicy[Clock, E] =
+  def default[E](group: Group, backoffs: Duration*): RetryPolicy[Clock, E] =
     new RetryPolicy[Clock, E] {
-      private val topicPattern = """-retry-(\d+)$""".r.unanchored
       private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
       private val instantDeserializer = longDeserializer.map(Instant.ofEpochMilli)
       private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))
@@ -39,15 +40,11 @@ object RetryPolicy {
         val submittedHeader = headers.get(RetryHeader.Submitted, instantDeserializer)
         val backoffHeader = headers.get(RetryHeader.Backoff, durationDeserializer)
         (submittedHeader zipWith backoffHeader) { (submitted, backoff) =>
-          val attempt = topic match {
-            case topicPattern(attempt) => Some(attempt.toInt)
-            case _ => None
-          }
           for {
-            a <- attempt
+            TopicAttempt(originalTopic, attempt) <- extractTopicAttempt(group, topic)
             s <- submitted
             b <- backoff
-          } yield RetryAttempt(a, s, b)
+          } yield RetryAttempt(originalTopic, attempt, s, b)
         }.orElse(ZIO.none)
       }
 
@@ -58,7 +55,7 @@ object RetryPolicy {
           val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
           backoffs.lift(nextRetryAttempt).map { backoff =>
             ProducerRecord(
-              topic = s"$topic-$group-retry-$nextRetryAttempt",
+              topic = s"${retryAttempt.fold(record.topic)(_.originalTopic)}-$group-retry-$nextRetryAttempt",
               value = record.value,
               key = record.key,
               partition = None,
@@ -72,14 +69,22 @@ object RetryPolicy {
         Chunk.fromArray(long.toString.getBytes)
     }
 
+  private def extractTopicAttempt[E](group: Group, inputTopic: Topic) =
+    inputTopic.split(s"-$group-retry-").toSeq match {
+      case Seq(topic, attempt) if Try(attempt.toInt).isSuccess => Some(TopicAttempt(topic, attempt.toInt))
+      case _ => None
+    }
 }
+
+private case class TopicAttempt(originalTopic: Topic, attempt: Int)
 
 object RetryHeader {
   val Submitted = "submitTimestamp"
   val Backoff = "backOffTimeMs"
 }
 
-case class RetryAttempt(attempt: RetryAttemptNumber,
+case class RetryAttempt(originalTopic: Topic,
+                        attempt: RetryAttemptNumber,
                         submittedAt: Instant,
                         backoff: Duration) {
 
@@ -100,6 +105,9 @@ object RetryAttempt {
 sealed trait RetryDecision
 
 object RetryDecision {
+
   case object NoMoreRetries extends RetryDecision
+
   case class RetryWith(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) extends RetryDecision
+
 }
