@@ -22,7 +22,7 @@ class RebalanceIT extends BaseTest[Env] {
       def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) = for {
         latch <- CountDownLatch.make(partitions)
         handler = RecordHandler(topic)((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
-        _ <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
+        _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
           ZIO.foreachPar_(0 until partitions) { partition =>
             producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
           } *> latch.await
@@ -45,7 +45,7 @@ class RebalanceIT extends BaseTest[Env] {
             handledSome.countDown *>
             handledAll.countDown
         }
-        consumer = ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), handler)
+        consumer = RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), handler)
 
         startProducing1 <- Promise.make[Nothing, Unit]
         consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
@@ -79,7 +79,7 @@ class RebalanceIT extends BaseTest[Env] {
         }
 
         startProducing <- Promise.make[Nothing, Unit]
-        config1 = ParallelConsumerConfig(
+        config1 = RecordConsumerConfig(
           bootstrapServers = kafka.bootstrapServers,
           clientId = "client-1",
           group = group,
@@ -91,7 +91,7 @@ class RebalanceIT extends BaseTest[Env] {
               override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
                 ZIO.unit
             }))
-        consumer1 <- ParallelConsumer.make(config1, handler1).use_ {
+        consumer1 <- RecordConsumer.make(config1, handler1).use_ {
           startProducing.succeed(()) *> latch.await
         }.fork
 
@@ -104,8 +104,8 @@ class RebalanceIT extends BaseTest[Env] {
         handler2 = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           latch.countDown
         }
-        config2 = ParallelConsumerConfig(kafka.bootstrapServers, group, "client-2")
-        consumer2 <- ParallelConsumer.make(config2, handler2).use_ {
+        config2 = RecordConsumerConfig(kafka.bootstrapServers, group, "client-2")
+        consumer2 <- RecordConsumer.make(config2, handler2).use_ {
           latch.await
         }.fork
 
