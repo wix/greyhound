@@ -5,7 +5,7 @@ import java.util.concurrent.Executor
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.{ParallelConsumer, ParallelConsumerConfig}
+import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio._
 import zio.blocking.blockingExecutor
@@ -26,7 +26,7 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
       runtime <- ZIO.runtime[Env]
       executor <- createExecutor
       makeConsumer = ZManaged.foreach(handlers(executor)) { case ((offsetReset, group), handler) =>
-        ParallelConsumer.make(ParallelConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire
