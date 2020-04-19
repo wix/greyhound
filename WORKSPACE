@@ -47,5 +47,8 @@ specs2_junit_repositories(scala_version)
 
 register_toolchains("@wix_oss_infra//toolchains:wix_defaults_global_toolchain")
 
+load("@greyhound//central-sync:dependencies.bzl", "graknlabs_bazel_distribution")
+graknlabs_bazel_distribution()
+
 load("@wix_oss_infra//:third_party.bzl", "managed_third_party_dependencies")
 managed_third_party_dependencies()
