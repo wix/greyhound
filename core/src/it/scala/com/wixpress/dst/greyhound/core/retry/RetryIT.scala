@@ -47,7 +47,7 @@ class RetryIT extends BaseTest[Env] {
           .withRetries(retryPolicy, producer)
           .ignore
 
-        success <- ParallelConsumer.make(ParallelConsumerConfig(kafka.bootstrapServers, group), retryHandler).use_ {
+        success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), retryHandler).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
             done.await.timeout(1.minute)
         }

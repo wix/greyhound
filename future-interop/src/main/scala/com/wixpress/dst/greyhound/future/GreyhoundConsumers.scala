@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, ParallelConsumer, ParallelConsumerConfig}
+import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Exit, ZIO, ZManaged}
 
@@ -29,7 +29,7 @@ case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
     for {
       runtime <- ZIO.runtime[Env]
       makeConsumer = ZManaged.foreach(handlers) { case ((offsetReset, group), handler) =>
-        ParallelConsumer.make(ParallelConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire
