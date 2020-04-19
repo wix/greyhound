@@ -28,12 +28,12 @@ assemble_maven(
     project_description = "Greyhound - Rich Kafka Client",
     project_url = "https://github.com/wix/greyhound",
     scm_url = "https://github.com/wix/greyhound.git",
-    version_file = "//data-streams/greyhound/central-sync:VERSION",
+    version_file = "//central-sync:VERSION",
     developers = {"1": ["name=Natan Silnitsky", "email=natans@wix.com"]}
 )
 
 deploy_maven(
     name = "deploy-maven",
     target = ":assemble-maven",
-    deployment_properties = "//data-streams/greyhound/central-sync:deployment.properties"
+    deployment_properties = "//central-sync:deployment.properties"
 )
