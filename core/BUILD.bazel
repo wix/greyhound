@@ -30,7 +30,8 @@ assemble_maven(
     project_url = "https://github.com/wix/greyhound",
     scm_url = "https://github.com/wix/greyhound.git",
     version_file = "//central-sync:VERSION",
-    developers = {"1": ["name=Natan Silnitsky", "email=natans@wix.com"]}
+    developers = {"1": ["name=Natan Silnitsky", "email=natans@wix.com"]},
+    license = "MIT"
 )
 
 deploy_maven(
