@@ -1,6 +1,7 @@
 package(default_visibility = ["//visibility:public"])
 
-sources()
+# visibility is extended to allow packaging a jar to deploy to maven central
+sources(["//java-interop:__subpackages__"])
 
 scala_library(
     name = "java",
