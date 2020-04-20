@@ -3,7 +3,7 @@ package(default_visibility = ["//visibility:public"])
 load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "deploy_maven", "assemble_maven")
 
 scala_library(
-    name = "greyhound-zio",
+    name = "greyhound-core",
     srcs = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin:sources",
@@ -11,7 +11,7 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-zio:{pom_version}"],
+    tags = ["maven_coordinates=com.wix:greyhound-core:{pom_version}"],
     visibility = ["//visibility:private"],
     deps = [
         "@dev_zio_zio_2_12",
@@ -22,7 +22,7 @@ scala_library(
 
 assemble_maven(
     name = "assemble-maven",
-    target = "//core:greyhound-zio",
+    target = "//core:greyhound-core",
     package = "{maven_packages}",
     project_name = "Greyhound",
     project_description = "Greyhound - Rich Kafka Client",
