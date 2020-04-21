@@ -11,7 +11,7 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-core:{pom_version}"],
+    tags = ["maven_coordinates=com.wix:greyhound-core_2.12:{pom_version}"],
     visibility = ["//:__subpackages__"],
     deps = [
         "@dev_zio_zio_2_12",
