@@ -12,7 +12,7 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:sources",
     ],
     tags = ["maven_coordinates=com.wix:greyhound-core:{pom_version}"],
-    visibility = ["//data-streams/greyhound:__subpackages__"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_clients",
