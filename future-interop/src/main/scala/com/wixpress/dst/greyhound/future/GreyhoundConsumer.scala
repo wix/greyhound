@@ -2,14 +2,14 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, OffsetReset, RetryAttempt, SerializationError, RecordHandler => CoreRecordHandler}
-import com.wixpress.dst.greyhound.core.{Deserializer, Group, Topic}
+import com.wixpress.dst.greyhound.core.{Deserializer, Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handle
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Chunk, Task, ZIO}
 
 import scala.concurrent.{ExecutionContext, Future}
 
-case class GreyhoundConsumer[K, V](topic: Topic,
+case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
                                    group: Group,
                                    handle: Handle[K, V],
                                    keyDeserializer: Deserializer[K],
@@ -18,7 +18,7 @@ case class GreyhoundConsumer[K, V](topic: Topic,
                                    errorHandler: ErrorHandler[K, V] = ErrorHandler.NoOp[K, V]) {
 
   def recordHandler: Handler[Env] =
-    CoreRecordHandler(topic)(handle)
+    CoreRecordHandler(handle)
       .withErrorHandler { case (error, record) =>
         ZIO.fromFuture(_ => errorHandler.onUserException(error, record))
           .flatMap(_ => ZIO.fail(error))

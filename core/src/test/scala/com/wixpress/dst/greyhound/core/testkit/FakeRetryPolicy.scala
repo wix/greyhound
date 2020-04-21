@@ -11,31 +11,30 @@ import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import zio.clock.Clock
 import zio.duration._
-import zio.{Chunk, URIO, ZIO, clock}
+import zio.{Chunk, Runtime, UIO, URIO, ZIO, clock}
 
 case class FakeRetryPolicy(topic: Topic)
-  extends RetryPolicy[Clock, HandlerError] {
+  extends RetryPolicy {
 
-  override def retryTopics(originalTopic: Topic): Set[Topic] =
+  override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
     Set(s"$originalTopic-retry")
 
-  override def retryAttempt(topic: Topic, headers: Headers): URIO[Clock, Option[RetryAttempt]] =
+  override def retryAttempt(topic: Topic, headers: Headers): UIO[Option[RetryAttempt]] =
     (for {
       attempt <- headers.get(Header.Attempt, IntSerde)
       submittedAt <- headers.get(Header.SubmittedAt, InstantSerde)
       backoff <- headers.get(Header.Backoff, DurationSerde)
     } yield retryAttempt(topic, attempt, submittedAt, backoff)).orElse(ZIO.none)
 
-  override def retryDecision(retryAttempt: Option[RetryAttempt],
-                             record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-                             error: HandlerError): URIO[Clock, RetryDecision] =
+  override def retryDecision[E](retryAttempt: Option[RetryAttempt],
+                                record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                                error: E): URIO[Clock, RetryDecision] =
     error match {
       case RetriableError =>
-        recordFrom(retryAttempt, record)
-          .fold(_ => NoMoreRetries, RetryWith)
-
+        currentTime.flatMap(now => recordFrom(now, retryAttempt, record)
+          .fold(_ => NoMoreRetries, RetryWith))
       case NonRetriableError =>
-        ZIO.succeed(NoMoreRetries)
+        UIO(NoMoreRetries)
     }
 
   private def retryAttempt(topic: Topic,
@@ -48,10 +47,9 @@ case class FakeRetryPolicy(topic: Topic)
       b <- backoff
     } yield RetryAttempt(topic, a, s, b)
 
-  private def recordFrom(retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) =
+  private def recordFrom(now: Instant, retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) = {
+    val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
     for {
-      now <- currentTime
-      nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
       retryAttempt <- IntSerde.serialize(topic, nextRetryAttempt)
       submittedAt <- InstantSerde.serialize(topic, now)
       backoff <- DurationSerde.serialize(topic, 1.second)
@@ -64,9 +62,11 @@ case class FakeRetryPolicy(topic: Topic)
         Header.Attempt -> retryAttempt,
         Header.SubmittedAt -> submittedAt,
         Header.Backoff -> backoff))
+  }
 }
 
 object FakeRetryPolicy {
+
   object Header {
     val Attempt = "retry-attempt"
     val SubmittedAt = "retry-submitted-at"
@@ -77,5 +77,7 @@ object FakeRetryPolicy {
 }
 
 sealed trait HandlerError
+
 case object RetriableError extends HandlerError
+
 case object NonRetriableError extends HandlerError

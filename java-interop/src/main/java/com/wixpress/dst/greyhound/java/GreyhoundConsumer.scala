@@ -13,7 +13,7 @@ import Convert.toScala
 
 import scala.concurrent.Promise
 
-class GreyhoundConsumer[K >: AnyRef, V](val topic: String,
+class GreyhoundConsumer[K >: AnyRef, V](val initialTopic: String,
                                         val group: String,
                                         val handler: RecordHandler[K, V],
                                         val keyDeserializer: Deserializer[K],
@@ -22,7 +22,7 @@ class GreyhoundConsumer[K >: AnyRef, V](val topic: String,
                                         val errorHandler: ErrorHandler[K, V]) {
 
   def recordHandler(executor: Executor): Handler[Env] = {
-    val baseHandler = CoreRecordHandler(topic) { record: CoreConsumerRecord[K, V] =>
+    val baseHandler = CoreRecordHandler { record: CoreConsumerRecord[K, V] =>
       ZIO.effectAsync[Any, Throwable, Unit] { cb =>
         val kafkaRecord = new ConsumerRecord(
           record.topic,

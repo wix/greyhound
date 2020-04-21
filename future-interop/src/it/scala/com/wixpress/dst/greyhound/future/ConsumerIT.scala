@@ -42,7 +42,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     val consumersBuilder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
-          topic = topic,
+          initialTopics = Set(topic),
           group = "group-1",
           handle = aRecordHandler {
             new RecordHandler[Int, String] {
@@ -76,7 +76,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     val consumersBuilder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
-          topic = topic,
+          initialTopics = Set(topic),
           group = "group-2",
           handle = aContextAwareRecordHandler(Context.Decoder) {
             new ContextAwareRecordHandler[Int, String, Context] {
@@ -118,7 +118,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     val builder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
-          topic = topic,
+          initialTopics = Set(topic),
           group = "group-3",
           handle = aRecordHandler {
             new RecordHandler[Int, String] {
@@ -146,7 +146,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     val consumersBuilder = GreyhoundConsumersBuilder(config)
       .withConsumer(
         GreyhoundConsumer(
-          topic = topic,
+          initialTopics = Set(topic),
           group = "group-2",
           handle = aRecordHandler {
             new RecordHandler[Partition, String] {

@@ -14,29 +14,29 @@ import zio.duration.Duration
 
 import scala.util.Try
 
-trait RetryPolicy[-R, -E] {
-  def retryTopics(originalTopic: Topic): Set[Topic]
+trait RetryPolicy {
+  def retryTopicsFor(originalTopic: Topic): Set[Topic]
 
-  def retryAttempt(topic: Topic, headers: Headers): URIO[R, Option[RetryAttempt]]
+  def retryAttempt(topic: Topic, headers: Headers): UIO[Option[RetryAttempt]]
 
-  def retryDecision(retryAttempt: Option[RetryAttempt],
-                    record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-                    error: E): URIO[R, RetryDecision]
+  def retryDecision[E](retryAttempt: Option[RetryAttempt],
+                       record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                       error: E): URIO[Clock, RetryDecision]
 }
 
 object RetryPolicy {
 
   // TODO this is Wix retry logic, maybe move to Wix adapter?
-  def default[E](group: Group, backoffs: Duration*): RetryPolicy[Clock, E] =
-    new RetryPolicy[Clock, E] {
+  def default(group: Group, backoffs: Duration*): RetryPolicy =
+    new RetryPolicy {
       private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
       private val instantDeserializer = longDeserializer.map(Instant.ofEpochMilli)
       private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))
 
-      override def retryTopics(topic: Topic): Set[Topic] =
-        backoffs.indices.foldLeft(Set(topic))((acc, attempt) => acc + s"$topic-$group-retry-$attempt")
+      override def retryTopicsFor(topic: Topic): Set[Topic] =
+        (backoffs.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt")) + topic
 
-      override def retryAttempt(topic: Topic, headers: Headers): URIO[Clock, Option[RetryAttempt]] = {
+      override def retryAttempt(topic: Topic, headers: Headers): UIO[Option[RetryAttempt]] = {
         val submittedHeader = headers.get(RetryHeader.Submitted, instantDeserializer)
         val backoffHeader = headers.get(RetryHeader.Backoff, durationDeserializer)
         (submittedHeader zipWith backoffHeader) { (submitted, backoff) =>
@@ -48,10 +48,10 @@ object RetryPolicy {
         }.orElse(ZIO.none)
       }
 
-      override def retryDecision(retryAttempt: Option[RetryAttempt],
-                                 record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-                                 error: E): URIO[Clock, RetryDecision] =
-        currentTime.map { now =>
+      override def retryDecision[E](retryAttempt: Option[RetryAttempt],
+                                    record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                                    error: E): URIO[Clock, RetryDecision] = {
+        currentTime.map(now => {
           val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
           backoffs.lift(nextRetryAttempt).map { backoff =>
             ProducerRecord(
@@ -63,7 +63,8 @@ object RetryPolicy {
                 (RetryHeader.Submitted -> toChunk(now.toEpochMilli)) +
                 (RetryHeader.Backoff -> toChunk(backoff.toMillis)))
           }.fold[RetryDecision](NoMoreRetries)(RetryWith)
-        }
+        })
+      }
 
       private def toChunk(long: Long): Chunk[Byte] =
         Chunk.fromArray(long.toString.getBytes)

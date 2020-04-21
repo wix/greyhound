@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.Group
+import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
@@ -21,6 +21,7 @@ object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
   def make[R1, R2](group: Group,
+                   initialTopics: NonEmptySet[Topic],
                    consumer: Consumer[R1],
                    handler: Handler[R2],
                    config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Env, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
@@ -33,7 +34,7 @@ object EventLoop {
       // TODO how to handle errors in subscribe?
       runtime <- ZIO.runtime[R2 with GreyhoundMetrics with Clock]
       _ <- consumer.subscribe[Blocking with R1](
-        topics = handler.topics,
+        topics = initialTopics,
         rebalanceListener = new RebalanceListener[Blocking with R1] {
           override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
             ZIO.effectTotal {
