@@ -37,11 +37,11 @@ class ConsumerIT extends BaseTest[Env] {
         group <- randomGroup
 
         queue <- Queue.unbounded[ConsumerRecord[String, String]]
-        handler = RecordHandler(topic)(queue.offer(_: ConsumerRecord[String, String]))
+        handler = RecordHandler(queue.offer(_: ConsumerRecord[String, String]))
           .withDeserializers(StringSerde, StringSerde)
           .ignore
         cId <- clientId
-        config = RecordConsumerConfig(kafka.bootstrapServers, group, cId, extraProperties = fastConsumerMetadataFetching)
+        config = RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic), clientId = cId, extraProperties = fastConsumerMetadataFetching)
         record = ProducerRecord(topic, "bar", Some("foo"))
 
         messages <- RecordConsumer.make(config, handler).use { consumer =>
@@ -68,14 +68,14 @@ class ConsumerIT extends BaseTest[Env] {
         delayPartition1 <- Promise.make[Nothing, Unit]
         handledPartition0 <- CountDownLatch.make(messagesPerPartition)
         handledPartition1 <- CountDownLatch.make(messagesPerPartition)
-        handler = RecordHandler(topic) { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handler = RecordHandler { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           record.partition match {
             case 0 => handledPartition0.countDown
             case 1 => delayPartition1.await *> handledPartition1.countDown
           }
         }
 
-        test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
+        test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler).use_ {
           val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
           val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
           for {
@@ -103,11 +103,11 @@ class ConsumerIT extends BaseTest[Env] {
         restOfMessages = numberOfMessages - someMessages
         handledSomeMessages <- CountDownLatch.make(someMessages)
         handledAllMessages <- CountDownLatch.make(numberOfMessages)
-        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           handledSomeMessages.countDown zipParRight handledAllMessages.countDown
         }
 
-        test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), handler).use { consumer =>
+        test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler).use { consumer =>
           val record = ProducerRecord(topic, Chunk.empty)
           for {
             _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
@@ -130,13 +130,13 @@ class ConsumerIT extends BaseTest[Env] {
 
         ref <- Ref.make(0)
         startedHandling <- Promise.make[Nothing, Unit]
-        handler: Handler[Clock] = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handler: Handler[Clock] = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           startedHandling.succeed(()) *>
             clock.sleep(5.seconds) *>
             ref.update(_ + 1)
         }
 
-        _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
+        _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler).use_ {
           producer.produce(ProducerRecord(topic, Chunk.empty)) *>
             startedHandling.await
         }
@@ -152,14 +152,14 @@ class ConsumerIT extends BaseTest[Env] {
         group <- randomGroup
 
         queue <- Queue.unbounded[ConsumerRecord[String, String]]
-        handler = RecordHandler(topic)(queue.offer(_: ConsumerRecord[String, String]))
+        handler = RecordHandler(queue.offer(_: ConsumerRecord[String, String]))
           .withDeserializers(StringSerde, StringSerde)
           .ignore
 
         record = ProducerRecord(topic, "bar", Some("foo"))
         _ <- producer.produce(record, StringSerde, StringSerde)
 
-        message <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, offsetReset = Earliest), handler).use_ {
+        message <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic), offsetReset = Earliest), handler).use_ {
           queue.take
         }.timeout(10.seconds)
       } yield "consumer from earliest offset" in {
@@ -197,7 +197,7 @@ object ConsumerIT {
   def testResources() = {
     for {
       kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
-      producer <- Producer.make(ProducerConfig(kafka.bootstrapServers))
+      producer <- Producer.make[Any](ProducerConfig(kafka.bootstrapServers))
     } yield (kafka, ReportingProducer(producer))
   }
 

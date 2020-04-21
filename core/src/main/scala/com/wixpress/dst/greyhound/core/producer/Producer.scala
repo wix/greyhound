@@ -38,10 +38,10 @@ trait Producer[-R] {
 object Producer {
   private val serializer = new ByteArraySerializer
 
-  def make(config: ProducerConfig): RManaged[Blocking, Producer[Any]] = {
+  def make[R](config: ProducerConfig): RManaged[Blocking, Producer[R]] = {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
-      new Producer[Any] {
+      new Producer[R] {
         override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata] =
           ZIO.effectAsync[Any, ProducerError, RecordMetadata] { cb =>
             producer.send(recordFrom(record), new Callback {

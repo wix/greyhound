@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.java
 import java.util.concurrent.Executor
 
 import com.wixpress.dst.greyhound.core
-import com.wixpress.dst.greyhound.core.Group
+import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
@@ -25,8 +25,8 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
     for {
       runtime <- ZIO.runtime[Env]
       executor <- createExecutor
-      makeConsumer = ZManaged.foreach(handlers(executor)) { case ((offsetReset, group), handler) =>
-        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
+      makeConsumer = ZManaged.foreach(handlers(executor)) { case (group, (offsetReset, initialTopics, handler)) =>
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, initialTopics, offsetReset = offsetReset), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire
@@ -54,12 +54,10 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
       }
     }
 
-  private def handlers(executor: Executor) =
-    consumers.foldLeft(Map.empty[(core.consumer.OffsetReset, Group), Handler[Env]]) { (acc, consumer) =>
+  private def handlers(executor: Executor): Map[Group, (consumer.OffsetReset, NonEmptySet[Topic], Handler[Env])] =
+    consumers.foldLeft(Map.empty[Group, (core.consumer.OffsetReset, NonEmptySet[Topic], Handler[Env])]) { (acc, consumer) =>
       val (offsetReset, group) = (convert(consumer.offsetReset), consumer.group)
-      val handler = consumer.recordHandler(executor)
-      val combined = acc.get((offsetReset, group)).foldLeft(handler)(_ combine _)
-      acc + ((offsetReset, group) -> combined)
+      acc + (group -> (offsetReset, Set(consumer.initialTopic), consumer.recordHandler(executor)))
     }
 
   private def convert(offsetReset: OffsetReset): core.consumer.OffsetReset =

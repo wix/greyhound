@@ -31,7 +31,7 @@ class RetryIT extends BaseTest[Env] {
         invocations <- Ref.make(0)
         done <- Promise.make[Nothing, Unit]
         retryPolicy = RetryPolicy.default(group, 1.second, 1.seconds, 1.seconds)
-        handler = RecordHandler(topic) { _: ConsumerRecord[String, String] =>
+        handler = RecordHandler { _: ConsumerRecord[String, String] =>
           invocations.update(_ + 1).flatMap { n =>
             if (n < 4) {
               println(s"failling.. $n")
@@ -44,12 +44,11 @@ class RetryIT extends BaseTest[Env] {
         }
         retryHandler = handler
           .withDeserializers(StringSerde, StringSerde)
-          .withRetries(retryPolicy, producer)
-          .ignore
 
-        success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), retryHandler).use_ {
+        success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
+          initialTopics = Set(topic), retryPolicy = Some(retryPolicy)), retryHandler).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-            done.await.timeout(1.minute)
+            done.await.timeout(20.seconds)
         }
       } yield "configure a handler with retry policy" in {
         success must beSome

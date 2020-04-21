@@ -153,7 +153,7 @@ import com.wixpress.dst.greyhound.core.Serdes
 val bootstrapServer = "localhost:9092"
 val config = ProducerConfig(Set(bootstrapServer)/*, retryPolicy, extraProperties*/)
 
-Producer.make(config).use { producer =>
+Producer.make[Any](config).use { producer =>
   producer.produce(
     record = ProducerRecord(
       topic = "some-topic",
@@ -187,7 +187,8 @@ val handler: RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] = ???
 
 // Start consumer, will close on interruption
 val bootstrapServers = Set("localhost:9092")
-RecordConsumer.make(RecordConsumerConfig(bootstrapServers, group), handler).useForever
+val initialTopics = Set("topic-A")
+RecordConsumer.make(RecordConsumerConfig(bootstrapServers, group, initialTopics), handler).useForever
 ```
 
 ##### Record handler
@@ -230,9 +231,6 @@ val emailRequestDeserializer: Deserializer[EmailRequest] = ???
 val handler3: RecordHandler[Console, Nothing, Chunk[Byte], Chunk[Byte]] =
   handler2.withDeserializers(emailIdDeserializer, emailRequestDeserializer)
 
-// Combine multiple handlers
-val otherHandler: RecordHandler[Console, Nothing, Chunk[Byte], Chunk[Byte]] = ???
-val handler4 = handler3 combine otherHandler
 ```
 
 Notice that `RecordConsumer` accepts a `RecordHandler[_, _, Chunk[Byte], Chunk[Byte]]`, indicating that
@@ -314,7 +312,7 @@ val handler = RecordHandler(topic) { record: ConsumerRecord[String, String] =>
     ZIO.fail(new RuntimeException("Failed..."))     
 }
 
-Producer.make(producerConfig).use { producer =>
+Producer.make[Any](producerConfig).use { producer =>
     val retryPolicy = RetryPolicy.default("groupId", 1.second, 30.seconds, 1.minute)
     val retryHandler = handler
       .withDeserializers(StringSerde, StringSerde)

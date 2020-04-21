@@ -6,4 +6,6 @@ package object core {
   type Group = String
   type Partition = Int
   type Offset = Long
+
+  type NonEmptySet[A] = Set[A]
 }

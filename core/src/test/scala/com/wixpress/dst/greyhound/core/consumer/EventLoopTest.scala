@@ -38,8 +38,8 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
           }
       }
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
-      handler = RecordHandler(topic)(promise.succeed)
-      handled <- EventLoop.make("group", ReportingConsumer(clientId, group, consumer), handler).use_(promise.await)
+      handler = RecordHandler(promise.succeed)
+      handled <- EventLoop.make("group", Set(topic), ReportingConsumer(clientId, group, consumer), handler).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield ((handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception))))
   }
@@ -62,7 +62,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
             case _ => promise.succeed(offsets).unit
           }
       }
-      committed <- EventLoop.make("group", ReportingConsumer(clientId, group, consumer), RecordHandler.empty).use_(promise.await)
+      committed <- EventLoop.make("group",  Set(topic),ReportingConsumer(clientId, group, consumer), RecordHandler.empty).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic(), record.partition()) -> (offset + 1)))))
@@ -75,7 +75,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
         override def poll(timeout: Duration): Task[Records] =
           ZIO.dieMessage("cough :(")
       }
-      died <- EventLoop.make("group", sickConsumer, RecordHandler.empty).use { eventLoop =>
+      died <- EventLoop.make("group", Set(topic), sickConsumer, RecordHandler.empty).use { eventLoop =>
         eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.doUntil(alive => !alive)).unit
       }.catchAllCause(_ => ZIO.unit).timeout(1.second)
     } yield died must beSome

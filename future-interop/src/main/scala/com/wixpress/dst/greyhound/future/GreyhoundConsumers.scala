@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.Group
+import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
@@ -17,19 +17,17 @@ trait GreyhoundConsumers extends Closeable {
 }
 
 case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
-                                     handlers: Map[(OffsetReset, Group), Handler[Env]] = Map.empty) {
+                                     handlers: Map[Group, (OffsetReset, NonEmptySet[Topic], Handler[Env])] = Map.empty) {
 
   def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder = {
-    val (group, offsetReset) = (consumer.group, consumer.offsetReset)
-    val handler = handlers.get((offsetReset, group)).foldLeft(consumer.recordHandler)(_ combine _)
-    copy(handlers = handlers + ((offsetReset, group) -> handler))
+    copy(handlers = handlers + (consumer.group -> (consumer.offsetReset, consumer.initialTopics, consumer.recordHandler)))
   }
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
       runtime <- ZIO.runtime[Env]
-      makeConsumer = ZManaged.foreach(handlers) { case ((offsetReset, group), handler) =>
-        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, offsetReset = offsetReset), handler)
+      makeConsumer = ZManaged.foreach(handlers) { case (group, (offsetReset, initialTopics, handler)) =>
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, initialTopics,  offsetReset = offsetReset), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire

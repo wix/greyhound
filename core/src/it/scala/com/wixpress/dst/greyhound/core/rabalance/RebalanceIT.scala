@@ -21,8 +21,8 @@ class RebalanceIT extends BaseTest[Env] {
 
       def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) = for {
         latch <- CountDownLatch.make(partitions)
-        handler = RecordHandler(topic)((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
-        _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), handler).use_ {
+        handler = RecordHandler((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
+        _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler).use_ {
           ZIO.foreachPar_(0 until partitions) { partition =>
             producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
           } *> latch.await
@@ -40,12 +40,12 @@ class RebalanceIT extends BaseTest[Env] {
         invocations <- Ref.make(0)
         handledAll <- CountDownLatch.make(allMessages)
         handledSome <- CountDownLatch.make(someMessages)
-        handler = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           invocations.update(_ + 1) *>
             handledSome.countDown *>
             handledAll.countDown
         }
-        consumer = RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group), handler)
+        consumer = RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler)
 
         startProducing1 <- Promise.make[Nothing, Unit]
         consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
@@ -74,7 +74,7 @@ class RebalanceIT extends BaseTest[Env] {
         latch <- CountDownLatch.make(messagesPerPartition * partitions)
         blocker <- Promise.make[Nothing, Unit]
         semaphore <- Semaphore.make(1)
-        handler1 = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handler1 = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           semaphore.withPermit(blocker.await *> latch.countDown)
         }
 
@@ -83,6 +83,7 @@ class RebalanceIT extends BaseTest[Env] {
           bootstrapServers = kafka.bootstrapServers,
           clientId = "client-1",
           group = group,
+          initialTopics = Set(topic),
           eventLoopConfig = EventLoopConfig.Default.copy(
             rebalanceListener = new RebalanceListener[Any] {
               override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
@@ -101,10 +102,10 @@ class RebalanceIT extends BaseTest[Env] {
             producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(1)))
         }
 
-        handler2 = RecordHandler(topic) { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handler2 = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           latch.countDown
         }
-        config2 = RecordConsumerConfig(kafka.bootstrapServers, group, "client-2")
+        config2 = RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic), clientId = "client-2")
         consumer2 <- RecordConsumer.make(config2, handler2).use_ {
           latch.await
         }.fork
