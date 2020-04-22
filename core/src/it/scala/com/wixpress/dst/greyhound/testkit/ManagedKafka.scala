@@ -14,7 +14,7 @@ import zio.{RIO, RManaged}
 import scala.reflect.io.Directory
 
 trait ManagedKafka {
-  def bootstrapServers: Set[String]
+  def bootstrapServers: String
 
   def createTopic(config: TopicConfig): RIO[Blocking, Unit]
 }
@@ -28,8 +28,8 @@ object ManagedKafka {
   } yield new ManagedKafka {
     private val adminZkClient = kafka.dataPlaneRequestProcessor.adminZkClient
 
-    override val bootstrapServers: Set[String] =
-      Set(s"localhost:${config.kafkaPort}")
+    override val bootstrapServers: String =
+      s"localhost:${config.kafkaPort}"
 
     override def createTopic(config: TopicConfig): RIO[Blocking, Unit] = effectBlocking {
       adminZkClient.createTopic(config.name, config.partitions, config.replicationFactor, config.properties)

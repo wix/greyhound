@@ -69,13 +69,13 @@ object Producer {
   }
 }
 
-case class ProducerConfig(bootstrapServers: Set[String],
+case class ProducerConfig(bootstrapServers: String,
                           retryPolicy: ProducerRetryPolicy = ProducerRetryPolicy.Default,
                           extraProperties: Map[String, String] = Map.empty) {
 
   def properties: Properties = {
     val props = new Properties
-    props.setProperty(KafkaProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers.mkString(","))
+    props.setProperty(KafkaProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
     props.setProperty(KafkaProducerConfig.RETRIES_CONFIG, retryPolicy.retries.toString)
     props.setProperty(KafkaProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryPolicy.backoff.toMillis.toString)
     extraProperties.foreach {

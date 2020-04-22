@@ -95,7 +95,7 @@ case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState) {
 
 case class RecordConsumerTopology(subscriptions: Set[Topic])
 
-case class RecordConsumerConfig(bootstrapServers: Set[String],
+case class RecordConsumerConfig(bootstrapServers: String,
                                 group: Group,
                                 initialTopics: NonEmptySet[Topic],
                                 retryPolicy: Option[RetryPolicy] = None,

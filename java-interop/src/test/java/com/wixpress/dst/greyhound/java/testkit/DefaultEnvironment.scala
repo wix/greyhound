@@ -19,7 +19,7 @@ class DefaultEnvironment extends Environment {
 
     override def bootstrapServers: util.Set[String] = {
       val servers = new util.HashSet[String]()
-      servers.addAll(environment.kafka.bootstrapServers.asJava)
+      servers.addAll(environment.kafka.bootstrapServers.split(",").toSet.asJava)
       servers
     }
 
