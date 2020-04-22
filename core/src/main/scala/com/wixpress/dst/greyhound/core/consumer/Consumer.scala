@@ -13,6 +13,7 @@ import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
 
 import scala.collection.JavaConverters._
+import scala.util.Random
 
 trait Consumer[R] {
   def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[R with R1, Unit]
@@ -113,15 +114,15 @@ object Consumer {
 
 }
 
-case class ConsumerConfig(bootstrapServers: Set[String],
+case class ConsumerConfig(bootstrapServers: String,
                           groupId: Group,
-                          clientId: ClientId,
+                          clientId: ClientId = s"wix-consumer-${Random.alphanumeric.take(5).mkString}",
                           offsetReset: OffsetReset = OffsetReset.Latest,
                           extraProperties: Map[String, String] = Map.empty) {
 
   def properties: Properties = {
     val props = new Properties
-    props.setProperty(KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers.mkString(","))
+    props.setProperty(KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
     props.setProperty(KafkaConsumerConfig.GROUP_ID_CONFIG, groupId)
     props.setProperty(KafkaConsumerConfig.CLIENT_ID_CONFIG, clientId)
     props.setProperty(KafkaConsumerConfig.AUTO_OFFSET_RESET_CONFIG, offsetReset match {
