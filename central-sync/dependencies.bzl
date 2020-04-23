@@ -4,5 +4,5 @@ def graknlabs_bazel_distribution():
     git_repository(
         name = "graknlabs_bazel_distribution",
         remote = "https://github.com/natansil/bazel-distribution",
-        commit = "ac45096de78bd7f936a6f51fbc9cc8b957be68c4"
+        commit = "4d07cdbb4dfaf3059e14ab8815f15b036c1b8cf3"
     )
