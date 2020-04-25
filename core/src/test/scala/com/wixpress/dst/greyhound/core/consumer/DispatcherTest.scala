@@ -68,6 +68,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
       _ <- dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
       partitionsToResume1 <- dispatcher.resumeablePartitions(Set(topicPartition))
       _ <- queue.take *> queue.take
+      _ <- UIO(Thread.sleep(1))
       partitionsToResume2 <- dispatcher.resumeablePartitions(Set(topicPartition))
     } yield (partitionsToResume1 must beEmpty) and
       (partitionsToResume2 must equalTo(Set(TopicPartition(topic, partition))))
