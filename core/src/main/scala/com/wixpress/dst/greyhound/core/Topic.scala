@@ -2,8 +2,6 @@ package com.wixpress.dst.greyhound.core
 
 import java.util.Properties
 
-import zio.duration.Duration
-
 case class TopicConfig(name: Topic,
                        partitions: Int,
                        replicationFactor: Int,
