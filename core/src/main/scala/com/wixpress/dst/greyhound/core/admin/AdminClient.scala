@@ -3,8 +3,10 @@ package com.wixpress.dst.greyhound.core.admin
 import java.util.Properties
 import java.util.concurrent.TimeUnit.SECONDS
 
-import com.wixpress.dst.greyhound.core.TopicConfig
+import com.wixpress.dst.greyhound.core.{Topic, TopicConfig}
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import zio.blocking.{Blocking, effectBlocking}
 import zio.{RIO, RManaged, ZIO, ZManaged}
 
@@ -14,6 +16,14 @@ trait AdminClient {
   def createTopics(configs: Set[TopicConfig]): RIO[Blocking, Map[String, Option[Throwable]]]
 
   def numberOfBrokers: RIO[Blocking, Int]
+
+  def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]]
+}
+
+case class TopicPropertiesResult(partitions: Int, properties: Map[String, String])
+
+object TopicPropertiesResult {
+  def empty = TopicPropertiesResult(0, Map.empty)
 }
 
 object AdminClient {
@@ -39,12 +49,31 @@ object AdminClient {
               result.nodes().get(30, SECONDS)
             }.map(x => x.asScala.toSeq.size))
 
+
+        override def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
+          (describeConfigs(client, topics) zipPar describePartitions(client, topics)).map {
+            case (propertiesMap, partitionsMap) =>
+              partitionsMap.map { case (topic, partitions) =>
+                (topic, TopicPropertiesResult(partitions, propertiesMap.getOrElse(topic, Map.empty))) }
+          }
+
         private def toNewTopic(config: TopicConfig): NewTopic =
           new NewTopic(config.name, config.partitions, config.replicationFactor.toShort)
             .configs(config.propertiesMap.asJava)
       }
     }
   }
+
+  private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, Map[String, String]]] =
+    effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)).map(result =>
+      result.all().get(30, SECONDS).asScala.map { case (resource, config) =>
+        (resource.name, config.entries().asScala.map(entry => (entry.name -> entry.value)).toMap)
+      }.toMap)
+
+  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, Int]] =
+    effectBlocking(client.describeTopics(topics.asJavaCollection)).map(result =>
+      result.all().get(30, SECONDS).asScala.mapValues(_.partitions().size()).toMap)
+
 }
 
 case class AdminClientConfig(bootstrapServers: String,

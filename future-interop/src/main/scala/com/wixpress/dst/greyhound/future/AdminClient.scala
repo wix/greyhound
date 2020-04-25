@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.TopicConfig
-import com.wixpress.dst.greyhound.core.admin.{AdminClientConfig, AdminClient => AdminClientCore}
+import com.wixpress.dst.greyhound.core.{Topic, TopicConfig}
+import com.wixpress.dst.greyhound.core.admin.{AdminClientConfig, TopicPropertiesResult, AdminClient => AdminClientCore}
 import zio.ZIO
 import zio.blocking.Blocking
 
@@ -13,6 +13,8 @@ trait AdminClient {
   def createTopic(config: TopicConfig): Future[Unit]
 
   def numberOfBrokers: Future[Int]
+
+  def propertiesFor(topic: Topic): Future[TopicPropertiesResult]
 }
 
 object AdminClient {
@@ -38,6 +40,11 @@ object AdminClient {
       override def numberOfBrokers: Future[Int] =
         runtime.unsafeRunToFuture(
           AdminClientCore.make(config).use(_.numberOfBrokers))
+
+      override def propertiesFor(topic: Topic): Future[TopicPropertiesResult] =
+        runtime.unsafeRunToFuture(AdminClientCore.make(config).use { client =>
+          client.propertiesFor(Set(topic)).map(_.getOrElse(topic, TopicPropertiesResult.empty))
+        })
     })
   }
 }
