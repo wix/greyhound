@@ -13,7 +13,7 @@ import com.wixpress.dst.greyhound.core.testkit.{BaseTest, CountDownLatch}
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import zio.{console, _}
 import zio.blocking.Blocking
-import zio.clock.Clock
+import zio.clock.{Clock, sleep}
 import zio.console.Console
 import zio.duration._
 import zio.random.Random
@@ -52,7 +52,7 @@ class ConsumerIT extends BaseTest[Env] {
               .timeout(20.seconds)
               .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
         }
-        msgs <- ZIO.fromOption(messages)
+        msgs <- ZIO.fromOption(messages).mapError(_ => TimedOutWaitingForMessages)
       } yield "produce and consume a single message" in {
         msgs._1 must (beRecordWithKey("foo") and beRecordWithValue("bar")) and (
           msgs._2 must (beRecordWithKey("foo") and beRecordWithValue("BAR")))
@@ -132,7 +132,7 @@ class ConsumerIT extends BaseTest[Env] {
         startedHandling <- Promise.make[Nothing, Unit]
         handler: Handler[Clock] = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
           startedHandling.succeed(()) *>
-            clock.sleep(5.seconds) *>
+            sleep(5.seconds) *>
             ref.update(_ + 1)
         }
 
@@ -166,13 +166,53 @@ class ConsumerIT extends BaseTest[Env] {
         message.get must (beRecordWithKey("foo") and beRecordWithValue("bar"))
       }
 
+      val throttleWhileRebalancingTest = for {
+        _ <- console.putStrLn(">>>> starting test: throttleWhileRebalancingTest")
+        partitions = 50
+        topic <- createRandomTopic(partitions)
+        group <- randomGroup
+        probe <- Ref.make(Map.empty[Partition, Seq[Offset]])
+        messagesPerPartition = 500
+        handler = RecordHandler { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          sleep(10.millis) *>
+            probe.update(curr => curr + (record.partition -> (curr.getOrElse(record.partition, Nil) :+ record.offset)))
+        }
+
+        createConsumerTask = (i: Int) => makeConsumer(kafka, topic, group, handler, i)
+        test <- createConsumerTask(0).use_ {
+          val record = ProducerRecord(topic, Chunk.empty, partition = Some(0))
+          for {
+            _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
+              ZIO.foreachPar(0 until partitions) { p =>
+                producer.produce(record.copy(partition = Some(p)))
+              }
+            }
+            _ <- createConsumerTask(1).useForever.fork // rebalance
+            _ <- createConsumerTask(2).useForever.fork // rebalance
+            expected = (0 until partitions).map(p => (p, 0L until messagesPerPartition)).toMap
+            _ <- probe.get.flatMap(actual =>
+              if (actual != expected) ZIO.fail(errorMsg(actual, expected)) else UIO(actual))
+              .retry(Schedule.duration(60.seconds) && Schedule.spaced(1.second))
+          } yield "not lose messages while throttling after rebalance" in ok
+        }
+      } yield test
+
+
       all(
         earliestTest,
         simpleTest,
         throttlingTest,
+        throttleWhileRebalancingTest,
         pauseResumeTest,
-        gracefulShutdownTest)
+        gracefulShutdownTest
+      )
   }
+
+  private def makeConsumer(kafka: ManagedKafka, topic: String, group: String, handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
+    RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic), clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
+
+  private def errorMsg(offsets: Map[Partition, Seq[Offset]], expected: Map[Partition, Seq[Offset]]) =
+    s"expected $expected, got $offsets"
 
   private def fastConsumerMetadataFetching =
     Map("metadata.max.age.ms" -> "0")
@@ -220,3 +260,5 @@ object ConsumerIT {
   val randomId = ZIO.collectAll(List.fill(6)(randomAlphaLowerChar)).map(_.mkString)
   val randomGroup = randomId.map(id => s"group-$id")
 }
+
+object TimedOutWaitingForMessages extends RuntimeException

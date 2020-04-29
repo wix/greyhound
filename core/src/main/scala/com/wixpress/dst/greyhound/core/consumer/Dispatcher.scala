@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.{Group, Topic}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
@@ -31,6 +31,7 @@ object Dispatcher {
   type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
 
   def make[R](group: Group,
+              clientId: ClientId,
               handle: Record => URIO[R, Any],
               lowWatermark: Int,
               highWatermark: Int): UIO[Dispatcher[R with GreyhoundMetrics with Clock]] =
@@ -40,7 +41,7 @@ object Dispatcher {
     } yield new Dispatcher[R with GreyhoundMetrics with Clock] {
       override def submit(record: Record): URIO[R with GreyhoundMetrics with Clock, SubmitResult] =
         for {
-          _ <- Metrics.report(SubmittingRecord(record))
+          _ <- Metrics.report(SubmittingRecord(group, clientId, record))
           partition = TopicPartition(record)
           worker <- workerFor(partition)
           submitted <- worker.submit(record)
@@ -51,12 +52,13 @@ object Dispatcher {
           ZIO.foldLeft(paused)(Set.empty[TopicPartition]) { (acc, partition) =>
             workers.get(partition) match {
               case Some(worker) =>
-                worker.expose.map { tasks =>
-                  if (tasks.queuedTasks <= lowWatermark) acc + partition
-                  else acc
-                }
+                worker.expose
+                  .map { state =>
+                    if (state.queuedTasks <= lowWatermark) acc + partition
+                    else acc
+                  }
 
-              case None => ZIO.succeed(acc)
+              case None => ZIO.succeed(acc + partition)
             }
           }
         }
@@ -105,7 +107,7 @@ object Dispatcher {
           workers1.get(partition) match {
             case Some(worker) => ZIO.succeed(worker)
             case None => for {
-              _ <- Metrics.report(StartingWorker(partition))
+              _ <- Metrics.report(StartingWorker(group, clientId, partition))
               worker <- Worker.make(state, handleWithMetrics, highWatermark)
               _ <- workers.update(_ + (partition -> worker))
             } yield worker
@@ -113,16 +115,16 @@ object Dispatcher {
         }
 
       private def handleWithMetrics(record: Record) =
-        Metrics.report(HandlingRecord(record, System.currentTimeMillis() - record.pollTime, group)) *>
+        Metrics.report(HandlingRecord(group, clientId, record, System.currentTimeMillis() - record.pollTime)) *>
           handle(record).timed.flatMap {
             case (duration, _) =>
-              Metrics.report(RecordHandled(record, group, duration))
+              Metrics.report(RecordHandled(group, clientId, record, duration))
           }
 
       private def shutdown(workers: Iterable[(TopicPartition, Worker)]) =
         ZIO.foreachPar_(workers) {
           case (partition, worker) =>
-            Metrics.report(StoppingWorker(partition)) *>
+            Metrics.report(StoppingWorker(group, clientId, partition)) *>
               worker.shutdown
         }
     }
@@ -214,22 +216,22 @@ sealed trait DispatcherMetric extends GreyhoundMetric
 
 object DispatcherMetric {
 
-  case class StartingWorker(partition: TopicPartition) extends DispatcherMetric
+  case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
 
-  case class StoppingWorker(partition: TopicPartition) extends DispatcherMetric
+  case class StoppingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
 
-  case class SubmittingRecord[K, V](record: ConsumerRecord[K, V]) extends DispatcherMetric
+  case class SubmittingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V]) extends DispatcherMetric
 
-  case class HandlingRecord[K, V](record: ConsumerRecord[K, V], timeInQueue: Long, group: Group) extends DispatcherMetric
+  case class HandlingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], timeInQueue: Long) extends DispatcherMetric
 
-  case class RecordHandled[K, V](record: ConsumerRecord[K, V], group: Group, duration: Duration) extends DispatcherMetric
+  case class RecordHandled[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], duration: Duration) extends DispatcherMetric
 
 }
 
 case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState]) {
-  def totalQueuedTasksPerTopic: Map[Topic, Int] = workersState.groupBy(_._1.topic).map{case (topic, partitionStates) => (topic, partitionStates.map(_._2.queuedTasks).sum)}
+  def totalQueuedTasksPerTopic: Map[Topic, Int] = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.queuedTasks).sum) }
 
-  def maxTaskDuration = workersState.groupBy(_._1.topic).map{case (topic, partitionStates) => (topic, partitionStates.map(_._2.currentExecutionDuration.getOrElse(0L)).max)}
+  def maxTaskDuration = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.currentExecutionDuration.getOrElse(0L)).max) }
 
   def topics = workersState.groupBy(_._1.topic).keys
 }

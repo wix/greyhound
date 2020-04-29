@@ -2,11 +2,13 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
+import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, Topic}
+import com.wixpress.dst.greyhound.core._
 import zio.duration.Duration
 import zio.{RIO, UIO, ZIO}
+import scala.collection.JavaConverters._
 
 case class ReportingConsumer[R](clientId: ClientId, group: Group, internal: Consumer[R])
   extends Consumer[R with GreyhoundMetrics] {
@@ -33,8 +35,24 @@ case class ReportingConsumer[R](clientId: ClientId, group: Group, internal: Cons
       records <- internal.poll(timeout).tapError { error =>
         Metrics.report(PollingFailed(clientId, group, error))
       }
-      _ <- Metrics.report(PolledRecords(clientId, group, records)).as(records)
+      _ <- Metrics.report(PolledRecords(clientId, group, orderedPolledRecords(records))).as(records)
     } yield records
+
+  private def orderedPolledRecords(records: Records): OrderedOffsets = {
+    val recordsPerPartition = records.partitions.asScala.map { tp => (tp, records.records(tp)) }
+    val byTopic = recordsPerPartition.groupBy(_._1.topic)
+    val byPartition = byTopic.map { case (topic, recordsPerPartition) =>
+      (topic, recordsPerPartition.map { case (tp, records) => (tp.partition, records) })
+    }
+
+    val onlyOffsets = byPartition.mapValues(_.map { case (partition, records) => (partition, records.asScala.map(_.offset)) }
+      .toSeq.sortBy(_._1)
+    )
+      .toSeq
+      .sortBy(_._1)
+
+    onlyOffsets
+  }
 
   override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[R with GreyhoundMetrics, Unit] =
     ZIO.when(offsets.nonEmpty) {
@@ -66,6 +84,10 @@ case class ReportingConsumer[R](clientId: ClientId, group: Group, internal: Cons
         Metrics.report(SeekToOffsetFailed(clientId, group, error, partition, offset))
       }
 
+}
+
+object ReportingConsumer {
+  type OrderedOffsets = Seq[(Topic, Seq[(Partition, Seq[Offset])])]
 }
 
 sealed trait ConsumerMetric extends GreyhoundMetric {
@@ -102,6 +124,6 @@ object ConsumerMetric {
 
   case class SeekToOffsetFailed(clientId: ClientId, group: Group, error: IllegalStateException, partition: TopicPartition, offset: Offset) extends ConsumerMetric
 
-  case class PolledRecords(clientId: ClientId, group: Group, records: Consumer.Records) extends ConsumerMetric
+  case class PolledRecords(clientId: ClientId, group: Group, records: OrderedOffsets) extends ConsumerMetric
 
 }

@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.{time, util}
 import java.util.Properties
+import java.util.concurrent.{Executors, ThreadPoolExecutor}
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, Topic}
@@ -9,8 +10,9 @@ import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, ConsumerRec
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
-import zio.blocking.{Blocking, effectBlocking}
+import zio.blocking.{Blocking, blocking, effectBlocking}
 import zio.duration.Duration
+import zio.internal.Executor
 
 import scala.collection.JavaConverters._
 import scala.util.Random
@@ -40,7 +42,9 @@ object Consumer {
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
     override def configure(configs: util.Map[Topic, _], isKey: Boolean): Unit = ()
+
     override def deserialize(topic: Topic, data: Array[Byte]): Chunk[Byte] = Chunk.fromArray(data)
+
     override def close(): Unit = ()
   }
 
@@ -50,7 +54,7 @@ object Consumer {
   } yield new Consumer[Blocking] {
 
     override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-    for {
+      for {
         runtime <- ZIO.runtime[Blocking with R1]
         consumerRebalanceListener = new ConsumerRebalanceListener {
           override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
@@ -78,7 +82,10 @@ object Consumer {
       }
 
     override def resume(partitions: Set[TopicPartition]): ZIO[Blocking, IllegalStateException, Unit] =
-      withConsumer(_.resume(kafkaPartitions(partitions))).refineOrDie {
+      withConsumer(consumer => {
+        val onlySubscribed = consumer.assignment().asScala.toSet intersect kafkaPartitions(partitions).asScala.toSet
+        consumer.resume(onlySubscribed.asJavaCollection)
+      }).refineOrDie {
         case e: IllegalStateException => e
       }
 
@@ -136,11 +143,15 @@ case class ConsumerConfig(bootstrapServers: String,
     }
     props
   }
-  
+
 }
 
 sealed trait OffsetReset
+
 object OffsetReset {
+
   case object Earliest extends OffsetReset
+
   case object Latest extends OffsetReset
+
 }
