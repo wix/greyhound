@@ -44,7 +44,8 @@ object RecordConsumer {
         initialTopics = allInitiallySubscribedTopics,
         consumer = ReportingConsumer(config.clientId, config.group, consumer),
         handler = handlerWithRetries,
-        config = config.eventLoopConfig)
+        config = config.eventLoopConfig,
+        clientId = config.clientId)
     } yield new RecordConsumer[R with Env] {
       override def pause: URIO[R with Env, Unit] =
         eventLoop.pause
@@ -69,6 +70,7 @@ object RecordConsumer {
           _ <- consumer.subscribe[R1](topics, listener *> new RebalanceListener[R1] {
             override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
               ZIO.unit
+            //todo: we need to call EventLoop's listener here! otherwise we don't stop fibers on resubscribe
 
             override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] =
               promise.succeed(partitions)

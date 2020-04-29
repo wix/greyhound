@@ -23,7 +23,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
   "handle submitted records" in {
     for {
       promise <- Promise.make[Nothing, Record]
-      dispatcher <- Dispatcher.make("group", promise.succeed, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group","clientId",  promise.succeed, lowWatermark, highWatermark)
       _ <- dispatcher.submit(record)
       handled <- promise.await
     } yield handled must equalTo(record)
@@ -37,7 +37,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
       slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
         clock.sleep(1.second) *> latch.countDown
       }
-      dispatcher <- Dispatcher.make("group", slowHandler, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark)
       _ <- ZIO.foreach(0 until partitions) { partition =>
         dispatcher.submit(record.copy(partition = partition))
       }
@@ -48,7 +48,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
 
   "reject records when high watermark is reached" in {
     for {
-      dispatcher <- Dispatcher.make("group", _ => ZIO.never, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group","clientId",  _ => ZIO.never, lowWatermark, highWatermark)
       _ <- dispatcher.submit(record.copy(offset = 0L)) // Will be polled
       _ <- dispatcher.submit(record.copy(offset = 1L))
       _ <- dispatcher.submit(record.copy(offset = 2L))
@@ -61,7 +61,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
   "resume paused partitions" in {
     for {
       queue <- Queue.bounded[Record](1)
-      dispatcher <- Dispatcher.make("group", queue.offer, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", queue.offer, lowWatermark, highWatermark)
       _ <- ZIO.foreach(0 to (highWatermark + 1)) { offset =>
         dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
       }
@@ -77,7 +77,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
   "pause handling" in {
     for {
       ref <- Ref.make(0)
-      dispatcher <- Dispatcher.make("group", _ => ref.update(_ + 1), lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", _ => ref.update(_ + 1), lowWatermark, highWatermark)
       _ <- dispatcher.pause
       _ <- dispatcher.submit(record) // Will be queued
       invocations <- ref.get
@@ -93,7 +93,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
           ref.update(_ + 1) *>
           promise.succeed(())
       }
-      dispatcher <- Dispatcher.make("group", handler, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark)
       _ <- dispatcher.submit(record) // Hill be handled
       _ <- dispatcher.pause
       _ <- dispatcher.submit(record) // Will be queued
@@ -110,7 +110,7 @@ class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
       handler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
         ref.update(_ + 1) *> promise.succeed(())
       }
-      dispatcher <- Dispatcher.make("group", handler, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark)
       _ <- dispatcher.pause
       _ <- dispatcher.submit(record)
       _ <- dispatcher.resume
