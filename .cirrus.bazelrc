@@ -2,6 +2,8 @@ build --strategy=Scalac=worker
 build --jobs=2
 build --bes_results_url=https://app.buildbuddy.io/invocation/
 build --bes_backend=grpc://events.buildbuddy.io:1985
+build --remote_cache=grpc://cache.buildbuddy.io:1985
+build --noremote_upload_local_results
 
 # Shows errors clearly
 test:ut-only --test_output=errors
