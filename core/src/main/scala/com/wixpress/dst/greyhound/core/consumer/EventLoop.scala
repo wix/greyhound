@@ -29,7 +29,7 @@ object EventLoop {
                    clientId: ClientId,
                    config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Env, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
     val start = for {
-      _ <- report(StartingEventLoop)
+      _ <- report(StartingEventLoop(clientId, group))
       offsets <- Offsets.make
       handle = handler.andThen(offsets.update).handle(_)
       dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark)
@@ -55,7 +55,7 @@ object EventLoop {
                 pausedPartitionsRef.set(Set.empty) *>
                   config.rebalanceListener.onPartitionsRevoked(partitions) *>
                   dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
-                    ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded))
+                    ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
                   }
               }
             } *> commitOffsets(consumer, offsets, calledOnRebalance = true)
@@ -71,20 +71,20 @@ object EventLoop {
 
     start.toManaged {
       case (dispatcher, fiber, offsets, running) => for {
-        _ <- report(StoppingEventLoop)
+        _ <- report(StoppingEventLoop(clientId, group))
         _ <- running.set(false)
         drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
-        _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded))
+        _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
         _ <- commitOffsets(consumer, offsets)
       } yield ()
     }.map {
       case (dispatcher, fiber, _, _) =>
         new EventLoop[R2 with GreyhoundMetrics with Clock] {
           override def pause: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
-            report(PausingEventLoop) *> dispatcher.pause
+            report(PausingEventLoop(clientId, group)) *> dispatcher.pause
 
           override def resume: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
-            report(ResumingEventLoop) *> dispatcher.resume
+            report(ResumingEventLoop(clientId, group)) *> dispatcher.resume
 
           override def isAlive: UIO[Boolean] = fiber.poll.map {
             case Some(Exit.Failure(_)) => false
@@ -187,15 +187,15 @@ sealed trait EventLoopMetric extends GreyhoundMetric
 
 object EventLoopMetric {
 
-  case object StartingEventLoop extends EventLoopMetric
+  case class StartingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
 
-  case object PausingEventLoop extends EventLoopMetric
+  case class PausingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
 
-  case object ResumingEventLoop extends EventLoopMetric
+  case class ResumingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
 
-  case object StoppingEventLoop extends EventLoopMetric
+  case class StoppingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
 
-  case object DrainTimeoutExceeded extends EventLoopMetric
+  case class DrainTimeoutExceeded(clientId: ClientId, group: Group) extends EventLoopMetric
 
   case class HighWatermarkReached(partition: TopicPartition, onOffset: Offset) extends EventLoopMetric
 
