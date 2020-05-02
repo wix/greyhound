@@ -78,6 +78,7 @@ case class ProducerConfig(bootstrapServers: String,
     props.setProperty(KafkaProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
     props.setProperty(KafkaProducerConfig.RETRIES_CONFIG, retryPolicy.retries.toString)
     props.setProperty(KafkaProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryPolicy.backoff.toMillis.toString)
+    props.setProperty(KafkaProducerConfig.ACKS_CONFIG, "all")
     extraProperties.foreach {
       case (key, value) =>
         props.setProperty(key, value)
