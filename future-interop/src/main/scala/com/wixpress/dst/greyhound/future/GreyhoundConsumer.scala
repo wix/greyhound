@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, OffsetReset, SerializationError, RecordHandler => CoreRecordHandler}
-import com.wixpress.dst.greyhound.core.{Deserializer, Group, NonEmptySet}
+import com.wixpress.dst.greyhound.core.{ClientId, Deserializer, Group, NonEmptySet}
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handle
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Chunk, Task, ZIO}
@@ -11,6 +11,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
                                    group: Group,
+                                   clientId: ClientId,
                                    handle: Handle[K, V],
                                    keyDeserializer: Deserializer[K],
                                    valueDeserializer: Deserializer[V],

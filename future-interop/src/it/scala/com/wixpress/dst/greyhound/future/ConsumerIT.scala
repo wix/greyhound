@@ -44,6 +44,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
         GreyhoundConsumer(
           initialTopics = Set(topic),
           group = "group-1",
+          clientId = "client-id-1",
           handle = aRecordHandler {
             new RecordHandler[Int, String] {
               override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
@@ -78,6 +79,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
         GreyhoundConsumer(
           initialTopics = Set(topic),
           group = "group-2",
+          clientId = "client-id-0",
           handle = aContextAwareRecordHandler(Context.Decoder) {
             new ContextAwareRecordHandler[Int, String, Context] {
               override def handle(record: ConsumerRecord[Int, String])(implicit context: Context, ec: ExecutionContext): Future[Any] =
@@ -120,6 +122,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
         GreyhoundConsumer(
           initialTopics = Set(topic),
           group = "group-3",
+          clientId = "client-id-3",
           handle = aRecordHandler {
             new RecordHandler[Int, String] {
               override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
@@ -135,8 +138,8 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     } yield metrics.toList
 
     recordedMetrics must
-      (contain[GreyhoundMetric](StartingEventLoop) and
-        contain[GreyhoundMetric](StoppingEventLoop)).awaitFor(1.minute)
+      (contain[GreyhoundMetric](StartingEventLoop("client-id-3", "group-3")) and
+        contain[GreyhoundMetric](StoppingEventLoop("client-id-3", "group-3"))).awaitFor(1.minute)
   }
 
   "handle errors" in new Ctx {
@@ -148,6 +151,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
         GreyhoundConsumer(
           initialTopics = Set(topic),
           group = "group-2",
+          clientId = "client-id-2",
           handle = aRecordHandler {
             new RecordHandler[Partition, String] {
               override def handle(record: ConsumerRecord[Partition, String])(implicit ec: ExecutionContext): Future[Any] =
