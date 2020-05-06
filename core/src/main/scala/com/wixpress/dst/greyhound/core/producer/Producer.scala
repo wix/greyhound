@@ -1,7 +1,6 @@
 package com.wixpress.dst.greyhound.core.producer
 
 import java.util.Properties
-
 import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerConfig => KafkaProducerConfig, ProducerRecord => KafkaProducerRecord, RecordMetadata => KafkaRecordMetadata}
 import org.apache.kafka.common.header.Header
