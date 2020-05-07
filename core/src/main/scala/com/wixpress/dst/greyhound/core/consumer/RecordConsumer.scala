@@ -1,9 +1,12 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.metrics.Metrics.report
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
-import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
+import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -70,6 +73,7 @@ object RecordConsumer {
           _ <- consumer.subscribe[R1](topics, listener *> new RebalanceListener[R1] {
             override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
               ZIO.unit
+
             //todo: we need to call EventLoop's listener here! otherwise we don't stop fibers on resubscribe
 
             override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] =
@@ -87,8 +91,21 @@ object RecordConsumer {
         Producer.make[Clock](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(ReportingProducer(_))
           .map(producer => RetryRecordHandler.withRetries(handler, policy, producer))
       case None =>
-        ZManaged.succeed(handler.withErrorHandler((_, _) => ZIO.unit)) //todo: report uncaught handler errors?
+        ZManaged.succeed(handler.withErrorHandler((e, record) =>
+          report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))
     }
+}
+
+sealed trait RecordConsumerMetric extends GreyhoundMetric {
+  def group: Group
+
+  def clientId: ClientId
+}
+
+object RecordConsumerMetric {
+
+  case class UncaughtHandlerError[E](error: E, topic: Topic, partition: Partition, offset: Offset, group: Group, clientId: ClientId) extends RecordConsumerMetric
+
 }
 
 case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState) {

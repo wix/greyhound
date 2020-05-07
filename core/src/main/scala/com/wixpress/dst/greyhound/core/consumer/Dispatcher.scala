@@ -1,11 +1,12 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
+import com.wixpress.dst.greyhound.core.metrics.Metrics.report
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
 import zio.clock.Clock
 import zio.duration.Duration
@@ -41,7 +42,7 @@ object Dispatcher {
     } yield new Dispatcher[R with GreyhoundMetrics with Clock] {
       override def submit(record: Record): URIO[R with GreyhoundMetrics with Clock, SubmitResult] =
         for {
-          _ <- Metrics.report(SubmittingRecord(group, clientId, record))
+          _ <- report(SubmittingRecord(group, clientId, record))
           partition = TopicPartition(record)
           worker <- workerFor(partition)
           submitted <- worker.submit(record)
@@ -107,24 +108,24 @@ object Dispatcher {
           workers1.get(partition) match {
             case Some(worker) => ZIO.succeed(worker)
             case None => for {
-              _ <- Metrics.report(StartingWorker(group, clientId, partition))
-              worker <- Worker.make(state, handleWithMetrics, highWatermark)
+              _ <- report(StartingWorker(group, clientId, partition))
+              worker <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition)
               _ <- workers.update(_ + (partition -> worker))
             } yield worker
           }
         }
 
       private def handleWithMetrics(record: Record) =
-        Metrics.report(HandlingRecord(group, clientId, record, System.currentTimeMillis() - record.pollTime)) *>
+        report(HandlingRecord(group, clientId, record, System.currentTimeMillis() - record.pollTime)) *>
           handle(record).timed.flatMap {
             case (duration, _) =>
-              Metrics.report(RecordHandled(group, clientId, record, duration))
+              report(RecordHandled(group, clientId, record, duration))
           }
 
       private def shutdown(workers: Iterable[(TopicPartition, Worker)]) =
         ZIO.foreachPar_(workers) {
           case (partition, worker) =>
-            Metrics.report(StoppingWorker(group, clientId, partition)) *>
+            report(StoppingWorker(group, clientId, partition)) *>
               worker.shutdown
         }
     }
@@ -154,10 +155,13 @@ object Dispatcher {
   object Worker {
     def make[R](status: Ref[State],
                 handle: Record => URIO[R, Any],
-                capacity: Int): URIO[R, Worker] = for {
+                capacity: Int,
+                group: Group,
+                clientId: ClientId,
+                partition: TopicPartition): URIO[R with GreyhoundMetrics, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
       internalState <- Ref.make(WorkerInternalState.empty)
-      fiber <- loop(status, internalState, handle, queue).interruptible.fork
+      fiber <- loop(status, internalState, handle, queue, group, clientId, partition).interruptible.fork
     } yield new Worker {
       override def submit(record: Record): UIO[Boolean] =
         queue.offer(record)
@@ -175,16 +179,22 @@ object Dispatcher {
     private def loop[R](state: Ref[State],
                         internalState: Ref[WorkerInternalState],
                         handle: Record => URIO[R, Any],
-                        queue: Queue[Record]): URIO[R, Unit] =
+                        queue: Queue[Record],
+                        group: Group,
+                        clientId: ClientId,
+                        partition: TopicPartition): URIO[R with GreyhoundMetrics, Unit] =
       internalState.update(_.cleared) *>
         state.get.flatMap {
           case State.Running => queue.take.flatMap { record =>
-            internalState.update(_.started) *>
-              handle(record).uninterruptible *> loop(state, internalState, handle, queue)
+            report(TookRecordFromQueue(record, group, clientId)) *>
+              internalState.update(_.started) *>
+              handle(record).uninterruptible *>
+              loop(state, internalState, handle, queue, group, clientId, partition)
           }
 
           case State.Paused(resume) =>
-            resume.await *> loop(state, internalState, handle, queue)
+            report(WorkerWaitingForResume(group, clientId, partition)) *>
+            resume.await *> loop(state, internalState, handle, queue, group, clientId, partition)
 
           case State.ShuttingDown => ZIO.unit
         }
@@ -225,6 +235,10 @@ object DispatcherMetric {
   case class HandlingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], timeInQueue: Long) extends DispatcherMetric
 
   case class RecordHandled[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], duration: Duration) extends DispatcherMetric
+
+  case class TookRecordFromQueue(record: Record, group: Group, clientId: ClientId) extends DispatcherMetric
+
+  case class WorkerWaitingForResume(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
 
 }
 
