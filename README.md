@@ -17,7 +17,7 @@ semantics such as parallel message handling or retry policies with ease.
 ### Available APIs:
  * ZIO based API
  * Scala Futures
- * Java.
+ * Java
 
 ### Greyhound main features:
 
