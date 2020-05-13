@@ -4,5 +4,5 @@ load("@wix_oss_infra//:macros.bzl", "resources")
 
 resources(
     name = "resources",
-    testonly = 1
+    testonly = 1,
 )

@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "deploy_maven", "assemble_maven")
+load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "assemble_maven", "deploy_maven")
 
 scala_library(
     name = "greyhound-java",
@@ -16,24 +16,37 @@ scala_library(
     ],
 )
 
-
 assemble_maven(
     name = "assemble-maven",
-    target = "//java-interop:greyhound-java",
+    developers = {
+        "1": [
+            "name=Natan Silnitsky",
+            "email=natans@wix.com",
+            "organization=Wix",
+        ],
+        "2": [
+            "name=Noam Berman",
+            "email=noambe@wix.com",
+            "organization=Wix",
+        ],
+        "3": [
+            "name=Dmitry Karlinsky",
+            "email=dmitryka@wix.com",
+            "organization=Wix",
+        ],
+    },
+    license = "MIT",
     package = "{maven_packages}",
-    project_name = "Greyhound Java",
     project_description = "Greyhound - Rich Kafka Client with Java API",
+    project_name = "Greyhound Java",
     project_url = "https://github.com/wix/greyhound",
     scm_url = "https://github.com/wix/greyhound.git",
+    target = "//java-interop:greyhound-java",
     version_file = "//central-sync:VERSION",
-    developers = {"1": ["name=Natan Silnitsky", "email=natans@wix.com", "organization=Wix"],
-                  "2": ["name=Noam Berman", "email=noambe@wix.com", "organization=Wix"],
-                  "3": ["name=Dmitry Karlinsky", "email=dmitryka@wix.com", "organization=Wix"]},
-    license = "MIT"
 )
 
 deploy_maven(
     name = "deploy-maven",
+    deployment_properties = "//central-sync:deployment.properties",
     target = ":assemble-maven",
-    deployment_properties = "//central-sync:deployment.properties"
 )
