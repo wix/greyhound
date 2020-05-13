@@ -9,10 +9,10 @@ java_library(
         ":sources",
     ],
     deps = [
-        "//java-interop/src/test/java/com/wixpress/dst/greyhound/java/testkit",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
-        "@org_apache_kafka_kafka_clients",
+        "//java-interop/src/test/java/com/wixpress/dst/greyhound/java/testkit",
         "@junit_junit",
+        "@org_apache_kafka_kafka_clients",
     ],
 )
 
