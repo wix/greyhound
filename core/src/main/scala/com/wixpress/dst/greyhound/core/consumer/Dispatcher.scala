@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
+import com.wixpress.dst.greyhound.core.consumer.Dispatcher.{Record, State}
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
 import zio.clock.Clock
 import zio.duration.Duration
-
+import zio.duration._
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R, SubmitResult]
 
@@ -65,9 +65,11 @@ object Dispatcher {
         }
 
       override def expose: URIO[R with GreyhoundMetrics with Clock, DispatcherExposedState] =
-        workers.get.flatMap(workers =>
-          ZIO.foreach(workers) { case (tp, worker) => worker.expose.map(pending => (tp, pending)) }.map(_.toMap)
-        ).map(DispatcherExposedState.apply)
+        for {
+          dispatcherState <- state.get
+          workers <- workers.get
+          workersState <- ZIO.foreach(workers) { case (tp, worker) => worker.expose.map(pending => (tp, pending)) }.map(_.toMap)
+        } yield DispatcherExposedState(workersState, dispatcherState)
 
       override def revoke(partitions: Set[TopicPartition]): URIO[R with GreyhoundMetrics with Clock, Unit] =
         workers.modify { workers =>
@@ -158,7 +160,7 @@ object Dispatcher {
                 capacity: Int,
                 group: Group,
                 clientId: ClientId,
-                partition: TopicPartition): URIO[R with GreyhoundMetrics, Worker] = for {
+                partition: TopicPartition): URIO[R with GreyhoundMetrics with Clock, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
       internalState <- Ref.make(WorkerInternalState.empty)
       fiber <- loop(status, internalState, handle, queue, group, clientId, partition).interruptible.fork
@@ -182,7 +184,7 @@ object Dispatcher {
                         queue: Queue[Record],
                         group: Group,
                         clientId: ClientId,
-                        partition: TopicPartition): URIO[R with GreyhoundMetrics, Unit] =
+                        partition: TopicPartition): URIO[R with GreyhoundMetrics with Clock, Unit] =
       internalState.update(_.cleared) *>
         state.get.flatMap {
           case State.Running => queue.take.flatMap { record =>
@@ -191,10 +193,9 @@ object Dispatcher {
               handle(record).uninterruptible *>
               loop(state, internalState, handle, queue, group, clientId, partition)
           }
-
           case State.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition)) *>
-            resume.await *> loop(state, internalState, handle, queue, group, clientId, partition)
+              resume.await.timeout(30.seconds) *> loop(state, internalState, handle, queue, group, clientId, partition)
 
           case State.ShuttingDown => ZIO.unit
         }
@@ -242,7 +243,7 @@ object DispatcherMetric {
 
 }
 
-case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState]) {
+case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState], state: Dispatcher.State) {
   def totalQueuedTasksPerTopic: Map[Topic, Int] = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.queuedTasks).sum) }
 
   def maxTaskDuration = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.currentExecutionDuration.getOrElse(0L)).max) }
@@ -253,5 +254,5 @@ case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExpose
 case class WorkerExposedState(queuedTasks: Int, currentExecutionDuration: Option[Long])
 
 object DispatcherExposedState {
-  def empty = DispatcherExposedState(Map.empty)
+  def empty(state: Dispatcher.State) = DispatcherExposedState(Map.empty, state)
 }
