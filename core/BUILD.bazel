@@ -39,7 +39,7 @@ assemble_maven(
             "organization=Wix",
         ],
     },
-    license = "MIT",
+    license = "mit",
     package = "{maven_packages}",
     project_description = "Greyhound - Rich Kafka Client with ZIO API",
     project_name = "Greyhound Core",

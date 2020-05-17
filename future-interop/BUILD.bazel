@@ -33,7 +33,7 @@ assemble_maven(
             "organization=Wix",
         ],
     },
-    license = "MIT",
+    license = "mit",
     package = "{maven_packages}",
     project_description = "Greyhound - Rich Kafka Client with Scala Future API",
     project_name = "Greyhound Future",
