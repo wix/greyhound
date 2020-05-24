@@ -65,7 +65,8 @@ object EventLoop {
               partitionsAssigned.succeed(())
         })
       running <- Ref.make(true)
-      fiber <- loop(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group).fork
+      fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group)
+        .doWhile(_ == true).fork
       _ <- partitionsAssigned.await
     } yield (dispatcher, fiber, offsets, running)
 
@@ -96,23 +97,23 @@ object EventLoop {
     }
   }
 
-  private def loop[R1, R2](running: Ref[Boolean],
-                           consumer: Consumer[R1],
-                           dispatcher: Dispatcher[R2],
-                           paused: Ref[Set[TopicPartition]],
-                           offsets: Offsets,
-                           config: EventLoopConfig,
-                           clientId: ClientId,
-                           group: Group): URIO[R1 with R2 with GreyhoundMetrics, Unit] =
+  private def pollOnce[R1, R2](running: Ref[Boolean],
+                               consumer: Consumer[R1],
+                               dispatcher: Dispatcher[R2],
+                               paused: Ref[Set[TopicPartition]],
+                               offsets: Offsets,
+                               config: EventLoopConfig,
+                               clientId: ClientId,
+                               group: Group): URIO[R1 with R2 with GreyhoundMetrics, Boolean] =
     running.get.flatMap {
-      case true => for {
-        _ <- resumePartitions(consumer, clientId, group, dispatcher, paused)
-        _ <- pollAndHandle(consumer, dispatcher, paused, config, clientId)
-        _ <- commitOffsets(consumer, offsets)
-        result <- loop(running, consumer, dispatcher, paused, offsets, config, clientId, group)
-      } yield result
+      case true =>
+        for {
+          _ <- resumePartitions(consumer, clientId, group, dispatcher, paused)
+          _ <- pollAndHandle(consumer, dispatcher, paused, config, clientId)
+          _ <- commitOffsets(consumer, offsets)
+        } yield true
 
-      case false => ZIO.unit
+      case false => UIO(false)
     }
 
   private def resumePartitions[R1, R2](consumer: Consumer[R1],
