@@ -11,6 +11,7 @@ import zio._
 import zio.clock.Clock
 import zio.duration.Duration
 import zio.duration._
+
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R, SubmitResult]
 
@@ -163,7 +164,9 @@ object Dispatcher {
                 partition: TopicPartition): URIO[R with GreyhoundMetrics with Clock, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
       internalState <- Ref.make(WorkerInternalState.empty)
-      fiber <- loop(status, internalState, handle, queue, group, clientId, partition).interruptible.fork
+      fiber <-
+        pollOnce(status, internalState, handle, queue, group, clientId, partition)
+          .interruptible.doWhile(_ == true).fork
     } yield new Worker {
       override def submit(record: Record): UIO[Boolean] =
         queue.offer(record)
@@ -178,26 +181,27 @@ object Dispatcher {
         fiber.interrupt.unit
     }
 
-    private def loop[R](state: Ref[State],
-                        internalState: Ref[WorkerInternalState],
-                        handle: Record => URIO[R, Any],
-                        queue: Queue[Record],
-                        group: Group,
-                        clientId: ClientId,
-                        partition: TopicPartition): URIO[R with GreyhoundMetrics with Clock, Unit] =
+    private def pollOnce[R](state: Ref[State],
+                            internalState: Ref[WorkerInternalState],
+                            handle: Record => URIO[R, Any],
+                            queue: Queue[Record],
+                            group: Group,
+                            clientId: ClientId,
+                            partition: TopicPartition): URIO[R with GreyhoundMetrics with Clock, Boolean] =
       internalState.update(_.cleared) *>
         state.get.flatMap {
           case State.Running => queue.take.flatMap { record =>
             report(TookRecordFromQueue(record, group, clientId)) *>
               internalState.update(_.started) *>
-              handle(record).uninterruptible *>
-              loop(state, internalState, handle, queue, group, clientId, partition)
+              handle(record).uninterruptible
+                .as(true)
           }
           case State.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition)) *>
-              resume.await.timeout(30.seconds) *> loop(state, internalState, handle, queue, group, clientId, partition)
-
-          case State.ShuttingDown => ZIO.unit
+              resume.await.timeout(30.seconds)
+                .as(true)
+          case State.ShuttingDown =>
+            UIO(false)
         }
   }
 
