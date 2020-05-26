@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import java.util.concurrent.Executors
 
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.console.Console
@@ -36,11 +36,8 @@ object GreyhoundRuntime {
 }
 
 case class GreyhoundRuntimeBuilder(metricsReporter: GreyhoundMetrics.Service = GreyhoundMetrics.Service.Live) {
-  def withGreyhoundMetrics(reporter: GreyhoundMetrics.Service): GreyhoundRuntimeBuilder =
+  def withMetricsReporter(reporter: GreyhoundMetrics.Service): GreyhoundRuntimeBuilder =
     copy(metricsReporter = reporter)
-
-  def withMetricsReporter(report: GreyhoundMetric => Unit): GreyhoundRuntimeBuilder =
-    copy(metricsReporter = GreyhoundMetrics.fromReporter(report))
 
   def build: GreyhoundRuntime =
     new GreyhoundRuntime {
