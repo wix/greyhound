@@ -2,54 +2,48 @@ package com.wixpress.dst.greyhound.future
 
 import java.util.concurrent.Executors
 
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
-import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.console.Console
-import zio.internal.{Platform, PlatformLive}
+import zio.internal.Platform
 import zio.random.Random
 import zio.system.System
-import zio.{Runtime, ZEnv, ZIO}
+import zio.{Has, Runtime}
 
 import scala.concurrent.ExecutionContext
 
-trait GreyhoundRuntime extends Runtime[ZEnv with GreyhoundMetrics] {
-  override val platform: Platform = PlatformLive.Default
+trait GreyhoundRuntime extends Runtime[GreyhoundRuntime.Env] {
+  override val platform: Platform = Platform.default
 }
 
 object GreyhoundRuntime {
   implicit val executionContext = ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
+
+  type ZEnv = Clock with Console with System with Random with Blocking
+
+  val zenv = Has.allOf(
+    Clock.Service.live,
+    Console.Service.live,
+    System.Service.live,
+    Random.Service.live,
+    Blocking.Service.live
+  )
 
   type Env = ZEnv with GreyhoundMetrics
 
   val Live = GreyhoundRuntimeBuilder().build
 }
 
-case class GreyhoundRuntimeBuilder(metricsReporter: GreyhoundMetrics = GreyhoundMetric.Live) {
-  def withMetricsReporter(reporter: GreyhoundMetrics): GreyhoundRuntimeBuilder =
+case class GreyhoundRuntimeBuilder(metricsReporter: GreyhoundMetrics.Service = GreyhoundMetrics.Service.Live) {
+  def withGreyhoundMetrics(reporter: GreyhoundMetrics.Service): GreyhoundRuntimeBuilder =
     copy(metricsReporter = reporter)
 
   def withMetricsReporter(report: GreyhoundMetric => Unit): GreyhoundRuntimeBuilder =
-    withMetricsReporter {
-      new GreyhoundMetrics {
-        override val metrics: Metrics.Service[GreyhoundMetric] =
-          (metric: GreyhoundMetric) => ZIO.effectTotal(report(metric))
-      }
-    }
+    copy(metricsReporter = GreyhoundMetrics.fromReporter(report))
 
   def build: GreyhoundRuntime =
     new GreyhoundRuntime {
-      override val environment: Env =
-        new Clock.Live
-          with Console.Live
-          with System.Live
-          with Random.Live
-          with Blocking.Live
-          with GreyhoundMetrics {
-          override val metrics: Metrics.Service[GreyhoundMetric] =
-            metricsReporter.metrics
-        }
+      override val environment = GreyhoundRuntime.zenv ++ Has(metricsReporter)
     }
 }

@@ -14,7 +14,7 @@ object CountDownLatch {
     ref <- Ref.make(count)
   } yield new CountDownLatch {
     override def countDown: UIO[Unit] =
-      ref.update(_ - 1).flatMap {
+      ref.updateAndGet(_ - 1).flatMap {
         case 0 => ready.succeed(()).unit
         case _ => ZIO.unit
       }

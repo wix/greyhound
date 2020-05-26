@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.Serializer
+import com.wixpress.dst.greyhound.core.ZManagedSyntax._
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Exit, ZIO}

@@ -3,9 +3,8 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.{Record, State}
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.Metrics.report
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
 import zio.clock.Clock
@@ -81,7 +80,7 @@ object Dispatcher {
                 case None => (revoked, remaining)
               }
           }
-        }.flatMap(shutdown)
+        }.flatMap(shutdownWorkers)
 
       override def pause: UIO[Unit] = for {
         resume <- Promise.make[Nothing, Unit]
@@ -100,7 +99,7 @@ object Dispatcher {
         state.modify(state => (state, State.ShuttingDown)).flatMap {
           case State.Paused(resume) => resume.succeed(()).unit
           case _ => ZIO.unit
-        } *> workers.get.flatMap(shutdown)
+        } *> workers.get.flatMap(shutdownWorkers)
 
       /**
        * This implementation is not fiber-safe. Since the worker is used per partition,
@@ -125,7 +124,7 @@ object Dispatcher {
               report(RecordHandled(group, clientId, record, duration))
           }
 
-      private def shutdown(workers: Iterable[(TopicPartition, Worker)]) =
+      private def shutdownWorkers(workers: Iterable[(TopicPartition, Worker)]) =
         ZIO.foreachPar_(workers) {
           case (partition, worker) =>
             report(StoppingWorker(group, clientId, partition)) *>
@@ -166,7 +165,7 @@ object Dispatcher {
       internalState <- Ref.make(WorkerInternalState.empty)
       fiber <-
         pollOnce(status, internalState, handle, queue, group, clientId, partition)
-          .interruptible.doWhile(_ == true).fork
+          .interruptible.doWhile(_ == true).forkDaemon
     } yield new Worker {
       override def submit(record: Record): UIO[Boolean] =
         queue.offer(record)
