@@ -16,7 +16,7 @@ import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import org.specs2.concurrent.ExecutionEnv
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.{AfterAll, BeforeAll, Scope}
-import zio.{Task, URIO, Promise => ZPromise}
+import zio.{Task, UIO, URIO, Promise => ZPromise}
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
@@ -114,7 +114,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
   "collect metrics with custom reporter" in new Ctx {
     val metrics = ListBuffer.empty[GreyhoundMetric]
     val runtime = GreyhoundRuntimeBuilder()
-      .withMetricsReporter(metric => metrics += metric)
+      .withMetricsReporter(metric => UIO(metrics += metric))
       .build
     val config = GreyhoundConfig(environment.kafka.bootstrapServers, runtime)
     val builder = GreyhoundConsumersBuilder(config)
