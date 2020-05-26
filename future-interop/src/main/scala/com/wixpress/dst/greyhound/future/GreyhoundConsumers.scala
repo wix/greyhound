@@ -1,8 +1,9 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
+import com.wixpress.dst.greyhound.core.ZManagedSyntax._
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumer, RecordConsumerConfig}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Exit, ZIO, ZManaged}
 

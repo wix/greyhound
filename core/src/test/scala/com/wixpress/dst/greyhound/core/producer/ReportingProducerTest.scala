@@ -6,22 +6,20 @@ import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.ReportingProducerTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, FakeProducer, TestMetrics}
 import zio._
+import zio.clock.Clock
 import zio.duration._
-import zio.test.environment.{TestClock, TestEnvironment}
+import zio.test.environment.TestClock
 
 import scala.concurrent.duration.FiniteDuration
 
-class ReportingProducerTest extends BaseTest[TestClock with TestMetrics] {
+class ReportingProducerTest extends BaseTest[Clock with TestClock with TestMetrics] {
 
-  override def env: UManaged[TestClock with TestMetrics] =
+  override def env: UManaged[Clock with TestClock with TestMetrics] = {
     for {
-      env <- TestEnvironment.Value
+      env <- zio.test.environment.testEnvironment.build
       testMetrics <- TestMetrics.make
-    } yield new TestClock with TestMetrics {
-      override val clock: TestClock.Service[Any] = env.clock
-      override val scheduler: TestClock.Service[Any] = env.scheduler
-      override val metrics: TestMetrics.Service = testMetrics.metrics
-    }
+    } yield env ++ testMetrics
+  }
 
   "delegate to internal producer" in {
     for {

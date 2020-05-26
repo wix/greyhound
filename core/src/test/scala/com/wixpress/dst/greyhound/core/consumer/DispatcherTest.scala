@@ -4,21 +4,18 @@ import com.wixpress.dst.greyhound.core.Headers
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, CountDownLatch, TestMetrics}
-import zio._
+import zio.clock.Clock
 import zio.duration._
-import zio.test.environment.{TestClock, TestEnvironment}
+import zio.test.environment.TestClock
+import zio.{test, _}
 
-class DispatcherTest extends BaseTest[TestClock with TestMetrics] {
+class DispatcherTest extends BaseTest[Clock with TestClock with TestMetrics] {
 
-  override def env: UManaged[TestClock with TestMetrics] =
+  override def env: UManaged[Clock with TestClock with TestMetrics] =
     for {
-      env <- TestEnvironment.Value
+      env <- test.environment.testEnvironment.build
       testMetrics <- TestMetrics.make
-    } yield new TestClock with TestMetrics {
-      override val clock: TestClock.Service[Any] = env.clock
-      override val scheduler: TestClock.Service[Any] = env.scheduler
-      override val metrics: TestMetrics.Service = testMetrics.metrics
-    }
+    } yield env ++ testMetrics
 
   "handle submitted records" in {
     for {

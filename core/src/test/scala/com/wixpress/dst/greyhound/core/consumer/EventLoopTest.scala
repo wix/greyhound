@@ -17,21 +17,17 @@ import scala.collection.JavaConverters._
 class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
 
   override def env: UManaged[Blocking with Clock with TestMetrics] =
-    TestMetrics.make.map { testMetrics =>
-      new TestMetrics with Clock.Live with Blocking {
-        override val metrics: TestMetrics.Service =
-          testMetrics.metrics
-        override val blocking: Blocking.Service[Any] =
-          Blocking.Live.blocking
-      }
-    }
+    for {
+      env <- test.environment.liveEnvironment.build
+      testMetrics <- TestMetrics.make
+    } yield env ++ testMetrics
 
   "recover from consumer failing to poll" in {
     for {
       invocations <- Ref.make(0)
       consumer = new EmptyConsumer[Any] {
         override def poll(timeout: Duration): Task[Records] =
-          invocations.update(_ + 1).flatMap {
+          invocations.updateAndGet(_ + 1).flatMap {
             case 1 => ZIO.fail(exception)
             case 2 => ZIO.succeed(recordsFrom(record))
             case _ => ZIO.succeed(ConsumerRecords.empty())
@@ -51,13 +47,13 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
       promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
       consumer = new EmptyConsumer[Any] {
         override def poll(timeout: Duration): Task[Records] =
-          pollInvocations.update(_ + 1).flatMap {
+          pollInvocations.updateAndGet(_ + 1).flatMap {
             case 1 => ZIO.succeed(recordsFrom(record))
             case _ => ZIO.succeed(ConsumerRecords.empty())
           }
 
         override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Any, Unit] =
-          commitInvocations.update(_ + 1).flatMap {
+          commitInvocations.updateAndGet(_ + 1).flatMap {
             case 1 => ZIO.fail(exception)
             case _ => promise.succeed(offsets).unit
           }

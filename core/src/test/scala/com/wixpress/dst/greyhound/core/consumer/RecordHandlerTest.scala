@@ -11,21 +11,16 @@ import com.wixpress.dst.greyhound.core.testkit._
 import zio._
 import zio.clock.Clock
 import zio.duration._
-import zio.random.{nextBytes, nextInt}
+import zio.random.{Random, nextBytes, nextInt, nextIntBounded}
 import zio.test.environment.{TestClock, TestEnvironment, TestRandom}
 
-class RecordHandlerTest extends BaseTest[TestRandom with TestClock with TestMetrics] {
+class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with TestClock with TestMetrics] {
 
-  override def env: UManaged[TestRandom with TestClock with TestMetrics] =
+  override def env =
     for {
-      env <- TestEnvironment.Value
+      env <- test.environment.testEnvironment.build
       testMetrics <- TestMetrics.make
-    } yield new TestRandom with TestClock with TestMetrics {
-      override val random: TestRandom.Service[Any] = env.random
-      override val clock: TestClock.Service[Any] = env.clock
-      override val scheduler: TestClock.Service[Any] = env.scheduler
-      override val metrics: TestMetrics.Service = testMetrics.metrics
-    }
+    } yield env ++ testMetrics
 
   "withRetries" should {
     "produce a message to the retry topic after failure" in {
@@ -81,7 +76,7 @@ object RecordHandlerTest {
   val group = "some-group"
   val partition = 0
   val offset = 0L
-  val bytes = nextInt(9).flatMap(size => nextBytes(size + 1))
+  val bytes = nextIntBounded(9).flatMap(size => nextBytes(size + 1))
 
   val failingHandler = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](_ => ZIO.fail(RetriableError))
 

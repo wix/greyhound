@@ -212,7 +212,7 @@ object Environment {
     started <- ZPromise.make[Nothing, ManagedKafka]
     fiber <- ManagedKafka.make(ManagedKafkaConfig.Default).use { kafka =>
       started.succeed(kafka) *> closeSignal.await
-    }.fork
+    }.forkDaemon
     kafka1 <- started.await
   } yield new Environment {
     override def kafka: ManagedKafka = kafka1
