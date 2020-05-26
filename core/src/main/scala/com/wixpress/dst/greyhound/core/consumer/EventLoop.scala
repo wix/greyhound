@@ -3,9 +3,8 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.Metrics.report
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import org.apache.kafka.clients.consumer.ConsumerRecords
 import zio._
 import zio.blocking.Blocking
@@ -66,7 +65,7 @@ object EventLoop {
         })
       running <- Ref.make(true)
       fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group)
-        .doWhile(_ == true).fork
+        .doWhile(_ == true).forkDaemon
       _ <- partitionsAssigned.await
     } yield (dispatcher, fiber, offsets, running)
 

@@ -2,8 +2,8 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.Metrics.report
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
@@ -69,6 +69,7 @@ object RecordConsumer {
 
       override def resubscribe[R1](topics: Set[Topic], listener: RebalanceListener[R1]): RIO[Env with R1, AssignedPartitions] =
         for {
+          assigned <- Ref.make[AssignedPartitions](Set.empty)
           promise <- Promise.make[Nothing, AssignedPartitions]
           _ <- consumer.subscribe[R1](topics, listener *> new RebalanceListener[R1] {
             override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
@@ -76,8 +77,12 @@ object RecordConsumer {
 
             //todo: we need to call EventLoop's listener here! otherwise we don't stop fibers on resubscribe
 
-            override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] =
-              promise.succeed(partitions)
+            override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] = for {
+              allAssigned <- assigned.updateAndGet(_ ++ partitions)
+              _ <- ZIO.when(allAssigned.map(_.topic) == topics)(
+                promise.succeed(allAssigned)
+              )
+            } yield ()
           })
           result <- promise.await
         } yield result

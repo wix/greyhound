@@ -3,8 +3,7 @@ package com.wixpress.dst.greyhound.testkit
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.TopicConfig
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, Metrics}
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
@@ -37,29 +36,29 @@ object ManagedKafka {
   }
 
   private def tempDirectory(path: String) = {
-    val acquire = Metrics.report(CreatingTempDirectory(path)) *> effectBlocking(Directory(path))
+    val acquire = GreyhoundMetrics.report(CreatingTempDirectory(path)) *> effectBlocking(Directory(path))
     acquire.toManaged { dir =>
-      Metrics.report(DeletingTempDirectory(path)) *>
+      GreyhoundMetrics.report(DeletingTempDirectory(path)) *>
         effectBlocking(dir.deleteRecursively()).ignore
     }
   }
 
   private def embeddedZooKeeper(port: Int) = {
-    val acquire = Metrics.report(StartingZooKeeper(port)) *> effectBlocking(new TestingServer(port))
+    val acquire = GreyhoundMetrics.report(StartingZooKeeper(port)) *> effectBlocking(new TestingServer(port))
     acquire.toManaged { server =>
-      Metrics.report(StoppingZooKeeper) *>
+      GreyhoundMetrics.report(StoppingZooKeeper) *>
         effectBlocking(server.stop()).ignore
     }
   }
 
   private def embeddedKafka(config: KafkaServerConfig) = {
     val acquire = for {
-      _ <- Metrics.report(StartingKafka(config.port))
+      _ <- GreyhoundMetrics.report(StartingKafka(config.port))
       server <- effectBlocking(new KafkaServer(config.toKafkaConfig))
       _ <- effectBlocking(server.startup())
     } yield server
     acquire.toManaged { server =>
-      Metrics.report(StoppingKafka) *>
+      GreyhoundMetrics.report(StoppingKafka) *>
         effectBlocking(server.shutdown()).ignore
     }
   }
@@ -86,7 +85,9 @@ case class KafkaServerConfig(port: Int,
     props.setProperty("offsets.topic.num.partitions", "5")
     props.setProperty("zookeeper.session.timeout.ms", "15000")
     props.setProperty("host.name", "localhost")
-    props.setProperty("listeners", s"PLAINTEXT://:$port")
+    // force `listeners` to localhost, otherwise  Kaka will try and discover the hostname of the machine
+    // running the tests and tell clients to use this to connect, which in some cases may not work.
+    props.setProperty("listeners", s"PLAINTEXT://localhost:$port")
     props.setProperty("authorizer.class.name", "kafka.security.auth.SimpleAclAuthorizer")
     props.setProperty("super.users", "User:testadmin;")
     props.setProperty("allow.everyone.if.no.acl.found", "true")

@@ -3,6 +3,7 @@ package com.wixpress.dst.greyhound.java
 import java.util.concurrent.CompletableFuture
 
 import com.wixpress.dst.greyhound.core.Serializer
+import com.wixpress.dst.greyhound.core.ZManagedSyntax._
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
