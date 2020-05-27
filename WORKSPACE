@@ -12,8 +12,8 @@ http_archive(
     sha256 = "2ef429f5d7ce7111263289644d233707dba35e39696377ebab8b0bc701f7818e",
 )
 
-wix_oss_infra_version="b01150642dc07d2f629c91e4bbd4ac5715921917"
-wix_oss_infra_version_sha256="f139c703f63bfc26451a898e9192d7bd57c93656c6113cb9be768015356ed10a"
+wix_oss_infra_version="b5c91c5d5daa71d3bd5f7c07ed2269d578fe0ddb"
+wix_oss_infra_version_sha256="b5131876ed492f0c6ef2ea1cf8d00323c170dc85d7f382efedbfa07441c98d5c"
 
 http_archive(
     name = "wix_oss_infra",
