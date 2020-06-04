@@ -1,7 +1,10 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.util.regex.Pattern
+
 import com.wixpress.dst.greyhound.core.consumer.Consumer.{Record, Records}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
+import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
@@ -35,7 +38,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
       }
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       handler = RecordHandler(promise.succeed)
-      handled <- EventLoop.make("group", Set(topic), ReportingConsumer(clientId, group, consumer), handler, "clientId").use_(promise.await)
+      handled <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId").use_(promise.await)
       metrics <- TestMetrics.reported
     } yield ((handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception))))
   }
@@ -58,7 +61,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
             case _ => promise.succeed(offsets).unit
           }
       }
-      committed <- EventLoop.make("group",  Set(topic),ReportingConsumer(clientId, group, consumer), RecordHandler.empty, "clientId").use_(promise.await)
+      committed <- EventLoop.make("group",  Topics(Set(topic)),ReportingConsumer(clientId, group, consumer), RecordHandler.empty, "clientId").use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic(), record.partition()) -> (offset + 1)))))
@@ -71,7 +74,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
         override def poll(timeout: Duration): Task[Records] =
           ZIO.dieMessage("cough :(")
       }
-      died <- EventLoop.make("group", Set(topic), sickConsumer, RecordHandler.empty, "clientId").use { eventLoop =>
+      died <- EventLoop.make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId").use { eventLoop =>
         eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.doUntil(alive => !alive)).unit
       }.catchAllCause(_ => ZIO.unit).timeout(1.second)
     } yield died must beSome
@@ -95,6 +98,9 @@ object EventLoopTest {
 }
 
 trait EmptyConsumer[R] extends Consumer[R] {
+
+  override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[R with R1, Unit] =
+    rebalanceListener.onPartitionsAssigned(Set(TopicPartition("", 0))).unit
 
   override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R with R1, Unit] =
     rebalanceListener.onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit

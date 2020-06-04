@@ -161,7 +161,7 @@ import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.Serdes
 
 val bootstrapServer = "localhost:9092"
-val config = ProducerConfig(Set(bootstrapServer)/*, retryPolicy, extraProperties*/)
+val config = ProducerConfig(bootstrapServer/*, retryPolicy, extraProperties*/)
 
 Producer.make[Any](config).use { producer =>
   producer.produce(
@@ -182,7 +182,7 @@ record, and choose (or implement a custom) `Deserializer` to transform the byte 
 
 ##### RecordConsumer 
 
-Start a consumer by providing a Consumer Group ID, a set of topics to subscribe to and the [RecordHandler](#record-handler) to
+Start a consumer by providing a Consumer Group ID, a set of topics to subscribe to (or a pattern), and the [RecordHandler](#record-handler) to
 execute custom code upon new individual records.<br>
 Ordering in Kafka is only guaranteed within a single partition, so Greyhound will parallelize execution 
 by devoting a single fiber for each partition. It will also automatically
@@ -196,9 +196,14 @@ val group = "some-consumer-group-id"
 val handler: RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] = ???
 
 // Start consumer, will close on interruption
-val bootstrapServers = Set("localhost:9092")
+val bootstrapServers = "localhost:9092"
 val initialTopics = Set("topic-A")
-RecordConsumer.make(RecordConsumerConfig(bootstrapServers, group, initialTopics), handler).useForever
+RecordConsumer.make(RecordConsumerConfig(bootstrapServers, group, ConsumerSubscription.Topics(initialTopics)), handler)
+  .useForever
+
+// Start another consumer, this time subscribing to a topic pattern
+RecordConsumer.make(RecordConsumerConfig(bootstrapServers, group, ConsumerSubscription.TopicPattern("topic.*")), handler)
+  .useForever
 ```
 
 ##### Record handler
@@ -224,7 +229,7 @@ case class EmailRequest(/*...*/)
 // Base handler with your custom logic
 val emailRequestsTopic = "email-requests"
 val handler1: RecordHandler[Any, RuntimeException, EmailId, EmailRequest] =
-  RecordHandler(emailRequestsTopic) { record =>
+  RecordHandler { record =>
     // Do something with email requests...
     ZIO.fail(new RuntimeException("Oops!"))
   }
@@ -302,10 +307,10 @@ or byte array `Serde` to represent your own types encoded as JSON.
 
 #### Consumer Retries
 
-`RecordHandler` provides a built-in retry mechanism for consumer code. It is possible to create a retry policy for failed
+`RecordConsumer` provides a built-in retry mechanism for consumer code. It is possible to create a retry policy for failed
 user-supplied effects. The retry mechanism is influenced by this [Uber's blog post](https://blog.pragmatists.com/retrying-consumer-architecture-in-the-apache-kafka-939ac4cb851a).<br>
 A retry policy is defined by a sequence of intervals indicating the back-off time between attemps. For each attempt
-Greyhound automatically creates a topic named: `$original_topic-$group_id-retry-[0..n]` and subscribes to it.<br>
+Greyhound automatically creates a topic named: `$original_topic-[group_id]-retry-[0..n]` and subscribes to it.<br>
 When an effect fails, Greyhound either submits the record to the subsequent retry topic, adding specific headers indicating when to execute the handler for this record.<br>
 When the record is consumed via the retry topics, the record handler reads the relevant headers and potentially 'sleeps' until it is time to invoke the user code.<br>
 Notice this waiting is done in a non-blocking way, so no resources are wasted.
@@ -314,25 +319,43 @@ Usage:
 ```scala
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.producer._
+import zio.duration._
+import zio.ZIO
 
-val handler = RecordHandler(topic) { record: ConsumerRecord[String, String] =>
+val group = "groupId"
+val topic = "topicY"
+val handler = RecordHandler { record: ConsumerRecord[String, String] =>
   if (record.value === "OK")
     ZIO.unit
       else 
     ZIO.fail(new RuntimeException("Failed..."))     
 }
 
-Producer.make[Any](producerConfig).use { producer =>
-    val retryPolicy = RetryPolicy.default("groupId", 1.second, 30.seconds, 1.minute)
-    val retryHandler = handler
-      .withDeserializers(StringSerde, StringSerde)
-      .withRetries(retryPolicy, producer)
-      .ignore
-}
+val retryPolicy = RetryPolicy.default(group, 1.second, 30.seconds, 1.minute)
+val bootstrapServers = "localhost:9092"
+val topics = Set("topic-A")
+RecordConsumer.make(
+  RecordConsumerConfig(bootstrapServers, group, ConsumerSubscription.Topics(topics), retryPolicy = Some(retryPolicy)),
+  handler.withDeserializers(StringSerde, StringSerde)
+  ).useForever
 ```
 
 In this example the record handler fails for any input other than the string "OK", so any other record will be re-sent to the subsequent topic,
 until finally the record is consumed by last topic.  
+
+##### Configuring retries with a pattern consumer
+In terms of API - there's no difference to configuring retries for a fixed set of topics. However, when configuring a consumer that subscribes to a pattern,
+we cannot use the same strategy for retry topics naming. This is due to the fact we don't know up front which retry topics we should subscribe to, since
+the original topics we're subscribing to aren't known.<br>
+The strategy for naming retry topics in this case:  `__gh_pattern-retry-[group_id]-attempt-[0..n]`.<br>
+Notice the original topic name isn't part of the retry topics. This means 2 things:<br>
+1. We know upfront which topics to create and subscribe to.
+2. We cannot start separate consumers with the same group id, where each subscribes to a different pattern and performs different logic.
+This is due to the fact that all consumers will subscribe to the same retry topics.
+Doing something like this will result in separate consumers 'stealing' each other's retry messages.
+<br><br>
+It may seem like an implementation detail - but it's important to proceed with the last part in mind.
+<br>
 
 ### Testing
 Use the embedded Kafka to test your app:

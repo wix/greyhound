@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
@@ -22,7 +23,7 @@ object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
   def make[R1, R2](group: Group,
-                   initialTopics: NonEmptySet[Topic],
+                   initialSubscription: ConsumerSubscription,
                    consumer: Consumer[R1],
                    handler: Handler[R2],
                    clientId: ClientId,
@@ -36,33 +37,13 @@ object EventLoop {
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
       runtime <- ZIO.runtime[R2 with GreyhoundMetrics with Clock]
-      _ <- consumer.subscribe[Blocking with R1](
-        topics = initialTopics,
-        rebalanceListener = new RebalanceListener[Blocking with R1] {
-          override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
-            ZIO.effectTotal {
-              //todo: isn't this just boxing and unboxing? can't we eliminate it?
-              /**
-               * The rebalance listener is invoked while calling `poll`. Kafka forces you
-               * to call `commit` from the same thread, otherwise an exception will be thrown.
-               * This is needed in order to stay on the same thread and commit properly.
-               * ZIO might decide to shift, which will make the call to `commit` fail,
-               * however this is not very likely (it shifts every 1024 instructions by default),
-               * and even when that happens we still maintain the guarantee to process at least once.
-               */
-              runtime.unsafeRun {
-                pausedPartitionsRef.set(Set.empty) *>
-                  config.rebalanceListener.onPartitionsRevoked(partitions) *>
-                  dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
-                    ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
-                  }
-              }
-            } *> commitOffsets(consumer, offsets, calledOnRebalance = true)
-
-          override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] =
-            config.rebalanceListener.onPartitionsAssigned(partitions) *>
-              partitionsAssigned.succeed(())
-        })
+      rebalanceListener = listener(runtime, pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
+      _ <- ZIO.whenCase(initialSubscription) {
+        case TopicPattern(pattern) =>
+          consumer.subscribePattern[Blocking with R1](pattern, rebalanceListener)
+        case Topics(topics) =>
+          consumer.subscribe[Blocking with R1](topics, rebalanceListener)
+      }
       running <- Ref.make(true)
       fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group)
         .doWhile(_ == true).forkDaemon
@@ -114,6 +95,38 @@ object EventLoop {
 
       case false => UIO(false)
     }
+
+  private def listener[R2, R1](runtime: Runtime[R2 with GreyhoundMetrics with Clock],
+                               pausedPartitionsRef: Ref[Set[TopicPartition]], config: EventLoopConfig, dispatcher: Dispatcher[R2],
+                               partitionsAssigned: Promise[Nothing, Unit],
+                               group: Group, consumer: Consumer[R1], clientId: ClientId, offsets: Offsets) = {
+    new RebalanceListener[Blocking with R1] {
+      override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
+        ZIO.effectTotal {
+          //todo: isn't this just boxing and unboxing? can't we eliminate it?
+          /**
+           * The rebalance listener is invoked while calling `poll`. Kafka forces you
+           * to call `commit` from the same thread, otherwise an exception will be thrown.
+           * This is needed in order to stay on the same thread and commit properly.
+           * ZIO might decide to shift, which will make the call to `commit` fail,
+           * however this is not very likely (it shifts every 1024 instructions by default),
+           * and even when that happens we still maintain the guarantee to process at least once.
+           */
+          runtime.unsafeRun {
+            pausedPartitionsRef.set(Set.empty) *>
+              config.rebalanceListener.onPartitionsRevoked(partitions) *>
+              dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
+                ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
+              }
+          }
+        } *> commitOffsets(consumer, offsets, calledOnRebalance = true)
+
+      override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] =
+        config.rebalanceListener.onPartitionsAssigned(partitions) *>
+          partitionsAssigned.succeed(())
+    }
+  }
+
 
   private def resumePartitions[R1, R2](consumer: Consumer[R1],
                                        clientId: ClientId,

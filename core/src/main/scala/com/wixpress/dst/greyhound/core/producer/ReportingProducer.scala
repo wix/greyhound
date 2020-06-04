@@ -20,7 +20,6 @@ case class ReportingProducer[-R](internal: Producer[R])
       }.tapError { error =>
         GreyhoundMetrics.report(ProduceFailed(error))
       }
-
 }
 
 sealed trait ProducerMetric extends GreyhoundMetric

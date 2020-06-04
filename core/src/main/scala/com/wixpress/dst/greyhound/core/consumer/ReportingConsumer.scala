@@ -1,5 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.util.regex.Pattern
+
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
@@ -8,10 +10,20 @@ import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetric
 import com.wixpress.dst.greyhound.core._
 import zio.duration.Duration
 import zio.{RIO, UIO, ZIO}
+
 import scala.collection.JavaConverters._
 
 case class ReportingConsumer[R](clientId: ClientId, group: Group, internal: Consumer[R])
   extends Consumer[R with GreyhoundMetrics] {
+
+  override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[R with GreyhoundMetrics with R1, Unit] =
+    for {
+      r <- ZIO.environment[R with R1 with GreyhoundMetrics]
+      _ <- GreyhoundMetrics.report(SubscribingToTopicWithPattern(clientId, group, pattern.toString))
+      _ <- internal.subscribePattern(pattern,
+        rebalanceListener = listener(r, rebalanceListener)).tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error)))
+    } yield ()
+
 
   override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R with GreyhoundMetrics with R1, Unit] =
     for {
@@ -19,16 +31,21 @@ case class ReportingConsumer[R](clientId: ClientId, group: Group, internal: Cons
       _ <- GreyhoundMetrics.report(SubscribingToTopics(clientId, group, topics))
       _ <- internal.subscribe(
         topics = topics,
-        rebalanceListener = new RebalanceListener[Any] {
-          override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
-            (GreyhoundMetrics.report(PartitionsRevoked(clientId, group, partitions)) *>
-              rebalanceListener.onPartitionsRevoked(partitions)).provide(r)
-
-          override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
-            (GreyhoundMetrics.report(PartitionsAssigned(clientId, group, partitions)) *>
-              rebalanceListener.onPartitionsAssigned(partitions)).provide(r)
-        }).tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error)))
+        rebalanceListener = listener(r, rebalanceListener)).tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error)))
     } yield ()
+
+
+  private def listener[R1](r: R with R1 with GreyhoundMetrics, rebalanceListener: RebalanceListener[R1]) = {
+    new RebalanceListener[Any] {
+      override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
+        (GreyhoundMetrics.report(PartitionsRevoked(clientId, group, partitions)) *>
+          rebalanceListener.onPartitionsRevoked(partitions)).provide(r)
+
+      override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
+        (GreyhoundMetrics.report(PartitionsAssigned(clientId, group, partitions)) *>
+          rebalanceListener.onPartitionsAssigned(partitions)).provide(r)
+    }
+  }
 
   override def poll(timeout: Duration): RIO[R with GreyhoundMetrics, Records] =
     for {
@@ -99,6 +116,8 @@ sealed trait ConsumerMetric extends GreyhoundMetric {
 object ConsumerMetric {
 
   case class SubscribingToTopics(clientId: ClientId, group: Group, topics: Set[Topic]) extends ConsumerMetric
+
+  case class SubscribingToTopicWithPattern(clientId: ClientId, group: Group, pattern: String) extends ConsumerMetric
 
   case class CommittingOffsets(clientId: ClientId, group: Group, offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean) extends ConsumerMetric
 

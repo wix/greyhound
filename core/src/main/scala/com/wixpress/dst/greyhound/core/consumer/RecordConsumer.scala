@@ -1,12 +1,16 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
+import java.util.regex.Pattern
+
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
+import com.wixpress.dst.greyhound.core.consumer.RetryPolicy.{patternRetryTopic, retryPattern}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -40,11 +44,20 @@ object RecordConsumer {
     for {
       consumer <- Consumer.make(
         ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties))
-      allInitiallySubscribedTopics = config.retryPolicy.fold(config.initialTopics)(policy => config.initialTopics.flatMap(policy.retryTopicsFor))
+      (initialSubscription, topicsToCreate) = config.retryPolicy.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
+        config.initialSubscription match {
+          case Topics(topics) => (Topics(topics.flatMap(policy.retryTopicsFor)), topics.flatMap(policy.retryTopicsFor) -- topics)
+          case TopicPattern(pattern) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
+            (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
+        })
+      _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
+        client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
+      ).toManaged_
+
       handlerWithRetries <- addRetriesToHandler(config, handler)
       eventLoop <- EventLoop.make(
         group = config.group,
-        initialTopics = allInitiallySubscribedTopics,
+        initialSubscription = initialSubscription,
         consumer = ReportingConsumer(config.clientId, config.group, consumer),
         handler = handlerWithRetries,
         config = config.eventLoopConfig,
@@ -63,7 +76,7 @@ object RecordConsumer {
         eventLoop.state.map(RecordConsumerExposedState.apply)
 
       override def topology[R1]: URIO[Env with R with R1, RecordConsumerTopology] =
-        UIO(RecordConsumerTopology(allInitiallySubscribedTopics)) //todo: this should be updated on resubscribe
+        UIO(RecordConsumerTopology(initialSubscription)) //todo: this should be updated on resubscribe
 
       override def group: Group = config.group
 
@@ -94,7 +107,7 @@ object RecordConsumer {
     config.retryPolicy match {
       case Some(policy) =>
         Producer.make[Clock](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(ReportingProducer(_))
-          .map(producer => RetryRecordHandler.withRetries(handler, policy, producer))
+          .map(producer => RetryRecordHandler.withRetries(handler, policy, producer, config.initialSubscription))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
           report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))
@@ -117,11 +130,11 @@ case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState) {
   def topics = dispatcherState.topics
 }
 
-case class RecordConsumerTopology(subscriptions: Set[Topic])
+case class RecordConsumerTopology(subscription: ConsumerSubscription)
 
 case class RecordConsumerConfig(bootstrapServers: String,
                                 group: Group,
-                                initialTopics: NonEmptySet[Topic],
+                                initialSubscription: ConsumerSubscription,
                                 retryPolicy: Option[RetryPolicy] = None,
                                 clientId: String = RecordConsumerConfig.makeClientId,
                                 eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
@@ -130,4 +143,14 @@ case class RecordConsumerConfig(bootstrapServers: String,
 
 object RecordConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
+}
+
+sealed trait ConsumerSubscription
+
+object ConsumerSubscription {
+
+  case class TopicPattern(p: Pattern) extends ConsumerSubscription
+
+  case class Topics(topics: NonEmptySet[Topic]) extends ConsumerSubscription
+
 }

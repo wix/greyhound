@@ -1,24 +1,25 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.{time, util}
 import java.util.Properties
-import java.util.concurrent.{Executors, ThreadPoolExecutor}
+import java.util.regex.Pattern
+import java.{time, util}
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, Topic}
+import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
-import zio.blocking.{Blocking, blocking, effectBlocking}
+import zio.blocking.{Blocking, effectBlocking}
 import zio.duration.Duration
-import zio.internal.Executor
 
 import scala.collection.JavaConverters._
 import scala.util.Random
 
 trait Consumer[R] {
   def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[R with R1, Unit]
+
+  def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[R with R1, Unit]
 
   def poll(timeout: Duration): RIO[R, Records]
 
@@ -52,22 +53,11 @@ object Consumer {
     semaphore <- Semaphore.make(1).toManaged_
     consumer <- makeConsumer(config)
   } yield new Consumer[Blocking] {
+    override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
+      listener(rebalanceListener).flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
     override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-      for {
-        runtime <- ZIO.runtime[Blocking with R1]
-        consumerRebalanceListener = new ConsumerRebalanceListener {
-          override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
-            runtime.unsafeRun(rebalanceListener.onPartitionsRevoked(partitionsFor(partitions)))
-
-          override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
-            runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(partitionsFor(partitions)))
-
-          private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
-            partitions.asScala.map(TopicPartition(_)).toSet
-        }
-        _ <- withConsumer(_.subscribe(topics.asJava, consumerRebalanceListener))
-      } yield ()
+      listener(rebalanceListener).flatMap(lis => withConsumer(_.subscribe(topics.asJava, lis)))
 
     override def poll(timeout: Duration): RIO[Blocking, Records] =
       withConsumer(_.poll(time.Duration.ofMillis(timeout.toMillis)))
@@ -112,7 +102,22 @@ object Consumer {
           acc.add(new KafkaTopicPartition(topic, partition))
           acc
       }
+
   }
+
+  private def listener[R1](rebalanceListener: RebalanceListener[R1]) =
+    ZIO.runtime[Blocking with R1].map { runtime =>
+      new ConsumerRebalanceListener {
+        override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
+          runtime.unsafeRun(rebalanceListener.onPartitionsRevoked(partitionsFor(partitions)))
+
+        override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
+          runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(partitionsFor(partitions)))
+
+        private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
+          partitions.asScala.map(TopicPartition(_)).toSet
+      }
+    }
 
   private def makeConsumer(config: ConsumerConfig): RManaged[Blocking, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
     val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))

@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.Serdes._
+import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.OffsetReset.Earliest
 import com.wixpress.dst.greyhound.core.consumer._
@@ -10,6 +11,8 @@ import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDown
 import com.wixpress.dst.greyhound.testkit.ITEnv._
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio.clock.{Clock, sleep}
+import java.util.regex.Pattern._
+import java.util.regex.Pattern
 import zio.console.Console
 import zio.duration._
 import zio.{console, _}
@@ -18,6 +21,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
 
   override def env: UManaged[ITEnv.Env] = ITEnv.ManagedEnv
+
   override def sharedEnv = ITEnv.testResources()
 
   val resources = testResources()
@@ -34,7 +38,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         .withDeserializers(StringSerde, StringSerde)
         .ignore
       cId <- clientId
-      config = RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic), clientId = cId, extraProperties = fastConsumerMetadataFetching)
+      config = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), clientId = cId, extraProperties = fastConsumerMetadataFetching)
       record = ProducerRecord(topic, "bar", Some("foo"))
 
       messages <- RecordConsumer.make(config, handler).use { consumer =>
@@ -73,14 +77,13 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         }
       }
 
-      test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler).use_ {
+      test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler).use_ {
         val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
         val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
         for {
           _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
             producer.produce(recordPartition0) zipPar producer.produce(recordPartition1)
           }
-
           handledAllFromPartition0 <- handledPartition0.await.timeout(10.seconds)
           _ <- delayPartition1.succeed(())
           handledAllFromPartition1 <- handledPartition1.await.timeout(10.seconds)
@@ -108,21 +111,20 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         handledSomeMessages.countDown zipParRight handledAllMessages.countDown
       }
 
-      test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler)
-        .use { consumer =>
-          val record = ProducerRecord(topic, Chunk.empty)
-          for {
-            _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
-            _ <- handledSomeMessages.await
-            _ <- consumer.pause
-            _ <- ZIO.foreachPar(0 until restOfMessages)(_ => producer.produce(record))
-            a <- handledAllMessages.await.timeout(5.seconds)
-            _ <- consumer.resume
-            b <- handledAllMessages.await.timeout(5.seconds)
-          } yield {
-            (a must beNone) and (b must beSome)
-          }
+      test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler).use { consumer =>
+        val record = ProducerRecord(topic, Chunk.empty)
+        for {
+          _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
+          _ <- handledSomeMessages.await
+          _ <- consumer.pause
+          _ <- ZIO.foreachPar(0 until restOfMessages)(_ => producer.produce(record))
+          a <- handledAllMessages.await.timeout(5.seconds)
+          _ <- consumer.resume
+          b <- handledAllMessages.await.timeout(5.seconds)
+        } yield {
+          (a must beNone) and (b must beSome)
         }
+      }
     } yield test
   }
 
@@ -141,7 +143,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           ref.update(_ + 1)
       }
 
-      _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic)), handler).use_ {
+      _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler).use_ {
         producer.produce(ProducerRecord(topic, Chunk.empty)) *>
           startedHandling.await
       }
@@ -171,7 +173,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         RecordConsumerConfig(
           kafka.bootstrapServers,
           group,
-          Set(topic),
+          Topics(Set(topic)),
           offsetReset = Earliest), handler).use_ {
         queue.take
       }.timeout(10.seconds)
@@ -214,8 +216,38 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield test
   }
 
+  "subscribe to a pattern" in {
+    for {
+      _ <- console.putStrLn(">>>> starting test: patternTest")
+      topic = "topicXYZ"
+      TestResources(kafka, producer) <- getShared
+      _ <- kafka.createTopic(TopicConfig(topic, 1, 1, delete))
+      group <- randomGroup
+      probe <- Ref.make[Option[Offset]](None)
+      handler = RecordHandler { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        probe.update(_ => Some(record.offset))
+      }
+
+      test <- makeConsumer(kafka, Pattern.compile("topicX.*"), group, handler, 0).use_ {
+        val record = ProducerRecord(topic, Chunk.empty, key = Option(Chunk.empty))
+        producer.produce(record).flatMap(_ =>
+          probe.get.flatMap(actual =>
+            if (!actual.contains(0))
+              ZIO.fail(s"$actual != Some(0)")
+            else
+              UIO(actual))
+            .retry(Schedule.duration(5.seconds) && Schedule.spaced(1.second))
+        ).map(_ === Some(0))
+      }
+    } yield ok
+  }
+
+
   private def makeConsumer(kafka: ManagedKafka, topic: String, group: String, handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
-    RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Set(topic), clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
+    RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), clientId = s"client-$i", offsetReset = OffsetReset.Earliest, extraProperties = fastConsumerMetadataFetching), handler)
+
+  private def makeConsumer(kafka: ManagedKafka, pattern: Pattern, group: String, handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
+    RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, TopicPattern(pattern), clientId = s"client-$i", offsetReset = OffsetReset.Earliest, extraProperties = fastConsumerMetadataFetching), handler)
 
   private def errorMsg(offsets: Map[Partition, Seq[Offset]], expected: Map[Partition, Seq[Offset]]) =
     s"expected $expected, got $offsets"
