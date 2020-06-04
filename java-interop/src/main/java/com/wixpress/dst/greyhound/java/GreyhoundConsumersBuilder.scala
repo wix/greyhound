@@ -3,6 +3,7 @@ package com.wixpress.dst.greyhound.java
 import java.util.concurrent.Executor
 
 import com.wixpress.dst.greyhound.core
+import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
@@ -27,7 +28,7 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
       runtime <- ZIO.runtime[Env]
       executor = createExecutor
       makeConsumer = ZManaged.foreach(handlers(executor)) { case (group, (offsetReset, initialTopics, handler)) =>
-        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, initialTopics, offsetReset = offsetReset), handler)
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, Topics(initialTopics), offsetReset = offsetReset), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire

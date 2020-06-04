@@ -4,6 +4,7 @@ import java.time.Instant
 
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
@@ -26,7 +27,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
     "produce a message to the retry topic after failure" in {
       for {
         producer <- FakeProducer.make
-        retryHandler = RetryRecordHandler.withRetries(failingHandler, retryPolicy, producer)
+        retryHandler = RetryRecordHandler.withRetries(failingHandler, retryPolicy, producer, Topics(Set(topic)))
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
@@ -52,7 +53,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         handler = RecordHandler[Clock, HandlerError, Chunk[Byte], Chunk[Byte]] { _ =>
           currentTime.flatMap(executionTime.succeed)
         }
-        retryHandler = RetryRecordHandler.withRetries(handler, retryPolicy, producer)
+        retryHandler = RetryRecordHandler.withRetries(handler, retryPolicy, producer, Topics(Set(topic)))
         value <- bytes
         begin <- currentTime
         retryAttempt <- IntSerde.serialize(retryTopic, 0)

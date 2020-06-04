@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.ZManagedSyntax._
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumer, RecordConsumerConfig}
+import com.wixpress.dst.greyhound.core.consumer.{ConsumerSubscription, OffsetReset, RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Exit, ZIO, ZManaged}
@@ -28,7 +28,7 @@ case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
     for {
       runtime <- ZIO.runtime[Env]
       makeConsumer = ZManaged.foreach(handlers) { case (group, (offsetReset, clientId, initialTopics, handler)) =>
-        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, initialTopics,  offsetReset = offsetReset, clientId = clientId), handler)
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, ConsumerSubscription.Topics(initialTopics),  offsetReset = offsetReset, clientId = clientId), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire

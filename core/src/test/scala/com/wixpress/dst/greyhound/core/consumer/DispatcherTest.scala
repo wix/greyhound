@@ -2,7 +2,9 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.Headers
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
+import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric.RecordHandled
 import com.wixpress.dst.greyhound.core.consumer.DispatcherTest._
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, CountDownLatch, TestMetrics}
 import zio.clock.Clock
 import zio.duration._
@@ -20,7 +22,7 @@ class DispatcherTest extends BaseTest[Clock with TestClock with TestMetrics] {
   "handle submitted records" in {
     for {
       promise <- Promise.make[Nothing, Record]
-      dispatcher <- Dispatcher.make("group","clientId",  promise.succeed, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", promise.succeed, lowWatermark, highWatermark)
       _ <- dispatcher.submit(record)
       handled <- promise.await
     } yield handled must equalTo(record)
@@ -45,7 +47,7 @@ class DispatcherTest extends BaseTest[Clock with TestClock with TestMetrics] {
 
   "reject records when high watermark is reached" in {
     for {
-      dispatcher <- Dispatcher.make("group","clientId",  _ => ZIO.never, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark)
       _ <- dispatcher.submit(record.copy(offset = 0L)) // Will be polled
       _ <- dispatcher.submit(record.copy(offset = 1L))
       _ <- dispatcher.submit(record.copy(offset = 2L))
@@ -85,13 +87,14 @@ class DispatcherTest extends BaseTest[Clock with TestClock with TestMetrics] {
     for {
       ref <- Ref.make(0)
       promise <- Promise.make[Nothing, Unit]
-      handler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+      handler = { _: Record =>
         clock.sleep(1.second) *>
           ref.update(_ + 1) *>
           promise.succeed(())
       }
       dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark)
-      _ <- dispatcher.submit(record) // Hill be handled
+      _ <- dispatcher.submit(record) // Will be handled
+      _ <- TestMetrics.reported.flatMap(waitUntilRecordHandled(3.seconds))
       _ <- dispatcher.pause
       _ <- dispatcher.submit(record) // Will be queued
       _ <- TestClock.adjust(1.second)
@@ -99,6 +102,10 @@ class DispatcherTest extends BaseTest[Clock with TestClock with TestMetrics] {
       invocations <- ref.get
     } yield invocations must equalTo(1)
   }
+
+  private def waitUntilRecordHandled(timeout: Duration)(metrics: Seq[GreyhoundMetric]) =
+    ZIO.when(metrics.collect { case r: RecordHandled[_, _] => r }.nonEmpty)(ZIO.fail(TimeoutWaitingForHandledMetric))
+      .retry(Schedule.duration(timeout))
 
   "resume handling" in {
     for {
@@ -127,3 +134,5 @@ object DispatcherTest {
   val topicPartition = TopicPartition(topic, partition)
   val record = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 0L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
 }
+
+case object TimeoutWaitingForHandledMetric extends GreyhoundMetric

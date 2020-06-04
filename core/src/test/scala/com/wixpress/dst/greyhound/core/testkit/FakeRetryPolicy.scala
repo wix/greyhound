@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, RetryAttempt, RetryDecision, RetryPolicy}
+import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, ConsumerSubscription, RetryAttempt, RetryDecision, RetryPolicy}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import zio.clock.Clock
@@ -19,16 +19,17 @@ case class FakeRetryPolicy(topic: Topic)
   override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
     Set(s"$originalTopic-retry")
 
-  override def retryAttempt(topic: Topic, headers: Headers): UIO[Option[RetryAttempt]] =
+  override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] =
     (for {
       attempt <- headers.get(Header.Attempt, IntSerde)
       submittedAt <- headers.get(Header.SubmittedAt, InstantSerde)
       backoff <- headers.get(Header.Backoff, DurationSerde)
-    } yield retryAttempt(topic, attempt, submittedAt, backoff)).orElse(ZIO.none)
+    } yield retryAttemptInternal(topic, attempt, submittedAt, backoff)).orElse(ZIO.none)
 
   override def retryDecision[E](retryAttempt: Option[RetryAttempt],
                                 record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-                                error: E): URIO[Clock, RetryDecision] =
+                                error: E,
+                                subscription: ConsumerSubscription): URIO[Clock, RetryDecision] =
     error match {
       case RetriableError =>
         currentTime.flatMap(now => recordFrom(now, retryAttempt, record)
@@ -37,7 +38,7 @@ case class FakeRetryPolicy(topic: Topic)
         UIO(NoMoreRetries)
     }
 
-  private def retryAttempt(topic: Topic,
+  private def retryAttemptInternal(topic: Topic,
                            attempt: Option[Int],
                            submittedAt: Option[Instant],
                            backoff: Option[Duration]) =
