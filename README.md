@@ -250,7 +250,8 @@ val handler3: RecordHandler[Console, Nothing, Chunk[Byte], Chunk[Byte]] =
 
 Notice that `RecordConsumer` accepts a `RecordHandler[_, _, Chunk[Byte], Chunk[Byte]]`, indicating that
 key and value deserializers to `Chunk[Byte]` must be applied to any handler the user provides.<br>
-You can either write a handler that accepts Chu  
+You can either write a handler that accepts `Chunk[Byte]` as input for key and value, or provide deserializers to the handler
+and accept typed input, according to the output of the provided deserializers. 
 
 ### Serializers / deserializers
 
