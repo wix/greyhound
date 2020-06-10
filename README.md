@@ -48,10 +48,6 @@ semantics such as parallel message handling or retry policies with ease.
  * **Observability** - Greyhound reports many useful metrics which are invaluable when trying to
    debug your system, or understand how it is operating.
 
-## Support
-
-For any questions or comments open an issue or join **#greyhound** channel on our [Wix.com Slack workspace](https://join.slack.com/t/wix-oss/shared_invite/zt-dmz06ume-eMI3cd93NtGRuMwjaBO0lg)
-
 ## Usage
 
 ### Add greyhound to your build
