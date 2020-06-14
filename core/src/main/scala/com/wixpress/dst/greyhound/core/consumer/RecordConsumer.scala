@@ -50,6 +50,7 @@ object RecordConsumer {
           case TopicPattern(pattern) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
             (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
         })
+      consumerSubscriptionRef <- Ref.make[ConsumerSubscription](initialSubscription).toManaged_
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
@@ -76,7 +77,7 @@ object RecordConsumer {
         eventLoop.state.map(RecordConsumerExposedState.apply)
 
       override def topology[R1]: URIO[Env with R with R1, RecordConsumerTopology] =
-        UIO(RecordConsumerTopology(initialSubscription)) //todo: this should be updated on resubscribe
+        consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(subscription))
 
       override def group: Group = config.group
 
@@ -92,6 +93,7 @@ object RecordConsumer {
 
             override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] = for {
               allAssigned <- assigned.updateAndGet(_ ++ partitions)
+              _ <- consumerSubscriptionRef.set(ConsumerSubscription.Topics(topics))
               _ <- ZIO.when(allAssigned.map(_.topic) == topics)(
                 promise.succeed(allAssigned)
               )
