@@ -13,5 +13,6 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
+        "@dev_zio_zio_2_12",
     ],
 )
