@@ -42,15 +42,15 @@ object RecordConsumer {
    */
   def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env, Throwable, RecordConsumer[R with Env]] =
     for {
+      consumerSubscriptionRef <- Ref.make[consumer.ConsumerSubscription](config.initialSubscription).toManaged_
       consumer <- Consumer.make(
         ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties))
       (initialSubscription, topicsToCreate) = config.retryPolicy.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         config.initialSubscription match {
           case Topics(topics) => (Topics(topics.flatMap(policy.retryTopicsFor)), topics.flatMap(policy.retryTopicsFor) -- topics)
-          case TopicPattern(pattern) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
+          case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
             (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
         })
-      consumerSubscriptionRef <- Ref.make[ConsumerSubscription](initialSubscription).toManaged_
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
@@ -151,7 +151,7 @@ sealed trait ConsumerSubscription
 
 object ConsumerSubscription {
 
-  case class TopicPattern(p: Pattern) extends ConsumerSubscription
+  case class TopicPattern(p: Pattern, discoveredTopics: Set[Topic] = Set.empty) extends ConsumerSubscription
 
   case class Topics(topics: NonEmptySet[Topic]) extends ConsumerSubscription
 
