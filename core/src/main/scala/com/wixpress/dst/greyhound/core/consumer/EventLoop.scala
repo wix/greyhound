@@ -39,7 +39,7 @@ object EventLoop {
       runtime <- ZIO.runtime[R2 with GreyhoundMetrics with Clock]
       rebalanceListener = listener(runtime, pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
       _ <- ZIO.whenCase(initialSubscription) {
-        case TopicPattern(pattern) =>
+        case TopicPattern(pattern, _) =>
           consumer.subscribePattern[Blocking with R1](pattern, rebalanceListener)
         case Topics(topics) =>
           consumer.subscribe[Blocking with R1](topics, rebalanceListener)
