@@ -74,7 +74,7 @@ object RecordConsumer {
         eventLoop.isAlive
 
       override def state[R1]: URIO[Env with R with R1, RecordConsumerExposedState] =
-        eventLoop.state.map(RecordConsumerExposedState.apply)
+        eventLoop.state.map(state => RecordConsumerExposedState(state, config.clientId))
 
       override def topology[R1]: URIO[Env with R with R1, RecordConsumerTopology] =
         consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(subscription))
@@ -128,7 +128,7 @@ object RecordConsumerMetric {
 
 }
 
-case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState) {
+case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, consumerId: String) {
   def topics = dispatcherState.topics
 }
 
