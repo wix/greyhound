@@ -72,6 +72,11 @@ object Producer {
 case class ProducerConfig(bootstrapServers: String,
                           retryPolicy: ProducerRetryPolicy = ProducerRetryPolicy.Default,
                           extraProperties: Map[String, String] = Map.empty) {
+  def withBootstrapServers(servers: String) = copy(bootstrapServers = servers)
+
+  def withRetryPolicy(retryPolicy: ProducerRetryPolicy) = copy(retryPolicy = retryPolicy)
+
+  def withProperties(extraProperties: Map[String, String]) = copy(extraProperties = extraProperties)
 
   def properties: Properties = {
     val props = new Properties
