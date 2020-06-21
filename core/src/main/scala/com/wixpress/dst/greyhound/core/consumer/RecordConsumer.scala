@@ -51,9 +51,11 @@ object RecordConsumer {
           case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
             (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
         })
+      _ <-  UIO(println(s">>>> RecordConsumer before  AdminClient.make")).toManaged_
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
+      _ <-  UIO(println(s">>>> RecordConsumer after  AdminClient.make")).toManaged_
 
       handlerWithRetries <- addRetriesToHandler(config, handler)
       eventLoop <- EventLoop.make(
@@ -63,6 +65,7 @@ object RecordConsumer {
         handler = handlerWithRetries,
         config = config.eventLoopConfig,
         clientId = config.clientId)
+      _ <-  UIO(println(s">>>> RecordConsumer after  EventLoop.make")).toManaged_
     } yield new RecordConsumer[R with Env] {
       override def pause: URIO[R with Env, Unit] =
         eventLoop.pause
