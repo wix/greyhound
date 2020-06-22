@@ -119,6 +119,7 @@ object RetryPolicy {
 }
 
 private case class TopicAttempt(originalTopic: Topic, attempt: Int)
+case class NonRetryableException(cause: Exception) extends Exception(cause)
 
 object RetryHeader {
   val Submitted = "submitTimestamp"
