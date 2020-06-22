@@ -38,6 +38,22 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       } yield success must beSome
     }
 
+  "commit message on failure with NonRetryableException" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(partitions = 1) // sequential processing is needed
+      group <- randomGroup
+      invocations <- Ref.make(0)
+      retryPolicy = RetryPolicy.default(group, 100.milliseconds, 100.milliseconds, 100.milliseconds)
+      retryHandler = failingNonRetryableRecordHandler(invocations).withDeserializers(StringSerde, StringSerde)
+      invocations <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
+        initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy)), retryHandler).use_ {
+        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+          invocations.get.delay(2.seconds)
+      }
+    } yield invocations mustEqual 1
+  }
+
   "configure a regex consumer with a retry policy" in {
     for {
       TestResources(kafka, producer) <- getShared
@@ -68,6 +84,12 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
           done.succeed(()) // Succeed on final retry
         }
       }
+    }
+
+  private def failingNonRetryableRecordHandler(originalTopicInvocations: Ref[Int]) =
+    RecordHandler { r: ConsumerRecord[String, String] =>
+        originalTopicInvocations.updateAndGet(_ + 1) *>
+        ZIO.fail(NonRetryableException(new RuntimeException("Oops!")))
     }
 
   private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
