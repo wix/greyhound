@@ -7,7 +7,7 @@ import zio._
 
 case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]],
                         offsets: Ref[Map[TopicPartition, Offset]],
-                        config: ProducerConfig) extends Producer[Any] {
+                        config: ProducerConfig) extends Producer {
 
   override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata] =
     config match {
