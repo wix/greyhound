@@ -13,12 +13,12 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
-trait Producer[-R] {
-  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R, ProducerError, RecordMetadata]
+trait Producer {
+  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Any, ProducerError, RecordMetadata]
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V]): ZIO[R, ProducerError, RecordMetadata] = {
+                    valueSerializer: Serializer[V]): ZIO[Any, ProducerError, RecordMetadata] = {
     val serializedRecord = for {
       keyBytes <- ZIO.foreach(record.key)(keySerializer.serialize(record.topic, _))
       valueBytes <- valueSerializer.serialize(record.topic, record.value)
@@ -38,10 +38,10 @@ trait Producer[-R] {
 object Producer {
   private val serializer = new ByteArraySerializer
 
-  def make[R](config: ProducerConfig): RManaged[Blocking, Producer[R]] = {
+  def make(config: ProducerConfig): RManaged[Blocking, Producer] = {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
-      new Producer[R] {
+      new Producer {
         override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata] =
           ZIO.effectAsync[Any, ProducerError, RecordMetadata] { cb =>
             producer.send(recordFrom(record), new Callback {
