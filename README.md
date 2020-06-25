@@ -159,7 +159,7 @@ import com.wixpress.dst.greyhound.core.Serdes
 val bootstrapServer = "localhost:9092"
 val config = ProducerConfig(bootstrapServer/*, retryPolicy, extraProperties*/)
 
-Producer.make[Any](config).use { producer =>
+Producer.make(config).use { producer =>
   producer.produce(
     record = ProducerRecord(
       topic = "some-topic",

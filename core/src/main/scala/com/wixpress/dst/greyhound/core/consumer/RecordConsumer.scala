@@ -105,10 +105,11 @@ object RecordConsumer {
       override def clientId: ClientId = config.clientId
     }
 
-  private def addRetriesToHandler[R, E, R3](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]) =
+  private def addRetriesToHandler[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]) =
     config.retryPolicy match {
       case Some(policy) =>
-        Producer.make[Clock](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(ReportingProducer(_))
+        Producer.make(ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
+          ReportingProducer(producer))
           .map(producer => RetryRecordHandler.withRetries(handler, policy, producer, config.initialSubscription))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
