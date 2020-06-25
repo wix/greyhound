@@ -11,6 +11,7 @@ scala_library(
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
+        "//iptf/visibility/visibility-zio/src/main/com/wixpress/visibility/zio",
         "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_clients",
     ],
