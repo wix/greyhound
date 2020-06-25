@@ -12,7 +12,7 @@ import zio.{ZIO, ZManaged, random, test}
 
 object ITEnv {
   type Env = GreyhoundMetrics with Blocking with Console with Clock with Random
-  case class TestResources(kafka: ManagedKafka, producer: ReportingProducer[Any])
+  case class TestResources(kafka: ManagedKafka, producer: ReportingProducer)
 
   def ManagedEnv =
     (GreyhoundMetrics.liveLayer ++ test.environment.liveEnvironment).build
@@ -20,7 +20,7 @@ object ITEnv {
   def testResources(): ZManaged[Blocking with GreyhoundMetrics, Throwable, TestResources] = {
     for {
       kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
-      producer <- Producer.make[Any](ProducerConfig(kafka.bootstrapServers))
+      producer <- Producer.make(ProducerConfig(kafka.bootstrapServers))
     } yield TestResources(kafka, ReportingProducer(producer))
   }
 
