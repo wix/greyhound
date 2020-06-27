@@ -9,6 +9,7 @@ scala_library(
         ":sources",
     ],
     deps = [
+        "//iptf/visibility/visibility-zio/src/main/com/wixpress/visibility/zio:zio",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",

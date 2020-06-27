@@ -12,19 +12,19 @@ import zio.duration.Duration
 import zio.duration._
 
 trait Dispatcher[-R] {
-  def submit(record: Record): URIO[R, SubmitResult]
+  def submit(record: Record): URIO[R with Clock with GreyhoundMetrics,SubmitResult]
 
-  def resumeablePartitions(paused: Set[TopicPartition]): URIO[R, Set[TopicPartition]]
+  def resumeablePartitions(paused: Set[TopicPartition]): UIO[Set[TopicPartition]]
 
-  def revoke(partitions: Set[TopicPartition]): URIO[R, Unit]
+  def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics,Unit]
 
-  def pause: URIO[R, Unit]
+  def pause: URIO[GreyhoundMetrics, Unit]
 
-  def resume: URIO[R, Unit]
+  def resume: URIO[GreyhoundMetrics, Unit]
 
-  def shutdown: URIO[R, Unit]
+  def shutdown: URIO[GreyhoundMetrics, Unit]
 
-  def expose: URIO[R, DispatcherExposedState]
+  def expose: UIO[DispatcherExposedState]
 
 }
 
@@ -35,12 +35,12 @@ object Dispatcher {
               clientId: ClientId,
               handle: Record => URIO[R, Any],
               lowWatermark: Int,
-              highWatermark: Int): UIO[Dispatcher[R with GreyhoundMetrics with Clock]] =
+              highWatermark: Int): UIO[Dispatcher[R]] =
     for {
       state <- Ref.make[State](State.Running)
       workers <- Ref.make(Map.empty[TopicPartition, Worker])
-    } yield new Dispatcher[R with GreyhoundMetrics with Clock] {
-      override def submit(record: Record): URIO[R with GreyhoundMetrics with Clock, SubmitResult] =
+    } yield new Dispatcher[R] {
+      override def submit(record: Record): URIO[R with Clock with GreyhoundMetrics,SubmitResult] =
         for {
           _ <- report(SubmittingRecord(group, clientId, record))
           partition = TopicPartition(record)
@@ -64,14 +64,14 @@ object Dispatcher {
           }
         }
 
-      override def expose: URIO[R with GreyhoundMetrics with Clock, DispatcherExposedState] =
+      override def expose: UIO[DispatcherExposedState] =
         for {
           dispatcherState <- state.get
           workers <- workers.get
           workersState <- ZIO.foreach(workers) { case (tp, worker) => worker.expose.map(pending => (tp, pending)) }.map(_.toMap)
         } yield DispatcherExposedState(workersState, dispatcherState)
 
-      override def revoke(partitions: Set[TopicPartition]): URIO[R with GreyhoundMetrics with Clock, Unit] =
+      override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] =
         workers.modify { workers =>
           partitions.foldLeft((List.empty[(TopicPartition, Worker)], workers)) {
             case ((revoked, remaining), partition) =>
@@ -82,7 +82,7 @@ object Dispatcher {
           }
         }.flatMap(shutdownWorkers)
 
-      override def pause: UIO[Unit] = for {
+      override def pause: URIO[GreyhoundMetrics, Unit] = for {
         resume <- Promise.make[Nothing, Unit]
         _ <- state.updateSome {
           case State.Running =>
@@ -90,12 +90,12 @@ object Dispatcher {
         }
       } yield ()
 
-      override def resume: UIO[Unit] = state.modify {
+      override def resume: URIO[GreyhoundMetrics, Unit] = state.modify {
         case State.Paused(resume) => (resume.succeed(()).unit, State.Running)
         case state => (ZIO.unit, state)
       }.flatten
 
-      override def shutdown: URIO[R with GreyhoundMetrics with Clock, Unit] =
+      override def shutdown: URIO[GreyhoundMetrics, Unit] =
         state.modify(state => (state, State.ShuttingDown)).flatMap {
           case State.Paused(resume) => resume.succeed(()).unit
           case _ => ZIO.unit
@@ -160,7 +160,7 @@ object Dispatcher {
                 capacity: Int,
                 group: Group,
                 clientId: ClientId,
-                partition: TopicPartition): URIO[R with GreyhoundMetrics with Clock, Worker] = for {
+                partition: TopicPartition): URIO[R with Clock with GreyhoundMetrics, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
       internalState <- Ref.make(WorkerInternalState.empty)
       fiber <-
@@ -186,7 +186,7 @@ object Dispatcher {
                             queue: Queue[Record],
                             group: Group,
                             clientId: ClientId,
-                            partition: TopicPartition): URIO[R with GreyhoundMetrics with Clock, Boolean] =
+                            partition: TopicPartition): URIO[R with Clock with GreyhoundMetrics, Boolean] =
       internalState.update(_.cleared) *>
         state.get.flatMap {
           case State.Running => queue.take.flatMap { record =>
