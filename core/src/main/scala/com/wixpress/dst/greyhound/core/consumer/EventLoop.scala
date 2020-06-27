@@ -16,18 +16,18 @@ import scala.collection.JavaConverters._
 
 trait EventLoop[-R] extends Resource[R] {
   self =>
-  def state: URIO[R with GreyhoundMetrics, DispatcherExposedState]
+  def state: UIO[DispatcherExposedState]
 }
 
 object EventLoop {
   type Handler[-R] = RecordHandler[R, Nothing, Chunk[Byte], Chunk[Byte]]
 
-  def make[R1, R2](group: Group,
-                   initialSubscription: ConsumerSubscription,
-                   consumer: Consumer[R1],
-                   handler: Handler[R2],
-                   clientId: ClientId,
-                   config: EventLoopConfig = EventLoopConfig.Default): RManaged[R1 with R2 with GreyhoundMetrics with Env, EventLoop[R2 with GreyhoundMetrics with Clock]] = {
+  def make[R](group: Group,
+              initialSubscription: ConsumerSubscription,
+              consumer: Consumer,
+              handler: Handler[R],
+              clientId: ClientId,
+              config: EventLoopConfig = EventLoopConfig.Default): RManaged[R with GreyhoundMetrics with Env, EventLoop[GreyhoundMetrics]] = {
     val start = for {
       _ <- report(StartingEventLoop(clientId, group))
       offsets <- Offsets.make
@@ -36,13 +36,13 @@ object EventLoop {
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
-      runtime <- ZIO.runtime[R2 with GreyhoundMetrics with Clock]
+      runtime <- ZIO.runtime[R with GreyhoundMetrics with Clock]
       rebalanceListener = listener(runtime, pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
       _ <- ZIO.whenCase(initialSubscription) {
         case TopicPattern(pattern, _) =>
-          consumer.subscribePattern[Blocking with R1](pattern, rebalanceListener)
+          consumer.subscribePattern(pattern, rebalanceListener)
         case Topics(topics) =>
-          consumer.subscribe[Blocking with R1](topics, rebalanceListener)
+          consumer.subscribe(topics, rebalanceListener)
       }
       running <- Ref.make(true)
       fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group)
@@ -60,11 +60,11 @@ object EventLoop {
       } yield ()
     }.map {
       case (dispatcher, fiber, _, _) =>
-        new EventLoop[R2 with GreyhoundMetrics with Clock] {
-          override def pause: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
+        new EventLoop[GreyhoundMetrics] {
+          override def pause: URIO[GreyhoundMetrics, Unit] =
             report(PausingEventLoop(clientId, group)) *> dispatcher.pause
 
-          override def resume: URIO[R2 with GreyhoundMetrics with Clock, Unit] =
+          override def resume: URIO[GreyhoundMetrics, Unit] =
             report(ResumingEventLoop(clientId, group)) *> dispatcher.resume
 
           override def isAlive: UIO[Boolean] = fiber.poll.map {
@@ -72,19 +72,19 @@ object EventLoop {
             case _ => true
           }
 
-          override def state: URIO[R2 with GreyhoundMetrics with Clock, DispatcherExposedState] = dispatcher.expose
+          override def state: UIO[DispatcherExposedState] = dispatcher.expose
         }
     }
   }
 
-  private def pollOnce[R1, R2](running: Ref[Boolean],
-                               consumer: Consumer[R1],
-                               dispatcher: Dispatcher[R2],
-                               paused: Ref[Set[TopicPartition]],
-                               offsets: Offsets,
-                               config: EventLoopConfig,
-                               clientId: ClientId,
-                               group: Group): URIO[R1 with R2 with GreyhoundMetrics, Boolean] =
+  private def pollOnce[R2](running: Ref[Boolean],
+                           consumer: Consumer,
+                           dispatcher: Dispatcher[R2],
+                           paused: Ref[Set[TopicPartition]],
+                           offsets: Offsets,
+                           config: EventLoopConfig,
+                           clientId: ClientId,
+                           group: Group): URIO[R2 with GreyhoundMetrics with Clock with Blocking, Boolean] =
     running.get.flatMap {
       case true =>
         for {
@@ -97,11 +97,13 @@ object EventLoop {
     }
 
   private def listener[R2, R1](runtime: Runtime[R2 with GreyhoundMetrics with Clock],
-                               pausedPartitionsRef: Ref[Set[TopicPartition]], config: EventLoopConfig, dispatcher: Dispatcher[R2],
+                               pausedPartitionsRef: Ref[Set[TopicPartition]],
+                               config: EventLoopConfig,
+                               dispatcher: Dispatcher[R2],
                                partitionsAssigned: Promise[Nothing, Unit],
-                               group: Group, consumer: Consumer[R1], clientId: ClientId, offsets: Offsets) = {
-    new RebalanceListener[Blocking with R1] {
-      override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
+                               group: Group, consumer: Consumer, clientId: ClientId, offsets: Offsets) = {
+    new RebalanceListener[Blocking with GreyhoundMetrics with R1] {
+      override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[Blocking with GreyhoundMetrics with R1, Any] =
         ZIO.effectTotal {
           //todo: isn't this just boxing and unboxing? can't we eliminate it?
           /**
@@ -128,7 +130,7 @@ object EventLoop {
   }
 
 
-  private def resumePartitions[R1, R2](consumer: Consumer[R1],
+  private def resumePartitions[R1, R2](consumer: Consumer,
                                        clientId: ClientId,
                                        group: Group,
                                        dispatcher: Dispatcher[R2],
@@ -145,7 +147,7 @@ object EventLoop {
 
   private val emptyRecords = ZIO.succeed(ConsumerRecords.empty())
 
-  private def pollAndHandle[R1, R2](consumer: Consumer[R1],
+  private def pollAndHandle[R1, R2](consumer: Consumer,
                                     dispatcher: Dispatcher[R2],
                                     pausedRef: Ref[Set[TopicPartition]],
                                     config: EventLoopConfig,
@@ -167,7 +169,7 @@ object EventLoop {
         }.flatMap(pausedTopics => pausedRef.update(_ => pausedTopics)))
     }
 
-  private def commitOffsets[R](consumer: Consumer[R],
+  private def commitOffsets[R](consumer: Consumer,
                                offsets: Offsets,
                                calledOnRebalance: Boolean = false) =
     offsets.committable.flatMap { committable =>
