@@ -11,6 +11,7 @@ scala_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
+        "//iptf/visibility/visibility-zio/src/main/com/wixpress/visibility/zio",
         "@dev_zio_zio_2_12",
     ],
 )

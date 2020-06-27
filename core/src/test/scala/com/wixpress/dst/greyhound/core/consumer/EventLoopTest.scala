@@ -28,7 +28,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
   "recover from consumer failing to poll" in {
     for {
       invocations <- Ref.make(0)
-      consumer = new EmptyConsumer[Any] {
+      consumer = new EmptyConsumer {
         override def poll(timeout: Duration): Task[Records] =
           invocations.updateAndGet(_ + 1).flatMap {
             case 1 => ZIO.fail(exception)
@@ -40,7 +40,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
       handler = RecordHandler(promise.succeed)
       handled <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId").use_(promise.await)
       metrics <- TestMetrics.reported
-    } yield ((handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception))))
+    } yield (handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception)))
   }
 
   "recover from consumer failing to commit" in {
@@ -48,7 +48,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
       pollInvocations <- Ref.make(0)
       commitInvocations <- Ref.make(0)
       promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
-      consumer = new EmptyConsumer[Any] {
+      consumer = new EmptyConsumer {
         override def poll(timeout: Duration): Task[Records] =
           pollInvocations.updateAndGet(_ + 1).flatMap {
             case 1 => ZIO.succeed(recordsFrom(record))
@@ -61,7 +61,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
             case _ => promise.succeed(offsets).unit
           }
       }
-      committed <- EventLoop.make("group",  Topics(Set(topic)),ReportingConsumer(clientId, group, consumer), RecordHandler.empty, "clientId").use_(promise.await)
+      committed <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), RecordHandler.empty, "clientId").use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic(), record.partition()) -> (offset + 1)))))
@@ -70,7 +70,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
   "expose event loop health" in {
     for {
       _ <- ZIO.unit
-      sickConsumer = new EmptyConsumer[Any] {
+      sickConsumer = new EmptyConsumer {
         override def poll(timeout: Duration): Task[Records] =
           ZIO.dieMessage("cough :(")
       }
@@ -97,26 +97,26 @@ object EventLoopTest {
   }
 }
 
-trait EmptyConsumer[R] extends Consumer[R] {
+trait EmptyConsumer extends Consumer {
 
-  override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[R with R1, Unit] =
+  override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[R1, Unit] =
     rebalanceListener.onPartitionsAssigned(Set(TopicPartition("", 0))).unit
 
-  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R with R1, Unit] =
+  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R1, Unit] =
     rebalanceListener.onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit
 
-  override def poll(timeout: Duration): RIO[R, Records] =
+  override def poll(timeout: Duration): Task[Records] =
     ZIO.succeed(ConsumerRecords.empty())
 
-  override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[R, Unit] =
+  override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): Task[Unit] =
     ZIO.unit
 
-  override def pause(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit] =
+  override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def resume(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit] =
+  override def resume(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def seek(partition: TopicPartition, offset: Offset): ZIO[R, IllegalStateException, Unit] =
+  override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 }
