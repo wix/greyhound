@@ -23,9 +23,9 @@ trait RecordConsumer[-R] extends Resource[R] {
 
   def clientId: ClientId
 
-  def state[R1]: URIO[Env with R with R1, RecordConsumerExposedState]
+  def state: UIO[RecordConsumerExposedState]
 
-  def topology[R1]: URIO[Env with R with R1, RecordConsumerTopology]
+  def topology: UIO[RecordConsumerTopology]
 
   def resubscribe[R1](topics: Set[Topic], listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
 
@@ -73,10 +73,10 @@ object RecordConsumer {
       override def isAlive: URIO[R with Env, Boolean] =
         eventLoop.isAlive
 
-      override def state[R1]: URIO[Env with R with R1, RecordConsumerExposedState] =
+      override def state: UIO[RecordConsumerExposedState] =
         eventLoop.state.map(state => RecordConsumerExposedState(state, config.clientId))
 
-      override def topology[R1]: URIO[Env with R with R1, RecordConsumerTopology] =
+      override def topology: UIO[RecordConsumerTopology] =
         consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(subscription))
 
       override def group: Group = config.group

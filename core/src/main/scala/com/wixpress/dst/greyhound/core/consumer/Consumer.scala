@@ -6,6 +6,7 @@ import java.{time, util}
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, ConsumerRecords, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig, ConsumerRecord => KafkaConsumerRecord}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
@@ -16,22 +17,22 @@ import zio.duration.Duration
 import scala.collection.JavaConverters._
 import scala.util.Random
 
-trait Consumer[R] {
-  def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[R with R1, Unit]
+trait Consumer {
+  def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
 
-  def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[R with R1, Unit]
+  def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
 
-  def poll(timeout: Duration): RIO[R, Records]
+  def poll(timeout: Duration): RIO[Blocking with GreyhoundMetrics, Records]
 
-  def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean = false): RIO[R, Unit]
+  def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean = false): RIO[Blocking with GreyhoundMetrics, Unit]
 
-  def pause(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit]
+  def pause(partitions: Set[TopicPartition]): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
 
-  def resume(partitions: Set[TopicPartition]): ZIO[R, IllegalStateException, Unit]
+  def resume(partitions: Set[TopicPartition]): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
 
-  def seek(partition: TopicPartition, offset: Offset): ZIO[R, IllegalStateException, Unit]
+  def seek(partition: TopicPartition, offset: Offset): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
 
-  def pause(record: ConsumerRecord[_, _]): ZIO[R, IllegalStateException, Unit] = {
+  def pause(record: ConsumerRecord[_, _]): ZIO[GreyhoundMetrics, IllegalStateException, Unit] = {
     val partition = TopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }
@@ -49,29 +50,29 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(config: ConsumerConfig): RManaged[Blocking, Consumer[Blocking]] = for {
+  def make(config: ConsumerConfig): RManaged[Blocking, Consumer] = for {
     semaphore <- Semaphore.make(1).toManaged_
     consumer <- makeConsumer(config)
-  } yield new Consumer[Blocking] {
+  } yield new Consumer {
     override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
       listener(rebalanceListener).flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
     override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-      listener(rebalanceListener).flatMap(lis => withConsumer(_.subscribe(topics.asJava, lis)))
+      listener(rebalanceListener).flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
     override def poll(timeout: Duration): RIO[Blocking, Records] =
-      withConsumer(_.poll(time.Duration.ofMillis(timeout.toMillis)))
+      withConsumerBlocking(_.poll(time.Duration.ofMillis(timeout.toMillis)))
 
     override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Blocking, Unit] =
       if (calledOnRebalance) Task(consumer.commitSync(kafkaOffsets(offsets)))
-      else withConsumer(_.commitSync(kafkaOffsets(offsets)))
+      else withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
 
-    override def pause(partitions: Set[TopicPartition]): ZIO[Blocking, IllegalStateException, Unit] =
+    override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
       withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie {
         case e: IllegalStateException => e
       }
 
-    override def resume(partitions: Set[TopicPartition]): ZIO[Blocking, IllegalStateException, Unit] =
+    override def resume(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
       withConsumer(consumer => {
         val onlySubscribed = consumer.assignment().asScala.toSet intersect kafkaPartitions(partitions).asScala.toSet
         consumer.resume(onlySubscribed.asJavaCollection)
@@ -79,12 +80,15 @@ object Consumer {
         case e: IllegalStateException => e
       }
 
-    override def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking, IllegalStateException, Unit] =
+    override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
       withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset)).refineOrDie {
         case e: IllegalStateException => e
       }
 
-    private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
+    private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): Task[A] =
+      semaphore.withPermit(Task(f(consumer)))
+
+    private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
       semaphore.withPermit(effectBlocking(f(consumer)))
 
     private def kafkaOffsets(offsets: Map[TopicPartition, Offset]): util.Map[KafkaTopicPartition, OffsetAndMetadata] =
