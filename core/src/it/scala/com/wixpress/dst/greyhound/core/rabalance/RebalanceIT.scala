@@ -5,7 +5,7 @@ import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
 import com.wixpress.dst.greyhound.core.{Group, Topic}
-import com.wixpress.dst.greyhound.testkit.ITEnv
+import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import com.wixpress.dst.greyhound.testkit.ITEnv._
 import zio._
 
@@ -34,7 +34,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
           handledSome.countDown *>
           handledAll.countDown
       }
-      consumer = RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler)
+      consumer = RecordConsumer.make(configFor(topic, group, kafka), handler)
 
       startProducing1 <- Promise.make[Nothing, Unit]
       consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
@@ -71,7 +71,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
           handledSome.countDown *>
           handledAll.countDown
       }
-      consumer = RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler)
+      consumer = RecordConsumer.make(configFor(topic, group, kafka), handler)
 
       startProducing1 <- Promise.make[Nothing, Unit]
       consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
@@ -108,11 +108,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
 
       startProducing <- Promise.make[Nothing, Unit]
-      config1 = RecordConsumerConfig(
-        bootstrapServers = kafka.bootstrapServers,
-        clientId = "client-1",
-        group = group,
-        initialSubscription = Topics(Set(topic)),
+      config1 = configFor(topic, group, kafka).copy(clientId = "client-1",
         eventLoopConfig = EventLoopConfig.Default.copy(
           rebalanceListener = new RebalanceListener[Any] {
             override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
@@ -120,7 +116,8 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
             override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
               ZIO.unit
-          }))
+          }),
+        extraProperties = fastConsumerMetadataFetching)
       consumer1 <- RecordConsumer.make(config1, handler1).use_ {
         startProducing.succeed(()) *> latch.await
       }.fork
@@ -134,7 +131,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
       handler2 = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
         latch.countDown
       }
-      config2 = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), clientId = "client-2")
+      config2 = configFor(topic, group, kafka).copy(clientId = "client-2")
       consumer2 <- RecordConsumer.make(config2, handler2).use_ {
         latch.await
       }.fork
@@ -151,12 +148,16 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
     TestResources(kafka, producer) <- getShared
     latch <- CountDownLatch.make(partitions)
     handler = RecordHandler((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
-    _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler).use_ {
+    _ <- RecordConsumer.make(configFor(topic, group, kafka), handler).use_ {
       ZIO.foreachPar_(0 until partitions) { partition =>
         producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
       } *> latch.await
     }
   } yield ()
 
+  private def configFor(topic: Topic, group: Group, kafka: ManagedKafka) =
+    RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching)
+
+  private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
 }
 

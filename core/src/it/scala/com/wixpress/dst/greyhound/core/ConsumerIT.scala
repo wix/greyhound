@@ -29,8 +29,8 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   "produce and consume a single message" in {
     for {
       TestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic(prefix = "topic1")
-      topic2 <- kafka.createRandomTopic(prefix = "topic2")
+      topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
+      topic2 <- kafka.createRandomTopic(prefix = "topic2-single1")
       group <- randomGroup
 
       queue <- Queue.unbounded[ConsumerRecord[String, String]]
@@ -38,7 +38,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         .withDeserializers(StringSerde, StringSerde)
         .ignore
       cId <- clientId
-      config = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), clientId = cId, extraProperties = fastConsumerMetadataFetching)
+      config = configFor(kafka, group, topic).copy(clientId = cId)
       record = ProducerRecord(topic, "bar", Some("foo"))
 
       messages <- RecordConsumer.make(config, handler).use { consumer =>
@@ -63,7 +63,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       TestResources(kafka, producer) <- getShared
       _ <- console.putStrLn(">>>> starting test: throttlingTest")
 
-      topic <- kafka.createRandomTopic(partitions = 2)
+      topic <- kafka.createRandomTopic(partitions = 2, prefix = "core-not-lose")
       group <- randomGroup
 
       messagesPerPartition = 500 // Exceeds the queue capacity
@@ -77,7 +77,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         }
       }
 
-      test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler).use_ {
+      test <- RecordConsumer.make(configFor(kafka, group, topic), handler).use_ {
         val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
         val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
         for {
@@ -99,7 +99,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       TestResources(kafka, producer) <- getShared
       _ <- console.putStrLn(">>>> starting test: pauseResumeTest")
 
-      topic <- kafka.createRandomTopic()
+      topic <- kafka.createRandomTopic(prefix = "core-pause-resume")
       group <- randomGroup
 
       numberOfMessages = 32
@@ -111,7 +111,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         handledSomeMessages.countDown zipParRight handledAllMessages.countDown
       }
 
-      test <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler).use { consumer =>
+      test <- RecordConsumer.make(configFor(kafka, group, topic), handler).use { consumer =>
         val record = ProducerRecord(topic, Chunk.empty)
         for {
           _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
@@ -132,7 +132,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     for {
       TestResources(kafka, producer) <- getShared
       _ <- console.putStrLn(">>>> starting test: gracefulShutdownTest")
-      topic <- kafka.createRandomTopic()
+      topic <- kafka.createRandomTopic(prefix = "core-wait-until")
       group <- randomGroup
 
       ref <- Ref.make(0)
@@ -143,7 +143,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           ref.update(_ + 1)
       }
 
-      _ <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic))), handler).use_ {
+      _ <- RecordConsumer.make(configFor(kafka, group, topic), handler).use_ {
         producer.produce(ProducerRecord(topic, Chunk.empty)) *>
           startedHandling.await
       }
@@ -158,7 +158,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     for {
       TestResources(kafka, producer) <- getShared
       _ <- console.putStrLn(">>>> starting test: earliestTest")
-      topic <- kafka.createRandomTopic()
+      topic <- kafka.createRandomTopic(prefix = "core-from-earliest")
       group <- randomGroup
 
       queue <- Queue.unbounded[ConsumerRecord[String, String]]
@@ -169,12 +169,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       record = ProducerRecord(topic, "bar", Some("foo"))
       _ <- producer.produce(record, StringSerde, StringSerde)
 
-      message <- RecordConsumer.make(
-        RecordConsumerConfig(
-          kafka.bootstrapServers,
-          group,
-          Topics(Set(topic)),
-          offsetReset = Earliest), handler).use_ {
+      message <- RecordConsumer.make(configFor(kafka, group, topic).copy(offsetReset = Earliest), handler).use_ {
         queue.take
       }.timeout(10.seconds)
     } yield {
@@ -187,7 +182,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       _ <- console.putStrLn(">>>> starting test: throttleWhileRebalancingTest")
       TestResources(kafka, producer) <- getShared
       partitions = 50
-      topic <- kafka.createRandomTopic(partitions)
+      topic <- kafka.createRandomTopic(partitions, prefix = "core-not-lose-while-throttling")
       group <- randomGroup
       probe <- Ref.make(Map.empty[Partition, Seq[Offset]])
       messagesPerPartition = 500
@@ -219,7 +214,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   "subscribe to a pattern" in {
     for {
       _ <- console.putStrLn(">>>> starting test: patternTest")
-      topic = "topicXYZ"
+      topic = "core-subscribe-pattern-topic"
       TestResources(kafka, producer) <- getShared
       _ <- kafka.createTopic(TopicConfig(topic, 1, 1, delete))
       group <- randomGroup
@@ -228,7 +223,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         probe.update(_ => Some(record.offset))
       }
 
-      test <- makeConsumer(kafka, Pattern.compile("topicX.*"), group, handler, 0).use_ {
+      _ <- makeConsumer(kafka, Pattern.compile("core-subscribe-pattern.*"), group, handler, 0).use_ {
         val record = ProducerRecord(topic, Chunk.empty, key = Option(Chunk.empty))
         producer.produce(record).flatMap(_ =>
           probe.get.flatMap(actual =>
@@ -244,10 +239,16 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
 
   private def makeConsumer(kafka: ManagedKafka, topic: String, group: String, handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
-    RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), clientId = s"client-$i", offsetReset = OffsetReset.Earliest, extraProperties = fastConsumerMetadataFetching), handler)
+    RecordConsumer.make(configFor(kafka, group, topic).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
 
   private def makeConsumer(kafka: ManagedKafka, pattern: Pattern, group: String, handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
-    RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group, TopicPattern(pattern), clientId = s"client-$i", offsetReset = OffsetReset.Earliest, extraProperties = fastConsumerMetadataFetching), handler)
+    RecordConsumer.make(configFor(kafka, group, pattern).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
+
+  private def configFor(kafka: ManagedKafka, group: Group, topic: Topic) =
+    RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching)
+
+  private def configFor(kafka: ManagedKafka, group: Group, pattern: Pattern) =
+    RecordConsumerConfig(kafka.bootstrapServers, group, TopicPattern(pattern), extraProperties = fastConsumerMetadataFetching)
 
   private def errorMsg(offsets: Map[Partition, Seq[Offset]], expected: Map[Partition, Seq[Offset]]) =
     s"expected $expected, got $offsets"
