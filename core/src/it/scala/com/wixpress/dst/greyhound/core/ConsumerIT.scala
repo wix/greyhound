@@ -111,7 +111,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         handledSomeMessages.countDown zipParRight handledAllMessages.countDown
       }
 
-      test <- RecordConsumer.make(configFor(kafka, group, topic), handler).use { consumer =>
+      test <- RecordConsumer.make(configFor(kafka, group, topic).copy(offsetReset = OffsetReset.Earliest), handler).use { consumer =>
         val record = ProducerRecord(topic, Chunk.empty)
         for {
           _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))

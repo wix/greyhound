@@ -6,6 +6,7 @@ import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
 import com.wixpress.dst.greyhound.core.{Group, Topic}
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
+import zio.duration._
 import com.wixpress.dst.greyhound.testkit.ITEnv._
 import zio._
 
@@ -19,7 +20,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
   "don't reprocess messages after rebalance" in {
     for {
       TestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic()
+      topic <- kafka.createRandomTopic(prefix = "rebalance-dont-reprocess")
       group <- randomGroup
 
       allMessages = 400
@@ -34,7 +35,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
           handledSome.countDown *>
           handledAll.countDown
       }
-      consumer = RecordConsumer.make(configFor(topic, group, kafka), handler)
+      consumer = RecordConsumer.make(configFor(topic, group, kafka).copy(offsetReset = OffsetReset.Earliest), handler)
 
       startProducing1 <- Promise.make[Nothing, Unit]
       consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
@@ -45,45 +46,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
       consumer2 <- consumer.use_(startProducing2.succeed(()) *> handledAll.await).fork
       _ <- startProducing2.await *> ZIO.foreachPar(someMessages until allMessages)(_ => produce)
 
-      _ <- consumer1.join
-      _ <- consumer2.join
-      allInvocations <- invocations.get
-    } yield {
-      allInvocations must equalTo(allMessages)
-    }
-  }
-
-  "don't reprocess messages after rebalance" in {
-    for {
-      TestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic()
-      group <- randomGroup
-
-      allMessages = 400
-      someMessages = 100
-      produce = producer.produce(ProducerRecord(topic, Chunk.empty))
-
-      invocations <- Ref.make(0)
-      handledAll <- CountDownLatch.make(allMessages)
-      handledSome <- CountDownLatch.make(someMessages)
-      handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-        invocations.update(_ + 1) *>
-          handledSome.countDown *>
-          handledAll.countDown
-      }
-      consumer = RecordConsumer.make(configFor(topic, group, kafka), handler)
-
-      startProducing1 <- Promise.make[Nothing, Unit]
-      consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
-      _ <- startProducing1.await *> ZIO.foreachPar(0 until someMessages)(_ => produce)
-
-      _ <- handledSome.await
-      startProducing2 <- Promise.make[Nothing, Unit]
-      consumer2 <- consumer.use_(startProducing2.succeed(()) *> handledAll.await).fork
-      _ <- startProducing2.await *> ZIO.foreachPar(someMessages until allMessages)(_ => produce)
-
-      _ <- consumer1.join
-      _ <- consumer2.join
+      _ <- ZIO.foreach(Seq(consumer1, consumer2))(_.join.timeoutFail(TimeoutJoiningConsumer())(30.seconds))
       allInvocations <- invocations.get
     } yield {
       allInvocations must equalTo(allMessages)
@@ -97,7 +60,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       partitions = 2
       messagesPerPartition = 2
-      topic <- kafka.createRandomTopic(partitions = partitions)
+      topic <- kafka.createRandomTopic(partitions = partitions, prefix = "rebalance-drain-queues")
       _ <- verifyGroupCommitted(topic, group, partitions)
 
       latch <- CountDownLatch.make(messagesPerPartition * partitions)
@@ -108,7 +71,9 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
 
       startProducing <- Promise.make[Nothing, Unit]
-      config1 = configFor(topic, group, kafka).copy(clientId = "client-1",
+      config1 = configFor(topic, group, kafka).copy(
+        clientId = "client-1",
+        offsetReset = OffsetReset.Earliest,
         eventLoopConfig = EventLoopConfig.Default.copy(
           rebalanceListener = new RebalanceListener[Any] {
             override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
@@ -136,8 +101,8 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
         latch.await
       }.fork
 
-      _ <- consumer1.join
-      _ <- consumer2.join
+      _ <- ZIO.foreach(Seq(consumer1, consumer2))(_.join.timeoutFail(TimeoutJoiningConsumer())(30.seconds))
+
       handled <- latch.count
     } yield {
       handled must equalTo(0)
@@ -161,3 +126,5 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
   private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
 }
 
+
+case class TimeoutJoiningConsumer() extends RuntimeException
