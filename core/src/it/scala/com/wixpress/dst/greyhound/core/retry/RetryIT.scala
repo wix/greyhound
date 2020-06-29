@@ -55,7 +55,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
   private def configFor(kafka: ManagedKafka, topic: String, group: String, retryPolicy: RetryPolicy) = {
     RecordConsumerConfig(kafka.bootstrapServers, group,
       initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy),
-      extraProperties = fastConsumerMetadataFetching)
+      extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
   }
 
   "configure a regex consumer with a retry policy" in {
@@ -69,7 +69,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
       success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
         initialSubscription = TopicPattern(Pattern.compile("topic-1.*")), retryPolicy = Some(retryPolicy),
-        extraProperties = fastConsumerMetadataFetching), retryHandler).use_ {
+        extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest), retryHandler).use_ {
         producer.produce(ProducerRecord("topic-111", "bar", Some("foo")), StringSerde, StringSerde) *>
           done.await.timeout(20.seconds)
       }
