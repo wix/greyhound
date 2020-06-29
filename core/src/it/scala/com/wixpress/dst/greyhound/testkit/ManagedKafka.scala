@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{RIO, RManaged}
+import zio.{RIO, RManaged, ZIO}
 
 import scala.reflect.io.Directory
 
@@ -16,6 +16,8 @@ trait ManagedKafka {
   def bootstrapServers: String
 
   def createTopic(config: TopicConfig): RIO[Blocking, Unit]
+
+  def createTopics(configs: TopicConfig*): RIO[Blocking, Unit]
 }
 
 object ManagedKafka {
@@ -33,6 +35,9 @@ object ManagedKafka {
     override def createTopic(config: TopicConfig): RIO[Blocking, Unit] = effectBlocking {
       adminZkClient.createTopic(config.name, config.partitions, config.replicationFactor, config.properties)
     }
+
+    override def createTopics(configs: TopicConfig*): RIO[Blocking, Unit] =
+      ZIO.foreachParN(4)(configs)(createTopic).unit
   }
 
   private def tempDirectory(path: String) = {
@@ -108,10 +113,17 @@ case class KafkaServerConfig(port: Int,
 sealed trait ManagedKafkaMetric extends GreyhoundMetric
 
 object ManagedKafkaMetric {
+
   case class CreatingTempDirectory(path: String) extends ManagedKafkaMetric
+
   case class DeletingTempDirectory(path: String) extends ManagedKafkaMetric
+
   case class StartingZooKeeper(port: Int) extends ManagedKafkaMetric
+
   case object StoppingZooKeeper extends ManagedKafkaMetric
+
   case class StartingKafka(port: Int) extends ManagedKafkaMetric
+
   case object StoppingKafka extends ManagedKafkaMetric
+
 }
