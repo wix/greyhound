@@ -14,13 +14,13 @@ object GreyhoundMetrics {
     ZIO.accessM(_.get.report(metric))
 
   object Service {
-    val Live = {
+    lazy val Live = {
       val logger = LoggerFactory.getLogger("metrics")
       fromReporter(metric => logger.info(metric.toString))
     }
   }
-  val liveLayer = ZLayer.succeed(Service.Live)
-  val live = Has(Service.Live)
+  lazy val liveLayer = ZLayer.succeed(Service.Live)
+  lazy val live = Has(Service.Live)
 
   def fromReporter(report: GreyhoundMetric => Unit): GreyhoundMetrics.Service =
     metric => ZIO.effectTotal(report(metric))
