@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPatte
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
-import com.wixpress.dst.greyhound.testkit.ITEnv
+import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import com.wixpress.dst.greyhound.testkit.ITEnv._
 import zio._
 import zio.duration._
@@ -20,23 +20,22 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   override def sharedEnv: ZManaged[Env, Throwable, TestResources] = testResources()
 
-    "configure a handler with retry policy" in {
-      for {
-        TestResources(kafka, producer) <- getShared
-        topic <- kafka.createRandomTopic()
-        group <- randomGroup
+  "configure a retry policy" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic()
+      group <- randomGroup
 
-        invocations <- Ref.make(0)
-        done <- Promise.make[Nothing, Unit]
-        retryPolicy = RetryPolicy.default(group, 1.second, 1.seconds, 1.seconds)
-        retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
-        success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
-          initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy)), retryHandler).use_ {
-          producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-            done.await.timeout(20.seconds)
-        }
-      } yield success must beSome
-    }
+      invocations <- Ref.make(0)
+      done <- Promise.make[Nothing, Unit]
+      retryPolicy = RetryPolicy.default(group, 1.second, 1.seconds, 1.seconds)
+      retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
+      success <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+          done.await.timeout(20.seconds)
+      }
+    } yield success must beSome
+  }
 
   "commit message on failure with NonRetryableException" in {
     for {
@@ -46,12 +45,17 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       invocations <- Ref.make(0)
       retryPolicy = RetryPolicy.default(group, 100.milliseconds, 100.milliseconds, 100.milliseconds)
       retryHandler = failingNonRetryableRecordHandler(invocations).withDeserializers(StringSerde, StringSerde)
-      invocations <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
-        initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy)), retryHandler).use_ {
+      invocations <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
           invocations.get.delay(2.seconds)
       }
     } yield invocations mustEqual 1
+  }
+
+  private def configFor(kafka: ManagedKafka, topic: String, group: String, retryPolicy: RetryPolicy) = {
+    RecordConsumerConfig(kafka.bootstrapServers, group,
+      initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy),
+      extraProperties = fastConsumerMetadataFetching)
   }
 
   "configure a regex consumer with a retry policy" in {
@@ -88,7 +92,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   private def failingNonRetryableRecordHandler(originalTopicInvocations: Ref[Int]) =
     RecordHandler { r: ConsumerRecord[String, String] =>
-        originalTopicInvocations.updateAndGet(_ + 1) *>
+      originalTopicInvocations.updateAndGet(_ + 1) *>
         ZIO.fail(NonRetryableException(new RuntimeException("Oops!")))
     }
 
