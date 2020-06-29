@@ -3,12 +3,13 @@ package com.wixpress.dst.greyhound.testkit
 import java.util.Properties
 
 import com.wixpress.dst.greyhound.core.TopicConfig
+import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{RIO, RManaged, ZIO}
+import zio.{RIO, RManaged}
 
 import scala.reflect.io.Directory
 
@@ -25,19 +26,17 @@ object ManagedKafka {
   def make(config: ManagedKafkaConfig): RManaged[Blocking with GreyhoundMetrics, ManagedKafka] = for {
     _ <- embeddedZooKeeper(config.zooKeeperPort)
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
-    kafka <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir))
+    _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir))
+    adminClient <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
-    private val adminZkClient = kafka.dataPlaneRequestProcessor.adminZkClient
 
-    override val bootstrapServers: String =
-      s"localhost:${config.kafkaPort}"
+    override val bootstrapServers: String = s"localhost:${config.kafkaPort}"
 
-    override def createTopic(config: TopicConfig): RIO[Blocking, Unit] = effectBlocking {
-      adminZkClient.createTopic(config.name, config.partitions, config.replicationFactor, config.properties)
-    }
+    override def createTopic(config: TopicConfig): RIO[Blocking, Unit] =
+        adminClient.createTopics(Set(config)).unit
 
     override def createTopics(configs: TopicConfig*): RIO[Blocking, Unit] =
-      ZIO.foreachParN(4)(configs)(createTopic).unit
+        adminClient.createTopics(configs.toSet).unit
   }
 
   private def tempDirectory(path: String) = {
