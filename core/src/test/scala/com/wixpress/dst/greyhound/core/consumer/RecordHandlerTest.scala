@@ -30,7 +30,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
     "produce a message to the retry topic after failure" in {
       for {
         producer <- FakeProducer.make
-        topic = s"some-topic-${randomStr}"
+        topic <- randomTopicName
         retryTopic = s"$topic-retry"
         blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(failingHandler, FakeRetryPolicy(topic), producer, Topics(Set(topic)), blockingState)
@@ -55,7 +55,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
     "delay execution of user handler by configured backoff" in {
       for {
         producer <- FakeProducer.make
-        topic = s"some-topic-${randomStr}"
+        topic <- randomTopicName
         retryTopic = s"$topic-retry"
         executionTime <- Promise.make[Nothing, Instant]
         handler = RecordHandler[Clock, HandlerError, Chunk[Byte], Chunk[Byte]] { _ =>
@@ -81,7 +81,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
     "retry according to provided intervals" in {
       for {
         producer <- FakeProducer.make
-        topic = s"some-topic-${randomStr}"
+        topic <- randomTopicName
         handleCountRef <- Ref.make(0)
         blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
@@ -104,7 +104,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
       s"release blocking retry once for retry with duration ${retryDurations.map(_.toMillis)} millis" in {
         for {
           producer <- FakeProducer.make
-          topic = s"some-topic-${randomStr}"
+          topic <- randomTopicName
           tpartition = TopicPartition(topic, partition)
           blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty)
           retryHandler = RetryRecordHandler.withRetries(failingHandler,
@@ -135,7 +135,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
       s"release blocking retry for all for retry with duration ${retryDurations.map(_.toMillis)} millis" in {
         for {
           producer <- FakeProducer.make
-          topic <- randomStr.map(randStr => s"some-topic-$randStr")
+          topic <- randomTopicName
           tpartition = TopicPartition(topic, partition)
           blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty)
           retryHandler = RetryRecordHandler.withRetries(failingHandler,
@@ -178,5 +178,5 @@ object RecordHandlerTest {
   }
 
   def randomStr = ZIO.collectAll(List.fill(6)(randomAlphaChar)).map(_.mkString)
-
+  def randomTopicName = randomStr.map(suffix => s"some-topic-$suffix")
 }
