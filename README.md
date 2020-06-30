@@ -302,7 +302,7 @@ val instantSerde: Serde[Instant] =
 This could be useful for your own custom domain types as well. For example, modifying a string
 or byte array `Serde` to represent your own types encoded as JSON.
 
-#### Consumer Retries
+#### Consumer Non-Blocking Retries
 
 `RecordConsumer` provides a built-in retry mechanism for consumer code. It is possible to create a retry policy for failed
 user-supplied effects. The retry mechanism is influenced by this [Uber's blog post](https://blog.pragmatists.com/retrying-consumer-architecture-in-the-apache-kafka-939ac4cb851a).<br>
@@ -328,7 +328,7 @@ val handler = RecordHandler { record: ConsumerRecord[String, String] =>
     ZIO.fail(new RuntimeException("Failed..."))     
 }
 
-val retryPolicy = RetryPolicy.default(group, 1.second, 30.seconds, 1.minute)
+val retryPolicy = RetryPolicy.nonBlockingOnly(group, 1.second, 30.seconds, 1.minute)
 val bootstrapServers = "localhost:9092"
 val topics = Set("topic-A")
 RecordConsumer.make(

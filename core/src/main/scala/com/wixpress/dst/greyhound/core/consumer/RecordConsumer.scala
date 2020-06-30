@@ -4,10 +4,11 @@ import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
+import com.wixpress.dst.greyhound.core.consumer.BlockingState.IgnoringOnce
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
-import com.wixpress.dst.greyhound.core.consumer.RetryPolicy.{patternRetryTopic, retryPattern}
+import com.wixpress.dst.greyhound.core.consumer.NonBlockingRetryPolicy.{patternRetryTopic, retryPattern}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
@@ -29,6 +30,8 @@ trait RecordConsumer[-R] extends Resource[R] {
 
   def resubscribe[R1](topics: Set[Topic], listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
 
+  def setBlockingState[R1](topicPartition: TopicPartition, command: BlockingStateCommand): URIO[Env with R with R1, Unit]
+
 }
 
 object RecordConsumer {
@@ -46,16 +49,12 @@ object RecordConsumer {
       consumer <- Consumer.make(
         ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties))
       (initialSubscription, topicsToCreate) = config.retryPolicy.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
-        config.initialSubscription match {
-          case Topics(topics) => (Topics(topics.flatMap(policy.retryTopicsFor)), topics.flatMap(policy.retryTopicsFor) -- topics)
-          case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
-            (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
-        })
+        maybeAddRetryTopics(config, policy))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
-
-      handlerWithRetries <- addRetriesToHandler(config, handler)
+      blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty).toManaged_
+      handlerWithRetries <- addRetriesToHandler(config, handler, blockingState)
       eventLoop <- EventLoop.make(
         group = config.group,
         initialSubscription = initialSubscription,
@@ -72,6 +71,13 @@ object RecordConsumer {
 
       override def isAlive: URIO[R with Env, Boolean] =
         eventLoop.isAlive
+
+      override def setBlockingState[R1](topicPartition: TopicPartition, command: BlockingStateCommand): URIO[Env with R with R1, Unit] = {
+        val state = command match {
+          case _:IgnoreOnceFor => IgnoringOnce
+        }
+        blockingState.update(_.updated(topicPartition, state))
+      }
 
       override def state: UIO[RecordConsumerExposedState] =
         eventLoop.state.map(state => RecordConsumerExposedState(state, config.clientId))
@@ -105,12 +111,24 @@ object RecordConsumer {
       override def clientId: ClientId = config.clientId
     }
 
-  private def addRetriesToHandler[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]) =
+  private def maybeAddRetryTopics[E, R](config: RecordConsumerConfig, policy: RetryPolicy): (ConsumerSubscription, NonEmptySet[String]) = {
+      config.initialSubscription match {
+        case Topics(topics) =>
+          val topics1 = topics.flatMap(policy.retryTopicsFor) -- topics
+          (Topics(topics.flatMap(policy.retryTopicsFor)), topics1)
+        case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
+          (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
+      }
+  }
+
+  private def addRetriesToHandler[R, E](config: RecordConsumerConfig,
+                                        handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
+                                        blockingState: Ref[Map[TopicPartition, BlockingState]]) =
     config.retryPolicy match {
       case Some(policy) =>
         Producer.make(ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
           ReportingProducer(producer))
-          .map(producer => RetryRecordHandler.withRetries(handler, policy, producer, config.initialSubscription))
+          .map(producer => RetryRecordHandler.withRetries(handler, policy, producer, config.initialSubscription, blockingState))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
           report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))
@@ -157,3 +175,8 @@ object ConsumerSubscription {
   case class Topics(topics: NonEmptySet[Topic]) extends ConsumerSubscription
 
 }
+
+sealed trait BlockingStateCommand
+
+case class IgnoreOnceFor(topicPartition: TopicPartition) extends BlockingStateCommand
+case class IgnoreAllFor(topicPartition: TopicPartition) extends BlockingStateCommand
