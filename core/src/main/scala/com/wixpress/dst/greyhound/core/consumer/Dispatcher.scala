@@ -1,15 +1,14 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.Dispatcher.{Record, State}
+import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
 import zio.clock.Clock
-import zio.duration.Duration
-import zio.duration._
+import zio.duration.{Duration, _}
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R with Clock with GreyhoundMetrics,SubmitResult]
