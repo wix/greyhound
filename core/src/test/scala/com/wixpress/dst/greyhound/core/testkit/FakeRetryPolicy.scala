@@ -13,8 +13,7 @@ import zio.clock.Clock
 import zio.duration._
 import zio.{Chunk, Runtime, UIO, URIO, ZIO, clock}
 
-case class FakeRetryPolicy(topic: Topic)
-  extends RetryPolicy {
+case class FakeRetryPolicy(topic: Topic) extends RetryPolicy {
 
   override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
     Set(s"$originalTopic-retry")
@@ -39,9 +38,9 @@ case class FakeRetryPolicy(topic: Topic)
     }
 
   private def retryAttemptInternal(topic: Topic,
-                           attempt: Option[Int],
-                           submittedAt: Option[Instant],
-                           backoff: Option[Duration]) =
+                                   attempt: Option[Int],
+                                   submittedAt: Option[Instant],
+                                   backoff: Option[Duration]) =
     for {
       a <- attempt
       s <- submittedAt
@@ -64,6 +63,8 @@ case class FakeRetryPolicy(topic: Topic)
         Header.SubmittedAt -> submittedAt,
         Header.Backoff -> backoff))
   }
+
+  override def intervals: Seq[Duration] = Seq.empty
 }
 
 object FakeRetryPolicy {
