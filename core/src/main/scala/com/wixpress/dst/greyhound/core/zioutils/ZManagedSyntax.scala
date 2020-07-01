@@ -1,7 +1,7 @@
-package com.wixpress.dst.greyhound.core
+package com.wixpress.dst.greyhound.core.zioutils
 
 import zio.ZManaged.ReleaseMap
-import zio.{ExecutionStrategy, Exit, UIO, ZIO, ZManaged}
+import zio._
 
 object ZManagedSyntax {
   /**

@@ -1,12 +1,11 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.ZManagedSyntax._
-import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.{ConsumerSubscription, OffsetReset, RecordConsumer, RecordConsumerConfig}
-import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic, consumer}
+import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
+import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Exit, Ref, ZIO, ZManaged}
+import zio.{Exit, ZIO, ZManaged}
 
 import scala.concurrent.Future
 
