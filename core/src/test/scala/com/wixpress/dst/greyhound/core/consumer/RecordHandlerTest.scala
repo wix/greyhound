@@ -6,8 +6,9 @@ import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.BlockingState.{IgnoringAll, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest.{partition, _}
+import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest.{eventuallyZ, offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryOnHandlerFailed}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import com.wixpress.dst.greyhound.core.testkit._
@@ -82,22 +83,19 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
       for {
         producer <- FakeProducer.make
         topic <- randomTopicName
+        tpartition = TopicPartition(topic, partition)
         handleCountRef <- Ref.make(0)
         blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
           FakeBlockingRetryPolicy(10.millis, 500.millis), producer, Topics(Set(topic)), blockingState)
         key <- bytes
         value <- bytes
-        fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _ <- TestClock.adjust(1.second)
-        metrics <- TestMetrics.reported
-        _ <- TestClock.adjust(100.millis)
-        _ <- fiber.join
-        handleCount <- handleCountRef.get
-      } yield {
-        handleCount === 3
-        metrics must contain(BlockingRetryOnHandlerFailed(TopicPartition(topic, partition), offset))
-      }
+        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _ <- ZIO.foreach_(1 to 10)(_ => TestClock.adjust(400.millis))
+        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
+        _ <- ZIO.foreach_(1 to 10)(_ => TestClock.adjust(100.millis))
+        _ <- eventuallyZ(handleCountRef.get, (handleCount:Int) => handleCount == 3)
+      } yield ok
     }
 
     Fragment.foreach(Seq(Seq(50.millis, 1.second), Seq(100.millis, 1.second), Seq(1.second, 1.second))) { retryDurations =>
@@ -112,22 +110,18 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
           key <- bytes
           value <- bytes
           fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-          _ <- TestClock.adjust(retryDurations.head.*(0.5))
-          metricsBeforeReleaseOnce <- TestMetrics.reported
+          _ <- ZIO.foreach_(1 to 5)(_ => TestClock.adjust(retryDurations.head.*(0.1)))
+          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => (
+            !list.contains(BlockingIgnoredOnceFor(tpartition, offset)) && list.contains(BlockingRetryOnHandlerFailed(tpartition, offset))))
           _ <- blockingState.set(Map(tpartition -> IgnoringOnce))
-          _ <- TestClock.adjust(retryDurations.head.*(0.6))
+          _ <- ZIO.foreach_(1 to 10)(_ => TestClock.adjust(retryDurations.head.*(0.1)))
           _ <- fiber.join
-          metricsAfterReleaseOnce <- TestMetrics.reported
+          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingIgnoredOnceFor(tpartition, offset)))
           _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-          _ <- TestClock.adjust(retryDurations.head.*(1.1))
-          metricsAfterSecondHandle <- TestMetrics.reported
-        } yield {
-          metricsBeforeReleaseOnce must not(contain(BlockingIgnoredOnceFor(tpartition, offset)))
-          metricsBeforeReleaseOnce must contain(BlockingRetryOnHandlerFailed(tpartition, offset))
-          metricsAfterReleaseOnce must contain(BlockingIgnoredOnceFor(tpartition, offset))
-          metricsAfterSecondHandle must contain(BlockingRetryOnHandlerFailed(tpartition, offset + 1))
-          metricsAfterSecondHandle must not(contain(BlockingIgnoredOnceFor(tpartition, offset + 1)))
-        }
+          _ <- ZIO.foreach_(1 to 15)(_ => TestClock.adjust(retryDurations.head.*(0.1)))
+          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => (
+            !list.contains(BlockingIgnoredOnceFor(tpartition, offset + 1)) && list.contains(BlockingRetryOnHandlerFailed(tpartition, offset + 1))))
+        } yield ok
       }
     }
 
@@ -143,20 +137,16 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
           key <- bytes
           value <- bytes
           fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-          _ <- TestClock.adjust(retryDurations.head.*(0.5))
-          metricsBeforeReleaseAll <- TestMetrics.reported
+          _ <- ZIO.foreach_(1 to 5)(_ => TestClock.adjust(retryDurations.head.*(0.1)))
+          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) =>
+            (!list.contains(BlockingIgnoredForAllFor(tpartition, offset)) && list.contains(BlockingRetryOnHandlerFailed(tpartition, offset))))
           _ <- blockingState.set(Map(tpartition -> IgnoringAll))
-          _ <- TestClock.adjust(retryDurations.head.*(0.6))
+          _ <- ZIO.foreach_(1 to 10)(_ => TestClock.adjust(retryDurations.head.*(0.1)))
           _ <- fiber.join
-          metricsAfterReleaseAll <- TestMetrics.reported
-          _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L))/*.fork*/
-          metricsAfterSecondHandle <- TestMetrics.reported
-        } yield {
-          metricsBeforeReleaseAll must not(contain(BlockingIgnoredForAllFor(tpartition, offset)))
-          metricsBeforeReleaseAll must contain(BlockingRetryOnHandlerFailed(tpartition, offset))
-          metricsAfterReleaseAll must contain(BlockingIgnoredForAllFor(tpartition, offset))
-          metricsAfterSecondHandle must contain(BlockingIgnoredForAllFor(tpartition, offset + 1))
-        }
+          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingIgnoredForAllFor(tpartition, offset)))
+          _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingIgnoredForAllFor(tpartition, offset + 1)))
+        } yield ok
       }
     }
   }
@@ -179,4 +169,8 @@ object RecordHandlerTest {
 
   def randomStr = ZIO.collectAll(List.fill(6)(randomAlphaChar)).map(_.mkString)
   def randomTopicName = randomStr.map(suffix => s"some-topic-$suffix")
+
+  def eventuallyZ[R <: Has[_], T](f: RIO[R, T], predicate: T => Boolean) = {
+    (f.repeat(Schedule.spaced(100.milliseconds) && Schedule.doUntil(predicate)).timeoutFail(new RuntimeException("predicate failed"))(4.seconds)).provideSomeLayer[R](Clock.live)
+  }
 }
