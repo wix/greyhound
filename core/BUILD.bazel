@@ -10,8 +10,9 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:sources",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/zioutils:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-core_2.12:{pom_version}"],
+    tags = ["maven_coordinates=com.wix:greyhound-core_2.12:{pom_version}", "manual"],
     visibility = ["//:__subpackages__"],
     deps = [
         "@dev_zio_zio_2_12",
@@ -47,10 +48,12 @@ assemble_maven(
     scm_url = "https://github.com/wix/greyhound.git",
     target = "//core:greyhound-core",
     version_file = "//central-sync:VERSION",
+    tags = ["manual"],
 )
 
 deploy_maven(
     name = "deploy-maven",
     deployment_properties = "//central-sync:deployment.properties",
     target = ":assemble-maven",
+    tags = ["manual"],
 )

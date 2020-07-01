@@ -7,10 +7,10 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPatte
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
+import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import com.wixpress.dst.greyhound.testkit.ITEnv._
-import com.wixpress.infra.zio.resource.AcquiredManagedResource
 import zio._
 import zio.duration._
 
