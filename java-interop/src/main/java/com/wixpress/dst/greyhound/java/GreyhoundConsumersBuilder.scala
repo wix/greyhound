@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerC
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio._
 import zio.blocking.Blocking.Service.live.blockingExecutor
-import com.wixpress.dst.greyhound.core.ZManagedSyntax._
+import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
 
 import scala.collection.mutable.ListBuffer
 

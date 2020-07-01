@@ -7,7 +7,7 @@ scala_library(
     srcs = [
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-java:{pom_version}"],
+    tags = ["maven_coordinates=com.wix:greyhound-java:{pom_version}","manual"],
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
@@ -43,10 +43,12 @@ assemble_maven(
     scm_url = "https://github.com/wix/greyhound.git",
     target = "//java-interop:greyhound-java",
     version_file = "//central-sync:VERSION",
+    tags = ["manual"],
 )
 
 deploy_maven(
     name = "deploy-maven",
     deployment_properties = "//central-sync:deployment.properties",
     target = ":assemble-maven",
+    tags = ["manual"],
 )

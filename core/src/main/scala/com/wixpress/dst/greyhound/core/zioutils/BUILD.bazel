@@ -1,0 +1,15 @@
+package(default_visibility = ["//visibility:public"])
+
+# visibility is extended to allow packaging a jar to deploy to maven central
+sources(["//core:__subpackages__"])
+
+scala_library(
+    name = "zioutils",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "@dev_zio_zio_2_12",
+    ],
+)

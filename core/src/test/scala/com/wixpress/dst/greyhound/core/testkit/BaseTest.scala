@@ -2,17 +2,14 @@ package com.wixpress.dst.greyhound.core.testkit
 
 import java.util.concurrent.atomic.AtomicReference
 
+import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
 import org.specs2.execute.{AsResult, Error, Result}
 import org.specs2.mutable.SpecificationWithJUnit
-import org.specs2.specification.core.{Description, Fragment, Fragments}
-import zio.{BootstrapRuntime, Exit, FiberFailure, Has, UIO, UManaged, URIO, ZIO, ZManaged, console}
-import com.wixpress.dst.greyhound.core.ZManagedSyntax._
-import org.specs2.data.AlwaysTag
 import org.specs2.specification.BeforeAfterAll
+import org.specs2.specification.core.{Fragment, Fragments}
 import zio.console.putStrLn
 import zio.internal.Platform
-
-import scala.util.control.NonFatal
+import zio.{Reservation => _, _}
 
 trait BaseTest[R]
   extends SpecificationWithJUnit
