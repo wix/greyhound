@@ -76,7 +76,7 @@ class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
       }
       died <- EventLoop.make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId").use { eventLoop =>
         eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.doUntil(alive => !alive)).unit
-      }.catchAllCause(_ => ZIO.unit).timeout(1.second)
+      }.catchAllCause(_ => ZIO.unit).timeout(5.second)
     } yield died must beSome
   }
 
