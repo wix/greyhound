@@ -98,7 +98,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
       } yield ok
     }
 
-    "allow inifinite retries" in {
+    "allow infinite retries" in {
       for {
         producer <- FakeProducer.make
         topic <- randomTopicName
@@ -109,11 +109,10 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _ <- TestClock.adjust(1.second)
+        _ <- ZIO.foreach_(1 to 10)(_ => TestClock.adjust(100.millis))
         metrics <- TestMetrics.reported
-        handleCount <- handleCountRef.get
+        _ <- eventuallyZ(handleCountRef.get, (handleCount:Int) => handleCount >= 10)
       } yield {
-        handleCount === 11
         metrics must contain(BlockingRetryOnHandlerFailed(TopicPartition(topic, partition), offset))
       }
     }
