@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RetryAttempt.{RetryAttemptNumber, currentTime}
+import com.wixpress.dst.greyhound.core.consumer.RetryDecision.NoMoreRetries
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import zio._
 import zio.clock.Clock
@@ -22,20 +23,19 @@ trait RetryPolicy {
 
   def retrySteps = retryTopicsFor("").size
 
-  def intervals: Seq[Duration]
+  def blockingIntervals: Seq[Duration]
 
 }
 
 object RetryPolicy {
   def blockingOnly(backoffs: Duration*): RetryPolicy =
-    new RetryPolicy {
-      override def intervals: Seq[Duration] = backoffs.toSeq
+    new NoOpNonBlockingRetryPolicy {
+      override def blockingIntervals: Seq[Duration] = backoffs.toSeq
+    }
 
-      override def retryTopicsFor(originalTopic: Topic): Set[Topic] = Set(originalTopic)
-
-      override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = UIO(None)
-
-      override def retryDecision[E](retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]], error: E, subscription: ConsumerSubscription): URIO[Clock, RetryDecision] = ???
+  def infiniteBlocking(interval: Duration): RetryPolicy =
+    new NoOpNonBlockingRetryPolicy {
+      override def blockingIntervals: Seq[Duration] = Stream.continually(interval)
     }
 
   def nonBlockingOnly(group: Group, backoffs: Duration*): RetryPolicy = NonBlockingRetryPolicy.defaultNonBlocking(group, backoffs: _*)
@@ -80,3 +80,13 @@ object RetryDecision {
 
 }
 
+trait NoOpNonBlockingRetryPolicy extends RetryPolicy {
+  override def retryTopicsFor(originalTopic: Topic): Set[Topic] = Set.empty
+
+  override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = UIO(None)
+
+  override def retryDecision[E](retryAttempt: Option[RetryAttempt],
+                       record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                       error: E,
+                       subscription: ConsumerSubscription): URIO[Clock, RetryDecision] = UIO(NoMoreRetries)
+}

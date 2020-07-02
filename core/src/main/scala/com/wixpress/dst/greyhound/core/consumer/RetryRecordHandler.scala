@@ -30,7 +30,7 @@ object RetryRecordHandler {
                                   blockingState: Ref[Map[TopicPartition, BlockingState]])
                                  (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with GreyhoundMetrics, Nothing, K, V] =
     (record: ConsumerRecord[K, V]) => {
-      if (retryPolicy.intervals.nonEmpty) {
+      if (retryPolicy.blockingIntervals.nonEmpty) {
         blockingHandler(handler, record, retryPolicy, blockingState)
       }
       else
@@ -109,7 +109,7 @@ object RetryRecordHandler {
       }.getOrElse(((), state)))
     }
 
-    val durationsIncludingForInvocationWithNoErrorHandling = policy.intervals.map(Some(_)) :+ None
+    val durationsIncludingForInvocationWithNoErrorHandling = policy.blockingIntervals.map(Some(_)) :+ None
     foreachWhile(durationsIncludingForInvocationWithNoErrorHandling){ interval =>
       handleAndMaybeBlockOnErrorFor(interval)
     } *> backToBlockingForIgnoringOnce

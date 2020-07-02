@@ -98,6 +98,26 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
       } yield ok
     }
 
+    "allow inifinite retries" in {
+      for {
+        producer <- FakeProducer.make
+        topic <- randomTopicName
+        handleCountRef <- Ref.make(0)
+        blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty)
+        retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
+          FakeInfiniteBlockingRetryPolicy(100.millis), producer, Topics(Set(topic)), blockingState)
+        key <- bytes
+        value <- bytes
+        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _ <- TestClock.adjust(1.second)
+        metrics <- TestMetrics.reported
+        handleCount <- handleCountRef.get
+      } yield {
+        handleCount === 11
+        metrics must contain(BlockingRetryOnHandlerFailed(TopicPartition(topic, partition), offset))
+      }
+    }
+
     Fragment.foreach(Seq(Seq(50.millis, 1.second), Seq(100.millis, 1.second), Seq(1.second, 1.second))) { retryDurations =>
       s"release blocking retry once for retry with duration ${retryDurations.map(_.toMillis)} millis" in {
         for {
