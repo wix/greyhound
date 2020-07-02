@@ -368,3 +368,5 @@ ManagedKafka.make(ManagedKafkaConfig(kafkaPort = 9092, zooKeeperPort = 2181)).us
 
 This will start a real Kafka broker and Zookeeper instance on defined ports. Use those ports to access Kafka within the managed
 scope.
+
+test
