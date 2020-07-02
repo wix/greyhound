@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.BlockingState.{IgnoringAll, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest.{eventuallyZ, offset, partition, _}
+import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryOnHandlerFailed}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
@@ -189,8 +189,4 @@ object RecordHandlerTest {
 
   def randomStr = ZIO.collectAll(List.fill(6)(randomAlphaChar)).map(_.mkString)
   def randomTopicName = randomStr.map(suffix => s"some-topic-$suffix")
-
-  def eventuallyZ[R <: Has[_], T](f: RIO[R, T], predicate: T => Boolean) = {
-    (f.repeat(Schedule.spaced(100.milliseconds) && Schedule.doUntil(predicate)).timeoutFail(new RuntimeException("predicate failed"))(4.seconds)).provideSomeLayer[R](Clock.live)
-  }
 }
