@@ -7,6 +7,7 @@ specs2_unit_test(
     srcs = [
         ":sources",
     ],
+    size = "medium",
     deps = [
         "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
