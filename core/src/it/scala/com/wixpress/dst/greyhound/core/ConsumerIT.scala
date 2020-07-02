@@ -1,5 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
+import java.util.regex.Pattern
+
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
@@ -11,8 +13,6 @@ import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDown
 import com.wixpress.dst.greyhound.testkit.ITEnv._
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio.clock.{Clock, sleep}
-import java.util.regex.Pattern._
-import java.util.regex.Pattern
 import zio.console.Console
 import zio.duration._
 import zio.{console, _}
