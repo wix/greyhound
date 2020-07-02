@@ -8,4 +8,5 @@ package object core {
   type Offset = Long
 
   type NonEmptySet[A] = Set[A]
+  type NonEmptyList[A] = List[A]
 }

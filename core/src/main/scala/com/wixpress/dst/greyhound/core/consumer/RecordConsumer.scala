@@ -111,11 +111,11 @@ object RecordConsumer {
       override def clientId: ClientId = config.clientId
     }
 
-  private def maybeAddRetryTopics[E, R](config: RecordConsumerConfig, policy: RetryPolicy): (ConsumerSubscription, NonEmptySet[String]) = {
+  private def maybeAddRetryTopics[E, R](config: RecordConsumerConfig, policy: RetryPolicy): (ConsumerSubscription, Set[String]) = {
       config.initialSubscription match {
         case Topics(topics) =>
-          val topics1 = topics.flatMap(policy.retryTopicsFor) -- topics
-          (Topics(topics.flatMap(policy.retryTopicsFor)), topics1)
+          val retryTopics = topics.flatMap(policy.retryTopicsFor)
+          (Topics(topics ++ retryTopics), retryTopics)
         case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
           (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
       }

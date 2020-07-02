@@ -51,10 +51,29 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       _ <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
           producer.produce(ProducerRecord(topic, "baz", Some("foo")), StringSerde, StringSerde) *>
-          UIO.unit.delay(5.seconds)
+          clock.sleep(5.seconds)
       }
       consumedValues <- consumedValuesRef.get
     } yield consumedValues must atLeast("bar", "bar", "bar")
+  }
+
+  "configure a handler with infinite blocking retry policy" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic()
+      group <- randomGroup
+
+      consumedValuesRef <- Ref.make(List.empty[String])
+
+      retryPolicy = RetryPolicy.infiniteBlocking(1.second)
+      retryHandler = failingBlockingRecordHandler(consumedValuesRef, topic, stopFailingAfter = 6).withDeserializers(StringSerde, StringSerde)
+      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+          producer.produce(ProducerRecord(topic, "baz", Some("foo")), StringSerde, StringSerde) *>
+          clock.sleep(5.seconds)
+      }
+      consumedValues <- consumedValuesRef.get
+    } yield consumedValues must atLeast("bar", "bar", "bar", "bar", "bar")
   }
 
   "block only one partition when GreyhoundBlockingException is thrown" in {
@@ -207,13 +226,19 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
         ZIO.fail(NonRetryableException(new RuntimeException("Oops!")))
     }
 
-  private def failingBlockingRecordHandler(consumedValues: Ref[List[String]], originalTopic: String) =
+  private def failingBlockingRecordHandler(consumedValues: Ref[List[String]], originalTopic: String, stopFailingAfter: Int = 5000) =
     RecordHandler { r: ConsumerRecord[String, String] =>
       UIO(println(s">>>> failingBlockingRecordHandler: r ${r}")) *>
         ZIO.when(r.topic == originalTopic) {
           consumedValues.updateAndGet(values => r.value :: values)
         } *>
-        ZIO.fail(new RuntimeException("Oops!"))
+        consumedValues.get.flatMap{values =>
+          if(values.size <= stopFailingAfter)
+            ZIO.fail(new RuntimeException("Oops!"))
+          else
+            ZIO.unit
+        }
+
     }
 
   private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")

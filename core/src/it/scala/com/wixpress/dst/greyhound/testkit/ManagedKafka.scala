@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{RIO, RManaged}
+import zio.{RIO, RManaged, Task}
 
 import scala.reflect.io.Directory
 
@@ -57,6 +57,7 @@ object ManagedKafka {
 
   private def embeddedKafka(config: KafkaServerConfig) = {
     val acquire = for {
+      _ <- Task(Directory(config.logDir).deleteRecursively())
       _ <- GreyhoundMetrics.report(StartingKafka(config.port))
       server <- effectBlocking(new KafkaServer(config.toKafkaConfig))
       _ <- effectBlocking(server.startup())

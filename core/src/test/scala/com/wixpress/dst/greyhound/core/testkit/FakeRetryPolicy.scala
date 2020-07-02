@@ -64,7 +64,7 @@ case class FakeRetryPolicy(topic: Topic) extends RetryPolicy {
         Header.Backoff -> backoff))
   }
 
-  override def intervals: Seq[Duration] = Seq.empty
+  override def blockingIntervals: Seq[Duration] = Seq.empty
 }
 
 object FakeRetryPolicy {

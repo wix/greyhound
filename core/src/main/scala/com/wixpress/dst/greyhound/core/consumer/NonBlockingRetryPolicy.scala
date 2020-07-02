@@ -20,7 +20,7 @@ object NonBlockingRetryPolicy {
       new RetryPolicy {
         private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
 
-        override def intervals: Seq[Duration] = Seq.empty
+        override def blockingIntervals: Seq[Duration] = Seq.empty
 
         private val instantDeserializer = longDeserializer.map(Instant.ofEpochMilli)
         private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))
