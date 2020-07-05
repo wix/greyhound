@@ -4,7 +4,7 @@ import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
-import com.wixpress.dst.greyhound.core.consumer.BlockingState.IgnoringOnce
+import com.wixpress.dst.greyhound.core.consumer.BlockingState.{IgnoringAll, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
@@ -30,7 +30,7 @@ trait RecordConsumer[-R] extends Resource[R] {
 
   def resubscribe[R1](topics: Set[Topic], listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
 
-  def setBlockingState[R1](topicPartition: TopicPartition, command: BlockingStateCommand): URIO[Env with R with R1, Unit]
+  def setBlockingState[R1](command: BlockingStateCommand): RIO[Env with R1, Unit]
 
 }
 
@@ -53,7 +53,7 @@ object RecordConsumer {
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
-      blockingState <- Ref.make[Map[TopicPartition, BlockingState]](Map.empty).toManaged_
+      blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
       handlerWithRetries <- addRetriesToHandler(config, handler, blockingState)
       eventLoop <- EventLoop.make(
         group = config.group,
@@ -72,11 +72,15 @@ object RecordConsumer {
       override def isAlive: URIO[R with Env, Boolean] =
         eventLoop.isAlive
 
-      override def setBlockingState[R1](topicPartition: TopicPartition, command: BlockingStateCommand): URIO[Env with R with R1, Unit] = {
-        val state = command match {
-          case _:IgnoreOnceFor => IgnoringOnce
+      override def setBlockingState[R1](command: BlockingStateCommand): RIO[Env with R1, Unit] = {
+        command match {
+          case IgnoreOnceFor(topicPartition: TopicPartition)  => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringOnce))
+          case IgnoreAllFor(topicPartition: TopicPartition)   => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
+          case BlockErrorsFor(topicPartition: TopicPartition) => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocking))
+          case IgnoreAll(topic: Topic)                        => blockingState.update(_.updated(TopicTarget(topic), IgnoringAll))
+          case BlockErrors(topic: Topic)                      => blockingState.update(_.updated(TopicTarget(topic), BlockingState.Blocking))
+          case _                                              => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
         }
-        blockingState.update(_.updated(topicPartition, state))
       }
 
       override def state: UIO[RecordConsumerExposedState] =
@@ -123,7 +127,7 @@ object RecordConsumer {
 
   private def addRetriesToHandler[R, E](config: RecordConsumerConfig,
                                         handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
-                                        blockingState: Ref[Map[TopicPartition, BlockingState]]) =
+                                        blockingState: Ref[Map[BlockingTarget, BlockingState]]) =
     config.retryPolicy match {
       case Some(policy) =>
         Producer.make(ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
@@ -180,3 +184,6 @@ sealed trait BlockingStateCommand
 
 case class IgnoreOnceFor(topicPartition: TopicPartition) extends BlockingStateCommand
 case class IgnoreAllFor(topicPartition: TopicPartition) extends BlockingStateCommand
+case class BlockErrorsFor(topicPartition: TopicPartition) extends BlockingStateCommand
+case class IgnoreAll(topic: Topic) extends BlockingStateCommand
+case class BlockErrors(topic: Topic) extends BlockingStateCommand

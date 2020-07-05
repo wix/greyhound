@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.concurrent.TimeUnit
 
+import com.wixpress.dst.greyhound.core.Topic
 import com.wixpress.dst.greyhound.core.consumer.BlockingState.{Blocking, IgnoringAll, IgnoringOnce, shouldBlockFrom}
 import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.consumer.RetryRecordHandlerMetric.{BlockingFor, BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryOnHandlerFailed}
@@ -27,8 +28,9 @@ object RetryRecordHandler {
   def withRetries[R2, R, E, K, V](handler: RecordHandler[R, E, K, V],
                                   retryPolicy: RetryPolicy, producer: Producer,
                                   subscription: ConsumerSubscription,
-                                  blockingState: Ref[Map[TopicPartition, BlockingState]])
+                                  blockingState: Ref[Map[BlockingTarget, BlockingState]])
                                  (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with GreyhoundMetrics, Nothing, K, V] =
+
     (record: ConsumerRecord[K, V]) => {
       if (retryPolicy.blockingIntervals.nonEmpty) {
         blockingHandler(handler, record, retryPolicy, blockingState)
@@ -51,25 +53,15 @@ object RetryRecordHandler {
     }
   }
 
-  private def blockingHandler[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], record: ConsumerRecord[K, V], policy: RetryPolicy, blockingState: Ref[Map[TopicPartition, BlockingState]]): ZIO[Clock with R with GreyhoundMetrics, Nothing, Unit] = {
+  // TODO: extract to its own class
+  private def blockingHandler[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], record: ConsumerRecord[K, V], policy: RetryPolicy, blockingState: Ref[Map[BlockingTarget, BlockingState]]): ZIO[Clock with R with GreyhoundMetrics, Nothing, Unit] = {
+    val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
     val topicPartition = TopicPartition(record.topic, record.partition)
 
-    def fetchShouldBlock = {
-      blockingState.get.map(_.getOrElse(topicPartition, Blocking))
-        .flatMap(blockingState => {
-          UIO((blockingState,shouldBlockFrom(blockingState)))
-        }).flatMap(pair => {
-        val (blockingState, shouldBlock) = pair
-        ZIO.when(!shouldBlock) {
-          report(blockingState.metric(record))
-        } *> UIO(shouldBlock)
-      })
-    }
-
     def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[Clock with GreyhoundMetrics, PollResult] = {
       for {
-        shouldBlock <- fetchShouldBlock
+        shouldBlock <- blockingStateResolver.shouldBlock(record)
         shouldPollAgain <- if (shouldBlock) {
           clock.sleep(100.milliseconds) *>
             currentTime(TimeUnit.MILLISECONDS).flatMap(end =>
@@ -86,7 +78,7 @@ object RetryRecordHandler {
           pollBlockingStateWithSuspensions(interval, start).doWhile(result => result.pollAgain).map(_.blockHandling)
         } else {
           for {
-            shouldBlock <- fetchShouldBlock
+            shouldBlock <- blockingStateResolver.shouldBlock(record)
             _ <- ZIO.when(shouldBlock)(clock.sleep(interval))
           } yield shouldBlock
         }
@@ -103,8 +95,8 @@ object RetryRecordHandler {
     }
 
     def backToBlockingForIgnoringOnce = {
-      blockingState.modify(state => state.get(topicPartition).map {
-        case IgnoringOnce => ((), state.updated(topicPartition, Blocking))
+      blockingState.modify(state => state.get(TopicPartitionTarget(topicPartition)).map {
+        case IgnoringOnce => ((), state.updated(TopicPartitionTarget(topicPartition), Blocking))
         case _ => ((), state)
       }.getOrElse(((), state)))
     }
@@ -126,6 +118,11 @@ object RetryRecordHandlerMetric {
   case class BlockingRetryOnHandlerFailed(partition: TopicPartition, offset: Long) extends RetryRecordHandlerMetric
 
 }
+
+sealed trait BlockingTarget
+
+case class TopicTarget(topic: Topic) extends BlockingTarget
+case class TopicPartitionTarget(topicPartition: TopicPartition) extends BlockingTarget
 
 sealed trait BlockingState {
   def metric[V, K](record: ConsumerRecord[K, V]): RetryRecordHandlerMetric
