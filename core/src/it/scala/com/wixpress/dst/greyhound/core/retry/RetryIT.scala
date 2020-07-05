@@ -114,27 +114,27 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   "resume specific partition after blocking exception thrown" in {
     for {
-    TestResources(kafka, producer) <- getShared
-    topic <- kafka.createRandomTopic(1)
-    group <- randomGroup
-    callCount <- Ref.make[Int](0)
-    exceptionMessage = "message that will throw exception"
-    numOfMessages = 10
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(1)
+      group <- randomGroup
+      callCount <- Ref.make[Int](0)
+      exceptionMessage = "message that will throw exception"
+      numOfMessages = 10
 
-    handler = blockResumeHandler(exceptionMessage, callCount)
+      handler = blockResumeHandler(exceptionMessage, callCount)
       .withDeserializers(StringSerde, StringSerde)
-    retryPolicy = RetryPolicy.blockingOnly(30.seconds, 30.seconds) // TODO: add infinite
+      retryPolicy = RetryPolicy.blockingOnly(30.seconds, 30.seconds) // TODO: add infinite
 
-    resource <- AcquiredManagedResource.acquire(RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), handler))
-    consumer = resource.resource
-    _ <- producer.produce(ProducerRecord(topic, exceptionMessage), StringSerde, StringSerde)
-    _ <- ZIO.foreach(1 to numOfMessages) { _ =>
+      resource <- AcquiredManagedResource.acquire(RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), handler))
+      consumer = resource.resource
+      _ <- producer.produce(ProducerRecord(topic, exceptionMessage), StringSerde, StringSerde)
+      _ <- ZIO.foreach(1 to numOfMessages) { _ =>
       producer.produce(ProducerRecord(topic, "irrelevant"), StringSerde, StringSerde)
     }.fork
-    _ <- eventuallyZ(callCount.get, (count: Int) => count == 1)
-    _ <- UIO(println(">>>> consumer.setBlockingState to IgnoreOnceFor"))
-    _ <- consumer.setBlockingState[Any](TopicPartition(topic, 0), IgnoreOnceFor(TopicPartition(topic, 0))) // TODO check successful
-    _ <- eventuallyZ(callCount.get, (count: Int) => count == (numOfMessages + 1))
+      _ <- eventuallyZ(callCount.get, (count: Int) => count == 1)
+      _ <- UIO(println(">>>> consumer.setBlockingState to IgnoreOnceFor"))
+      _ <- consumer.setBlockingState[Any](IgnoreOnceFor(TopicPartition(topic, 0))) // TODO check successful
+      _ <- eventuallyZ(callCount.get, (count: Int) => count == (numOfMessages + 1))
     } yield ok
   }
 
