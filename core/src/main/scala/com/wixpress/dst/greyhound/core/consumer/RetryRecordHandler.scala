@@ -32,29 +32,65 @@ object RetryRecordHandler {
                                  (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with GreyhoundMetrics, Nothing, K, V] =
 
     (record: ConsumerRecord[K, V]) => {
-      if (retryPolicy.blockingIntervals.nonEmpty) {
-        blockingHandler(handler, record, retryPolicy, blockingState)
+      retryPolicy.blockingRetries match {
+        case _:BlockingRetriesFollowedByNonBlocking => blockingAndNonBlockingHandler(handler, record, retryPolicy, blockingState, producer, subscription, evK, evV)
+        case NonBlockingRetries => nonBlockingHandler(handler, producer, subscription, evK, evV, record, retryPolicy)
+        case _:FiniteBlockingRetriesOnly | _:InfiniteBlockingRetriesOnly => blockingHandler(handler, record, retryPolicy, blockingState)
       }
-      else
-        nonBlockingHandler(handler, producer, subscription, evK, evV, record, retryPolicy)
     }
 
   private def nonBlockingHandler[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], producer: Producer, subscription: ConsumerSubscription, evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte], record: ConsumerRecord[K, V], policy: RetryPolicy) = {
     policy.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
-      ZIO.foreach_(retryAttempt)(_.sleep) *> handler.handle(record).catchAll {
+      ZIO.foreach_(retryAttempt)(_.sleep) *> UIO(println(s">>>> In nonBlockingHandler calling handle(): retryAttempt: ${retryAttempt}")) *> handler.handle(record).catchAll {
         case Right(_: NonRetryableException) => ZIO.unit
-        case error => policy.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
-          case RetryWith(retryRecord) =>
-            producer.produce(retryRecord).tapError(_ => sleep(5.seconds)).eventually
-          case NoMoreRetries =>
-            ZIO.unit //todo: report uncaught errors and producer failures
-        }
+        case error => maybeRetry(retryAttempt, error, policy,evK, evV, record, subscription, producer)
       }
     }
   }
 
+  def maybeRetry[V, K, E, R, R2](retryAttempt: Option[RetryAttempt], error: E, policy: RetryPolicy,evK: K <:< Chunk[Byte],
+                                 evV: V <:< Chunk[Byte], record: ConsumerRecord[K, V],subscription: ConsumerSubscription,producer: Producer) = {
+    policy.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
+      case RetryWith(retryRecord) =>
+        producer.produce(retryRecord).tapError(_ => sleep(5.seconds)).eventually
+      case NoMoreRetries =>
+        ZIO.unit //todo: report uncaught errors and producer failures
+    }
+  }
+
+
+  def blockingAndNonBlockingHandler[V, K, E, R, R2](
+                                                     handler: RecordHandler[R, E, K, V],
+                                                     record: ConsumerRecord[K, V],
+                                                     policy: RetryPolicy,
+                                                     blockingState: Ref[Map[BlockingTarget, BlockingState]],
+                                                     producer: Producer,
+                                                     subscription: ConsumerSubscription,
+                                                     evK: K <:< Chunk[Byte],
+                                                     evV: V <:< Chunk[Byte]): ZIO[R with Clock with GreyhoundMetrics, Nothing, Any] = {
+
+    def nonBlockingHandlerAfterBlockingFailed[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], producer: Producer, subscription: ConsumerSubscription, evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte], record: ConsumerRecord[K, V], policy: RetryPolicy) = {
+
+      if (isHandlingRetryTopicMessage(policy, record)) {
+        nonBlockingHandler(handler, producer, subscription, evK, evV, record, policy)
+      } else {
+        policy.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
+          maybeRetry(retryAttempt, BlockingHandlerFailed, policy, evK, evV, record, subscription, producer)
+        }
+      }
+    }
+
+    blockingHandler(handler, record, policy, blockingState).flatMap(result =>
+      if (!result.lastHandleSucceeded)
+        nonBlockingHandlerAfterBlockingFailed(handler, producer, subscription, evK, evV, record, policy)
+      else
+        ZIO.unit
+    )
+  }
+
+
   // TODO: extract to its own class
-  private def blockingHandler[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], record: ConsumerRecord[K, V], policy: RetryPolicy, blockingState: Ref[Map[BlockingTarget, BlockingState]]): ZIO[Clock with R with GreyhoundMetrics, Nothing, Unit] = {
+  private def blockingHandler[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], record: ConsumerRecord[K, V], policy: RetryPolicy, blockingState: Ref[Map[BlockingTarget, BlockingState]]): ZIO[Clock with R with GreyhoundMetrics, Nothing, LastHandleResult] = {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
     val topicPartition = TopicPartition(record.topic, record.partition)
@@ -82,15 +118,15 @@ object RetryRecordHandler {
             _ <- ZIO.when(shouldBlock)(clock.sleep(interval))
           } yield shouldBlock
         }
-      } yield continueBlocking
+      } yield LastHandleResult(lastHandleSucceeded = false, shouldContinue = continueBlocking)
     }
 
-    def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics, Nothing, Boolean] = {
-      (handler.handle(record).map(_ => false)).catchAll { _ =>
+    def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics, Nothing, LastHandleResult] = {
+      (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll { _ =>
         interval.map { interval =>
           report(BlockingRetryOnHandlerFailed(topicPartition, record.offset)) *>
             blockOnErrorFor(interval)
-        }.getOrElse(UIO(false))
+        }.getOrElse(UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false)))
       }
     }
 
@@ -101,10 +137,20 @@ object RetryRecordHandler {
       }.getOrElse(((), state)))
     }
 
-    val durationsIncludingForInvocationWithNoErrorHandling = policy.blockingIntervals.map(Some(_)) :+ None
-    foreachWhile(durationsIncludingForInvocationWithNoErrorHandling){ interval =>
-      handleAndMaybeBlockOnErrorFor(interval)
-    } *> backToBlockingForIgnoringOnce
+    if (isHandlingRetryTopicMessage(policy, record)) {
+        UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
+    } else {
+      val durationsIncludingForInvocationWithNoErrorHandling = policy.blockingRetries.blockingIntervals.map(Some(_)) :+ None
+      val result = foreachWhile(durationsIncludingForInvocationWithNoErrorHandling) { interval =>
+        handleAndMaybeBlockOnErrorFor(interval)
+      }
+      backToBlockingForIgnoringOnce *> result
+    }
+  }
+
+  private def isHandlingRetryTopicMessage[R2, R, E, K, V](policy: RetryPolicy, record: ConsumerRecord[K, V]) = {
+    val option = policy.retryTopicsFor("").-("").headOption
+    option.exists(retryTopicTemplate => record.topic.contains(retryTopicTemplate))
   }
 }
 
@@ -152,11 +198,13 @@ object BlockingState {
 }
 
 object ZIOHelper {
-  def foreachWhile[R, E, A](as: Iterable[A])(f: A => ZIO[R, E, Boolean]): ZIO[R, E, Unit] =
+  def foreachWhile[R, E, A](as: Iterable[A])(f: A => ZIO[R, E, LastHandleResult]): ZIO[R, E, LastHandleResult] =
     ZIO.effectTotal(as.iterator).flatMap { i =>
-      def loop: ZIO[R, E, Unit] =
-        if (i.hasNext) f(i.next).flatMap(result => if(result) loop else ZIO.unit)
-        else ZIO.unit
+      def loop: ZIO[R, E, LastHandleResult] =
+        if (i.hasNext) f(i.next).flatMap(result => if(result.shouldContinue) loop else (UIO(result)))
+        else UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       loop
     }
 }
+
+case class LastHandleResult(lastHandleSucceeded: Boolean, shouldContinue: Boolean)
