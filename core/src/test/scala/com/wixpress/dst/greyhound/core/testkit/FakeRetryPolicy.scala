@@ -6,14 +6,15 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.consumer.{ConsumerRecord, ConsumerSubscription, RetryAttempt, RetryDecision, RetryPolicy}
+import com.wixpress.dst.greyhound.core.consumer.{BlockingHandlerFailed, BlockingRetries, ConsumerRecord, ConsumerSubscription, NonBlockingRetries, RetryAttempt, RetryDecision, RetryPolicy}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import zio.clock.Clock
 import zio.duration._
 import zio.{Chunk, Runtime, UIO, URIO, ZIO, clock}
 
-case class FakeRetryPolicy(topic: Topic) extends RetryPolicy {
+trait FakeNonBlockingRetryPolicy extends RetryPolicy{
+  val topic: Topic
 
   override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
     Set(s"$originalTopic-retry")
@@ -30,7 +31,7 @@ case class FakeRetryPolicy(topic: Topic) extends RetryPolicy {
                                 error: E,
                                 subscription: ConsumerSubscription): URIO[Clock, RetryDecision] =
     error match {
-      case RetriableError =>
+      case RetriableError | BlockingHandlerFailed =>
         currentTime.flatMap(now => recordFrom(now, retryAttempt, record)
           .fold(_ => NoMoreRetries, RetryWith))
       case NonRetriableError =>
@@ -63,8 +64,10 @@ case class FakeRetryPolicy(topic: Topic) extends RetryPolicy {
         Header.SubmittedAt -> submittedAt,
         Header.Backoff -> backoff))
   }
+}
 
-  override def blockingIntervals: Seq[Duration] = Seq.empty
+case class FakeRetryPolicy(topic: Topic) extends FakeNonBlockingRetryPolicy {
+  override def blockingRetries: BlockingRetries = NonBlockingRetries
 }
 
 object FakeRetryPolicy {

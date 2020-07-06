@@ -15,12 +15,13 @@ import zio.{Chunk, UIO, URIO, _}
 
 import scala.util.Try
 
+// TODO: move to 'retry' package
 object NonBlockingRetryPolicy {
   def defaultNonBlocking(group: Group, backoffs: Duration*): RetryPolicy =
       new RetryPolicy {
         private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
 
-        override def blockingIntervals: Seq[Duration] = Seq.empty
+        override def blockingRetries: BlockingRetries = NonBlockingRetries
 
         private val instantDeserializer = longDeserializer.map(Instant.ofEpochMilli)
         private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))

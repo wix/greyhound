@@ -119,6 +119,7 @@ object RecordConsumer {
       config.initialSubscription match {
         case Topics(topics) =>
           val retryTopics = topics.flatMap(policy.retryTopicsFor)
+          // TODO: topics ++ seems meaningless here
           (Topics(topics ++ retryTopics), retryTopics)
         case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
           (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
