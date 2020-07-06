@@ -138,14 +138,74 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield ok
   }
 
+  "commit message on failure with NonRetryableException" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(partitions = 1) // sequential processing is needed
+      group <- randomGroup
+      invocations <- Ref.make(0)
+      retryPolicy = RetryPolicy.nonBlockingOnly(group, 100.milliseconds, 100.milliseconds, 100.milliseconds)
+      retryHandler = failingNonRetryableRecordHandler(invocations).withDeserializers(StringSerde, StringSerde)
+      invocations <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+          invocations.get.delay(2.seconds)
+      }
+    } yield invocations mustEqual 1
+  }
+
+  "configure a regex consumer with a retry policy" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      _ <- kafka.createTopic(TopicConfig("topic-111", 1, 1, CleanupPolicy.Delete(1.hour.toMillis)))
+      group <- randomGroup
+      invocations <- Ref.make(0)
+      done <- Promise.make[Nothing, Unit]
+      retryPolicy = RetryPolicy.nonBlockingOnly(group, 1.second, 1.seconds, 1.seconds)
+      retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
+      success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
+        initialSubscription = TopicPattern(Pattern.compile("topic-1.*")), retryPolicy = Some(retryPolicy),
+        extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest), retryHandler).use_ {
+        producer.produce(ProducerRecord("topic-111", "bar", Some("foo")), StringSerde, StringSerde) *>
+          done.await.timeout(20.seconds)
+      }
+    } yield success must beSome
+  }
+
+  "configure a handler with blocking followed by non blocking retry policy" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic()
+      group <- randomGroup
+      originalTopicCallCount <- Ref.make[Int](0)
+      retryTopicCallCount <- Ref.make[Int](0)
+      retryPolicy = RetryPolicy.blockingFollowedByNonBlocking(group, Seq(1.second), Seq(1.seconds))
+      retryHandler = failingBlockingNonBlockingRecordHandler(originalTopicCallCount, retryTopicCallCount, topic).withDeserializers(StringSerde, StringSerde)
+      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+          clock.sleep(5.seconds)
+      }
+    } yield {
+      eventually {
+        runtime.unsafeRun(originalTopicCallCount.get) === 2
+        runtime.unsafeRun(retryTopicCallCount.get) === 1
+      }
+    }
+  }
+
+  private def configFor(kafka: ManagedKafka, topic: String, group: String, retryPolicy: RetryPolicy) = {
+    RecordConsumerConfig(kafka.bootstrapServers, group,
+      initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy),
+      extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
+  }
+
   private def blockResumeHandler(exceptionMessage: String,
                                  callCount: Ref[Int]) = {
     RecordHandler { r: ConsumerRecord[String, String] =>
       callCount.get.flatMap(count => UIO(println(s">>>> in handler: r: ${r} callCount before: $count"))) *>
-      callCount.update(_ + 1) *>
-      ZIO.when(r.value == exceptionMessage) {
-            ZIO.fail(SomeException())
-      }
+        callCount.update(_ + 1) *>
+        ZIO.when(r.value == exceptionMessage) {
+          ZIO.fail(SomeException())
+        }
     }
   }
 
@@ -167,45 +227,15 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  "commit message on failure with NonRetryableException" in {
-    for {
-      TestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic(partitions = 1) // sequential processing is needed
-      group <- randomGroup
-      invocations <- Ref.make(0)
-      retryPolicy = RetryPolicy.nonBlockingOnly(group, 100.milliseconds, 100.milliseconds, 100.milliseconds)
-      retryHandler = failingNonRetryableRecordHandler(invocations).withDeserializers(StringSerde, StringSerde)
-      invocations <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
-        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-          invocations.get.delay(2.seconds)
-      }
-    } yield invocations mustEqual 1
+  def failingBlockingNonBlockingRecordHandler(originalTopicCallCount: Ref[Int], retryTopicCallCount: Ref[Int], topic: String) = {
+    RecordHandler { r: ConsumerRecord[String, String] =>
+      (if(r.topic == topic)
+        originalTopicCallCount.update(_ + 1)
+      else
+        retryTopicCallCount.update(_ + 1)) *>
+        ZIO.fail(SomeException())
+    }
   }
-
-  private def configFor(kafka: ManagedKafka, topic: String, group: String, retryPolicy: RetryPolicy) = {
-    RecordConsumerConfig(kafka.bootstrapServers, group,
-      initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy),
-      extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
-  }
-
-  "configure a regex consumer with a retry policy" in {
-    for {
-      TestResources(kafka, producer) <- getShared
-      _ <- kafka.createTopic(TopicConfig("topic-111", 1, 1, CleanupPolicy.Delete(1.hour.toMillis)))
-      group <- randomGroup
-      invocations <- Ref.make(0)
-      done <- Promise.make[Nothing, Unit]
-      retryPolicy = RetryPolicy.nonBlockingOnly(group, 1.second, 1.seconds, 1.seconds)
-      retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
-      success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
-        initialSubscription = TopicPattern(Pattern.compile("topic-1.*")), retryPolicy = Some(retryPolicy),
-        extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest), retryHandler).use_ {
-        producer.produce(ProducerRecord("topic-111", "bar", Some("foo")), StringSerde, StringSerde) *>
-          done.await.timeout(20.seconds)
-      }
-    } yield success must beSome
-  }
-
 
   private def failingRecordHandler(invocations: Ref[Int], done: Promise[Nothing, Unit]) =
     RecordHandler { _: ConsumerRecord[String, String] =>
