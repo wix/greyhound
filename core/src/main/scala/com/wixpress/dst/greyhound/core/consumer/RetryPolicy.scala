@@ -23,19 +23,42 @@ trait RetryPolicy {
 
   def retrySteps = retryTopicsFor("").size
 
-  def blockingIntervals: Seq[Duration]
+  def blockingRetries: BlockingRetries
 
 }
 
+sealed trait BlockingRetries {
+  def blockingIntervals: Seq[Duration]
+}
+
+case object NonBlockingRetries extends BlockingRetries{
+  override def blockingIntervals: Seq[Duration] = Seq.empty
+}
+
+case class BlockingRetriesFollowedByNonBlocking(_blockingIntervals: Seq[Duration]) extends BlockingRetries{
+  override def blockingIntervals: Seq[Duration] = _blockingIntervals
+}
+
+case class FiniteBlockingRetriesOnly(_blockingIntervals: Seq[Duration]) extends BlockingRetries{
+  override def blockingIntervals: Seq[Duration] = _blockingIntervals
+}
+
+case class InfiniteBlockingRetriesOnly(interval: Duration) extends BlockingRetries{
+  override def blockingIntervals: Seq[Duration] =  Stream.continually(interval)
+}
+
 object RetryPolicy {
+  def blockingFollowedByNonBlocking(group: String, blockingBackoffs: Seq[Duration], nonBlockingBackoffs: Seq[Duration]) =
+    BlockingAndNonBlockingRetryPolicy.blockingThenNonBlocking(group, blockingBackoffs, nonBlockingBackoffs)
+
   def blockingOnly(backoffs: Duration*): RetryPolicy =
     new NoOpNonBlockingRetryPolicy {
-      override def blockingIntervals: Seq[Duration] = backoffs.toSeq
+      override def blockingRetries: BlockingRetries = FiniteBlockingRetriesOnly(backoffs)
     }
 
   def infiniteBlocking(interval: Duration): RetryPolicy =
     new NoOpNonBlockingRetryPolicy {
-      override def blockingIntervals: Seq[Duration] = Stream.continually(interval)
+      override def blockingRetries: BlockingRetries = InfiniteBlockingRetriesOnly(interval)
     }
 
   def nonBlockingOnly(group: Group, backoffs: Duration*): RetryPolicy = NonBlockingRetryPolicy.defaultNonBlocking(group, backoffs: _*)
@@ -44,6 +67,7 @@ object RetryPolicy {
 private case class TopicAttempt(originalTopic: Topic, attempt: Int)
 
 case class NonRetryableException(cause: Exception) extends Exception(cause)
+case object BlockingHandlerFailed extends RuntimeException
 
 object RetryHeader {
   val Submitted = "submitTimestamp"

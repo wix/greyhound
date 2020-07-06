@@ -184,6 +184,27 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         } yield ok
       }
     }
+
+    "blocking then non blocking retries" in {
+      for {
+        producer <- FakeProducer.make
+        topic <- randomTopicName
+        retryTopic = s"$topic-retry"
+        tpartition = TopicPartition(topic, partition)
+        handleCountRef <- Ref.make(0)
+        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+        retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
+          FakeBlockingAndNonBlockingRetryPolicy(topic, 10.millis, 500.millis), producer, Topics(Set(topic)), blockingState)
+        key <- bytes
+        value <- bytes
+        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _ <- adjustTestClockFor(4.seconds)
+        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
+        _ <- adjustTestClockFor(1.second)
+        record <- producer.records.take
+        _ <- eventuallyZ(handleCountRef.get, (handleCount:Int) => handleCount == 3)
+      } yield record.topic === retryTopic
+    }
   }
 
   private def adjustTestClockFor(duration: Duration, durationMultiplier: Double = 1) = {

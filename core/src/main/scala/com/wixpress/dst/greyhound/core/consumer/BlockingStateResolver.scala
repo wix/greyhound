@@ -5,6 +5,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio.{Ref, UIO, URIO, ZIO}
 
+// TODO: move to 'retry' package
 object BlockingStateResolver {
   def apply(blockingState: Ref[Map[BlockingTarget, BlockingState]]): BlockingStateResolver = {
     new BlockingStateResolver {
