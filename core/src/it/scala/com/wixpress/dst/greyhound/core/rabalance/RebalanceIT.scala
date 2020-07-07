@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.rabalance
 
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
 import com.wixpress.dst.greyhound.core.{Group, Topic}

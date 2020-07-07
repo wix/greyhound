@@ -1,12 +1,11 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.retry
 
 import java.util.concurrent.TimeUnit
 
-import com.wixpress.dst.greyhound.core.consumer.ZIOHelper.foreachWhile
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.BlockingRetryOnHandlerFailed
-import com.wixpress.dst.greyhound.core.consumer.retry._
+import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio._

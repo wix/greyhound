@@ -1,8 +1,9 @@
 package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
-import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, SerializationError, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, SerializationError}
+import com.wixpress.dst.greyhound.core.consumer.OffsetReset
+import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.{ClientId, Deserializer, Group, NonEmptySet}
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handle
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env

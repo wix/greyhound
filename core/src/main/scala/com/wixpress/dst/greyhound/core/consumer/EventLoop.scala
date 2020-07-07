@@ -4,7 +4,7 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import org.apache.kafka.clients.consumer.ConsumerRecords

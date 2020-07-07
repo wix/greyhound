@@ -8,7 +8,10 @@ scala_library(
     srcs = [
         ":sources",
     ],
-    tags = ["no-index", "no-tool"],
+    tags = [
+        "no-index",
+        "no-tool",
+    ],
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
