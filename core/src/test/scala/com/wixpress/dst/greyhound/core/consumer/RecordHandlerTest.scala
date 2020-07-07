@@ -8,8 +8,8 @@ import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest.{offset, parti
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryOnHandlerFailed}
-import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingState, BlockingTarget, RetryRecordHandler, TopicPartitionTarget, TopicTarget, ZRetryConfig}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryOnHandlerFailed, NoRetryOnNonRetryableFailure}
+import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingState, BlockingTarget, NonRetryableException, RetryRecordHandler, TopicPartitionTarget, TopicTarget, ZRetryConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import com.wixpress.dst.greyhound.core.testkit._
@@ -98,6 +98,26 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         _ <- eventuallyZ(handleCountRef.get)(_ == 3)
       } yield ok
     }
+
+    "no retry if fails with NonRetriableError" in {
+      for {
+        producer <- FakeProducer.make
+        topic <- randomTopicName
+        tpartition = TopicPartition(topic, partition)
+        handleCountRef <- Ref.make(0)
+        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+        retryHandler = RetryRecordHandler.withRetries(nonRetryableHandlerWith(handleCountRef),
+          ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+        key <- bytes
+        value <- bytes
+        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _ <- adjustTestClockFor(4.seconds)
+        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(_.contains(NoRetryOnNonRetryableFailure(tpartition, offset, cause)))
+        _ <- adjustTestClockFor(1.second)
+        handleCount <- handleCountRef.get.delay(100.milliseconds).provideSomeLayer(Clock.live)
+      } yield handleCount === 1
+    }
+
 
     "allow infinite retries" in {
       for {
@@ -221,6 +241,7 @@ object RecordHandlerTest {
 
   val failingHandler = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](_ => ZIO.fail(RetriableError))
   def failingHandlerWith(counter: Ref[Int]) = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](_ => counter.update(_ + 1) *> ZIO.fail(RetriableError))
+  def nonRetryableHandlerWith(counter: Ref[Int]) = RecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]](_ => counter.update(_ + 1) *> ZIO.fail(NonRetryableException(cause)))
 
   def randomAlphaChar = {
     val low = 'A'.toInt
@@ -230,4 +251,5 @@ object RecordHandlerTest {
 
   def randomStr = ZIO.collectAll(List.fill(6)(randomAlphaChar)).map(_.mkString)
   def randomTopicName = randomStr.map(suffix => s"some-topic-$suffix")
+  val cause = new RuntimeException("cause")
 }

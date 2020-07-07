@@ -4,7 +4,7 @@ import java.util.concurrent.TimeUnit
 
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringOnce, Blocking => InternalBlocking}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.BlockingRetryOnHandlerFailed
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryOnHandlerFailed, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
@@ -55,8 +55,11 @@ object BlockingRetryRecordHandler {
       }
 
       def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics, Nothing, LastHandleResult] = {
-        (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll { _ =>
-          interval.map { interval =>
+        (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll {
+          case ex: NonRetryableException =>
+            report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause)) *>
+              UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
+          case _ => interval.map { interval =>
             report(BlockingRetryOnHandlerFailed(topicPartition, record.offset)) *>
               blockOnErrorFor(interval)
           }.getOrElse(UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false)))
