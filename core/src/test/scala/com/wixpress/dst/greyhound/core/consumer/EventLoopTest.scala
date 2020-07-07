@@ -4,8 +4,9 @@ import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.{Record, Records}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
-import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.Topics
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => KafkaConsumerRecord}

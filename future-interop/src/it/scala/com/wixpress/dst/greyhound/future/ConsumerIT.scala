@@ -2,8 +2,8 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.AdminClientConfig
-import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric.{StartingEventLoop, StoppingEventLoop}
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._

@@ -1,12 +1,13 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.retry
 
 import java.time.{Instant, Duration => JavaDuration}
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
 import com.wixpress.dst.greyhound.core.Serdes.StringSerde
-import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
-import com.wixpress.dst.greyhound.core.consumer.RetryAttempt.{RetryAttemptNumber, currentTime}
-import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryAttempt.{RetryAttemptNumber, currentTime}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.{Group, Headers, Topic}
 import zio.clock.Clock
@@ -28,7 +29,6 @@ trait NonBlockingRetryPolicy {
   def retrySteps = retryTopicsFor("").size
 }
 
-// TODO: move to 'retry' package
 object NonBlockingRetryPolicy {
   def apply(group: Group, retryConfig: Option[RetryConfig]): NonBlockingRetryPolicy = new NonBlockingRetryPolicy{
         val backoffs: Seq[Duration] = retryConfig.map(_.nonBlockingBackoffs).getOrElse(Seq.empty)

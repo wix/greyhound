@@ -3,6 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}

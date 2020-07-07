@@ -1,4 +1,4 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.domain
 
 import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.clients.consumer.{ConsumerRecord => KafkaConsumerRecord}
@@ -50,7 +50,7 @@ case class ConsumerRecord[+K, +V](topic: Topic,
 
 object ConsumerRecord {
   def apply[K, V](record: KafkaConsumerRecord[K, V]): ConsumerRecord[K, V] =
-    consumer.ConsumerRecord(
+    ConsumerRecord(
       topic = record.topic,
       partition = record.partition,
       offset = record.offset,

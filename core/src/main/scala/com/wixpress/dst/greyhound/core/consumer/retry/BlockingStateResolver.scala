@@ -1,11 +1,11 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.consumer.BlockingState.{Blocking => InternalBlocking, IgnoringAll, IgnoringOnce, shouldBlockFrom}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringAll, IgnoringOnce, shouldBlockFrom, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio.{Ref, URIO, ZIO}
 
-// TODO: move to 'retry' package
 object BlockingStateResolver {
   def apply(blockingState: Ref[Map[BlockingTarget, BlockingState]]): BlockingStateResolver = {
     new BlockingStateResolver {

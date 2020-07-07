@@ -12,6 +12,8 @@ specs2_unit_test(
         "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/retry",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "//core/src/test/resources",

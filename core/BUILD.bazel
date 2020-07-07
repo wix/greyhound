@@ -8,6 +8,8 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer:sources",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/retry:sources",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/zioutils:sources",

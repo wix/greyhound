@@ -1,4 +1,4 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core._
 import zio.duration.{Duration => ZDuration}

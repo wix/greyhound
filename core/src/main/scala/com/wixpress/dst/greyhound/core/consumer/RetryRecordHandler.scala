@@ -2,13 +2,14 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.concurrent.TimeUnit
 
-import com.wixpress.dst.greyhound.core.Topic
-import com.wixpress.dst.greyhound.core.consumer.BlockingState.{IgnoringOnce, Blocking => InternalBlocking}
-import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.consumer.RetryRecordHandlerMetric.{BlockingFor, BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryOnHandlerFailed}
 import com.wixpress.dst.greyhound.core.consumer.ZIOHelper.foreachWhile
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocking => InternalBlocking, IgnoringOnce}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.BlockingRetryOnHandlerFailed
+import com.wixpress.dst.greyhound.core.consumer.retry._
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.Producer
 import zio._
 import zio.clock.{Clock, currentTime, sleep}
@@ -155,49 +156,6 @@ object RetryRecordHandler {
   private def isHandlingRetryTopicMessage[R2, R, E, K, V](nonBlockingRetryPolicy: NonBlockingRetryPolicy, record: ConsumerRecord[K, V]) = {
     val option = nonBlockingRetryPolicy.retryTopicsFor("").-("").headOption
     option.exists(retryTopicTemplate => record.topic.contains(retryTopicTemplate))
-  }
-}
-
-sealed trait RetryRecordHandlerMetric extends GreyhoundMetric
-
-object RetryRecordHandlerMetric {
-
-  case class BlockingFor(partition: TopicPartition, offset: Long) extends RetryRecordHandlerMetric
-  case class BlockingIgnoredForAllFor(partition: TopicPartition, offset: Long) extends RetryRecordHandlerMetric
-  case class BlockingIgnoredOnceFor(partition: TopicPartition, offset: Long) extends RetryRecordHandlerMetric
-  case class BlockingRetryOnHandlerFailed(partition: TopicPartition, offset: Long) extends RetryRecordHandlerMetric
-
-}
-
-sealed trait BlockingTarget
-
-case class TopicTarget(topic: Topic) extends BlockingTarget
-case class TopicPartitionTarget(topicPartition: TopicPartition) extends BlockingTarget
-
-sealed trait BlockingState {
-  def metric[V, K](record: ConsumerRecord[K, V]): RetryRecordHandlerMetric
-}
-
-object BlockingState {
-  case object Blocking extends BlockingState {
-    override def metric[V, K](record: ConsumerRecord[K, V]) =
-      BlockingFor(TopicPartition(record.topic, record.partition), record.offset)
-  }
-  case object IgnoringAll extends BlockingState {
-    override def metric[V, K](record: ConsumerRecord[K, V]): RetryRecordHandlerMetric =
-      BlockingIgnoredForAllFor(TopicPartition(record.topic, record.partition), record.offset)
-  }
-  case object IgnoringOnce extends BlockingState {
-    override def metric[V, K](record: ConsumerRecord[K, V]): RetryRecordHandlerMetric =
-      BlockingIgnoredOnceFor(TopicPartition(record.topic, record.partition), record.offset)
-  }
-
-  def shouldBlockFrom(blockingState: BlockingState) = {
-    blockingState match {
-      case Blocking => true
-      case IgnoringAll => false
-      case IgnoringOnce => false
-    }
   }
 }
 

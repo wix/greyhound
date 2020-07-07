@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import zio._
 
 /**

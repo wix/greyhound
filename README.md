@@ -70,7 +70,7 @@ The basic Future API is less powerful than the [ZIO API](#zio-api), but it's a q
 without prior knowledge of effect systems.  
 
 ```scala
-import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.Serdes
 import com.wixpress.dst.greyhound.future._
@@ -186,6 +186,7 @@ pause polling for specific partitions in case handling is too slow, without affe
 
 ```scala
 import com.wixpress.dst.greyhound.core.consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain._
 import zio._
 
 val group = "some-consumer-group-id"
@@ -315,6 +316,8 @@ Notice this waiting is done in a non-blocking way, so no resources are wasted.
 Usage:
 ```scala
 import com.wixpress.dst.greyhound.core.consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain._
+import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.producer._
 import zio.duration._
 import zio.ZIO
