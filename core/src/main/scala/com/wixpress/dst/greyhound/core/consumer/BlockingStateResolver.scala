@@ -1,9 +1,9 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.BlockingState.{Blocking, IgnoringAll, IgnoringOnce, shouldBlockFrom}
+import com.wixpress.dst.greyhound.core.consumer.BlockingState.{Blocking => InternalBlocking, IgnoringAll, IgnoringOnce, shouldBlockFrom}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
-import zio.{Ref, UIO, URIO, ZIO}
+import zio.{Ref, URIO, ZIO}
 
 // TODO: move to 'retry' package
 object BlockingStateResolver {
@@ -13,8 +13,8 @@ object BlockingStateResolver {
         val topicPartition = TopicPartition(record.topic, record.partition)
 
         for {
-          topicPartitionBlockingState <- blockingState.get.map(_.getOrElse(TopicPartitionTarget(topicPartition), Blocking))
-          topicBlockingState <- blockingState.get.map(_.getOrElse(TopicTarget(record.topic), Blocking))
+          topicPartitionBlockingState <- blockingState.get.map(_.getOrElse(TopicPartitionTarget(topicPartition),InternalBlocking))
+          topicBlockingState <- blockingState.get.map(_.getOrElse(TopicTarget(record.topic), InternalBlocking))
           mergedBlockingState = topicBlockingState match {
             case IgnoringAll => IgnoringAll
             case IgnoringOnce => IgnoringOnce

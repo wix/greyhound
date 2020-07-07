@@ -29,9 +29,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
         invocations <- Ref.make(0)
         done <- Promise.make[Nothing, Unit]
-        retryPolicy = RetryPolicy.nonBlockingOnly(group, 1.second, 1.seconds, 1.seconds)
+        retryConfig = ZRetryConfig.nonBlockingRetry(1.second, 1.seconds, 1.seconds)
         retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
-        success <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+        success <- RecordConsumer.make(configFor(kafka, topic, group, retryConfig), retryHandler).use_ {
           producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
             done.await.timeout(20.seconds)
         }
@@ -46,9 +46,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       consumedValuesRef <- Ref.make(List.empty[String])
 
-      retryPolicy = RetryPolicy.blockingOnly(1.second, 1.seconds, 1.seconds)
+      retryConfig = ZRetryConfig.finiteBlockingRetry(1.second, 1.seconds, 1.seconds)
       retryHandler = failingBlockingRecordHandler(consumedValuesRef, topic).withDeserializers(StringSerde, StringSerde)
-      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryConfig), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
           producer.produce(ProducerRecord(topic, "baz", Some("foo")), StringSerde, StringSerde) *>
           clock.sleep(5.seconds)
@@ -65,9 +65,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       consumedValuesRef <- Ref.make(List.empty[String])
 
-      retryPolicy = RetryPolicy.infiniteBlocking(1.second)
+      retryConfig = ZRetryConfig.infiniteBlockingRetry(1.second)
       retryHandler = failingBlockingRecordHandler(consumedValuesRef, topic, stopFailingAfter = 6).withDeserializers(StringSerde, StringSerde)
-      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryConfig), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
           producer.produce(ProducerRecord(topic, "baz", Some("foo")), StringSerde, StringSerde) *>
           clock.sleep(5.seconds)
@@ -89,8 +89,8 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
        numOfMessages = 10
        handler = failOnceOnOnePartitionHandler(firstMessageContent, secondPartitonContent, firstMessageCallCount, secondPartitionCallCount)
          .withDeserializers(StringSerde, StringSerde)
-       retryPolicy = RetryPolicy.blockingOnly(3.second, 3.seconds, 3.seconds) // TODO: change to infinite
-       resource <- AcquiredManagedResource.acquire(RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), handler))
+       retryConfig = ZRetryConfig.finiteBlockingRetry(3.second, 3.seconds, 3.seconds)
+       resource <- AcquiredManagedResource.acquire(RecordConsumer.make(configFor(kafka, topic, group, retryConfig), handler))
        consumer = resource.resource
        _ <- ZIO.foreach(1 to numOfMessages) { i =>
            producer.produce(ProducerRecord(topic, messageIntro + i, partition = Some(0)), StringSerde, StringSerde) *>
@@ -123,17 +123,16 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       handler = blockResumeHandler(exceptionMessage, callCount)
       .withDeserializers(StringSerde, StringSerde)
-      retryPolicy = RetryPolicy.blockingOnly(30.seconds, 30.seconds) // TODO: add infinite
+      retryConfig = ZRetryConfig.finiteBlockingRetry(30.seconds, 30.seconds)
 
-      resource <- AcquiredManagedResource.acquire(RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), handler))
+      resource <- AcquiredManagedResource.acquire(RecordConsumer.make(configFor(kafka, topic, group, retryConfig), handler))
       consumer = resource.resource
       _ <- producer.produce(ProducerRecord(topic, exceptionMessage), StringSerde, StringSerde)
       _ <- ZIO.foreach(1 to numOfMessages) { _ =>
       producer.produce(ProducerRecord(topic, "irrelevant"), StringSerde, StringSerde)
     }.fork
       _ <- eventuallyZ(callCount.get, (count: Int) => count == 1)
-      _ <- UIO(println(">>>> consumer.setBlockingState to IgnoreOnceFor"))
-      _ <- consumer.setBlockingState[Any](IgnoreOnceFor(TopicPartition(topic, 0))) // TODO check successful
+      _ <- consumer.setBlockingState[Any](IgnoreOnceFor(TopicPartition(topic, 0)))
       _ <- eventuallyZ(callCount.get, (count: Int) => count == (numOfMessages + 1))
     } yield ok
   }
@@ -144,9 +143,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       topic <- kafka.createRandomTopic(partitions = 1) // sequential processing is needed
       group <- randomGroup
       invocations <- Ref.make(0)
-      retryPolicy = RetryPolicy.nonBlockingOnly(group, 100.milliseconds, 100.milliseconds, 100.milliseconds)
+      retryConfig = ZRetryConfig.nonBlockingRetry(100.milliseconds, 100.milliseconds, 100.milliseconds)
       retryHandler = failingNonRetryableRecordHandler(invocations).withDeserializers(StringSerde, StringSerde)
-      invocations <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+      invocations <- RecordConsumer.make(configFor(kafka, topic, group, retryConfig), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
           invocations.get.delay(2.seconds)
       }
@@ -160,10 +159,10 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       group <- randomGroup
       invocations <- Ref.make(0)
       done <- Promise.make[Nothing, Unit]
-      retryPolicy = RetryPolicy.nonBlockingOnly(group, 1.second, 1.seconds, 1.seconds)
+      retryConfig = ZRetryConfig.nonBlockingRetry(1.second, 1.seconds, 1.seconds)
       retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
       success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
-        initialSubscription = TopicPattern(Pattern.compile("topic-1.*")), retryPolicy = Some(retryPolicy),
+        initialSubscription = TopicPattern(Pattern.compile("topic-1.*")), retryConfig = Some(retryConfig),
         extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest), retryHandler).use_ {
         producer.produce(ProducerRecord("topic-111", "bar", Some("foo")), StringSerde, StringSerde) *>
           done.await.timeout(20.seconds)
@@ -178,9 +177,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       group <- randomGroup
       originalTopicCallCount <- Ref.make[Int](0)
       retryTopicCallCount <- Ref.make[Int](0)
-      retryPolicy = RetryPolicy.blockingFollowedByNonBlocking(group, Seq(1.second), Seq(1.seconds))
+      retryConfig = ZRetryConfig.blockingFollowedByNonBlockingRetry(List(1.second), List(1.seconds))
       retryHandler = failingBlockingNonBlockingRecordHandler(originalTopicCallCount, retryTopicCallCount, topic).withDeserializers(StringSerde, StringSerde)
-      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryPolicy), retryHandler).use_ {
+      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryConfig), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
           clock.sleep(5.seconds)
       }
@@ -192,9 +191,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  private def configFor(kafka: ManagedKafka, topic: String, group: String, retryPolicy: RetryPolicy) = {
+  private def configFor(kafka: ManagedKafka, topic: String, group: String, retryConfig: RetryConfig) = {
     RecordConsumerConfig(kafka.bootstrapServers, group,
-      initialSubscription = Topics(Set(topic)), retryPolicy = Some(retryPolicy),
+      initialSubscription = Topics(Set(topic)), retryConfig = Some(retryConfig),
       extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
   }
 

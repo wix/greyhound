@@ -6,14 +6,14 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.consumer.{BlockingHandlerFailed, BlockingRetries, ConsumerRecord, ConsumerSubscription, NonBlockingRetries, RetryAttempt, RetryDecision, RetryPolicy}
+import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import zio.clock.Clock
 import zio.duration._
-import zio.{Chunk, Runtime, UIO, URIO, ZIO, clock}
+import zio._
 
-trait FakeNonBlockingRetryPolicy extends RetryPolicy{
+trait FakeNonBlockingRetryPolicy extends NonBlockingRetryPolicy{
   val topic: Topic
 
   override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
@@ -66,9 +66,7 @@ trait FakeNonBlockingRetryPolicy extends RetryPolicy{
   }
 }
 
-case class FakeRetryPolicy(topic: Topic) extends FakeNonBlockingRetryPolicy {
-  override def blockingRetries: BlockingRetries = NonBlockingRetries
-}
+case class FakeRetryPolicy(topic: Topic) extends FakeNonBlockingRetryPolicy
 
 object FakeRetryPolicy {
 

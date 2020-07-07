@@ -1,11 +1,11 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.time.Instant
+import java.time.{Instant, Duration => JavaDuration}
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
 import com.wixpress.dst.greyhound.core.Serdes.StringSerde
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
-import com.wixpress.dst.greyhound.core.consumer.RetryAttempt.currentTime
+import com.wixpress.dst.greyhound.core.consumer.RetryAttempt.{RetryAttemptNumber, currentTime}
 import com.wixpress.dst.greyhound.core.consumer.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.{Group, Headers, Topic}
@@ -15,13 +15,25 @@ import zio.{Chunk, UIO, URIO, _}
 
 import scala.util.Try
 
+trait NonBlockingRetryPolicy {
+  def retryTopicsFor(originalTopic: Topic): Set[Topic]
+
+  def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]]
+
+  def retryDecision[E](retryAttempt: Option[RetryAttempt],
+                       record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+                       error: E,
+                       subscription: ConsumerSubscription): URIO[Clock, RetryDecision]
+
+  def retrySteps = retryTopicsFor("").size
+}
+
 // TODO: move to 'retry' package
 object NonBlockingRetryPolicy {
-  def defaultNonBlocking(group: Group, backoffs: Duration*): RetryPolicy =
-      new RetryPolicy {
-        private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
+  def apply(group: Group, retryConfig: Option[RetryConfig]): NonBlockingRetryPolicy = new NonBlockingRetryPolicy{
+        val backoffs: Seq[Duration] = retryConfig.map(_.nonBlockingBackoffs).getOrElse(Seq.empty)
 
-        override def blockingRetries: BlockingRetries = NonBlockingRetries
+        private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
 
         private val instantDeserializer = longDeserializer.map(Instant.ofEpochMilli)
         private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))
@@ -80,8 +92,7 @@ object NonBlockingRetryPolicy {
 
         private def toChunk(str: String): Chunk[Byte] =
           Chunk.fromArray(str.getBytes)
-      }
-
+  }
       private def extractTopicAttempt[E](group: Group, inputTopic: Topic) =
         inputTopic.split(s"-$group-retry-").toSeq match {
           case Seq(topic, attempt) if Try(attempt.toInt).isSuccess => Some(TopicAttempt(topic, attempt.toInt))
@@ -106,4 +117,41 @@ object NonBlockingRetryPolicy {
 
   def fixedRetryTopic(originalTopic: Topic, group: Group, nextRetryAttempt: Int) =
     s"$originalTopic-$group-retry-$nextRetryAttempt"
+}
+
+object RetryHeader {
+  val Submitted = "submitTimestamp"
+  val Backoff = "backOffTimeMs"
+  val OriginalTopic = "GH_OriginalTopic"
+}
+
+case class RetryAttempt(originalTopic: Topic,
+                        attempt: RetryAttemptNumber,
+                        submittedAt: Instant,
+                        backoff: Duration) {
+
+  def sleep: URIO[Clock, Unit] = currentTime.flatMap { now =>
+    val expiresAt = submittedAt.plus(backoff.asJava)
+    val sleep = JavaDuration.between(now, expiresAt)
+    clock.sleep(Duration.fromJava(sleep))
+  }
+
+}
+
+private case class TopicAttempt(originalTopic: Topic, attempt: Int)
+
+object RetryAttempt {
+  type RetryAttemptNumber = Int
+
+  val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
+}
+
+sealed trait RetryDecision
+
+object RetryDecision {
+
+  case object NoMoreRetries extends RetryDecision
+
+  case class RetryWith(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) extends RetryDecision
+
 }
