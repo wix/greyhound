@@ -4,10 +4,10 @@ sources()
 
 specs2_unit_test(
     name = "consumer",
+    size = "medium",
     srcs = [
         ":sources",
     ],
-    size = "medium",
     deps = [
         "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",

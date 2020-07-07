@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.Headers
-import com.wixpress.dst.greyhound.core.consumer.BlockingState.{Blocking, IgnoringAll, IgnoringOnce}
+import com.wixpress.dst.greyhound.core.consumer.BlockingState.{Blocking => InternalBlocking, IgnoringAll, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest.{bytes, offset, partition, randomTopicName}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
@@ -18,7 +18,7 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
     } yield env ++ testMetrics
 
   "BlockingStateResolver" should {
-    Fragment.foreach(Seq((true, Blocking), (false, IgnoringAll), (false, IgnoringOnce))) { pair =>
+    Fragment.foreach(Seq((true, InternalBlocking), (false, IgnoringAll), (false, IgnoringOnce))) { pair =>
       val (expectedShouldBlock, state) = pair
       s"return '${expectedShouldBlock}' if state is '${state}' for TopicPartition target" in {
         for {
@@ -35,7 +35,7 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
       }
     }
 
-    Fragment.foreach(Seq((true, Blocking), (false, IgnoringAll), (false, IgnoringOnce))) { pair =>
+    Fragment.foreach(Seq((true, InternalBlocking), (false, IgnoringAll), (false, IgnoringOnce))) { pair =>
       val (expectedShouldBlock, state) = pair
       s"return '${expectedShouldBlock}' if state is '${state}' for Topic target" in {
         for {
@@ -65,9 +65,9 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
       } yield shouldBlock === true
     }
 
-    Fragment.foreach(Seq((Blocking, Blocking, true), (Blocking, IgnoringAll, false), (Blocking, IgnoringOnce, false),
-      (IgnoringAll, Blocking, false), (IgnoringAll, IgnoringAll, false), (IgnoringAll, IgnoringOnce, false),
-      (IgnoringOnce, Blocking, false), (IgnoringOnce, IgnoringAll, false), (IgnoringOnce, IgnoringOnce, false))) { pair =>
+    Fragment.foreach(Seq((InternalBlocking, InternalBlocking, true), (InternalBlocking, IgnoringAll, false), (InternalBlocking, IgnoringOnce, false),
+      (IgnoringAll, InternalBlocking, false), (IgnoringAll, IgnoringAll, false), (IgnoringAll, IgnoringOnce, false),
+      (IgnoringOnce, InternalBlocking, false), (IgnoringOnce, IgnoringAll, false), (IgnoringOnce, IgnoringOnce, false))) { pair =>
       val (topicTargetState, topicPartitionTargetState, expectedShouldBlock) = pair
       s"prefer to return false when both targets are available and one is Ignoring ($topicTargetState,$topicPartitionTargetState)" in {
         for {
