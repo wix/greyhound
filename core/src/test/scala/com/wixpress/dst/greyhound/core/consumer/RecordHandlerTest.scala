@@ -92,9 +92,9 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
         _ <- adjustTestClockFor(4.seconds)
-        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
+        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(_.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
         _ <- adjustTestClockFor(1.second)
-        _ <- eventuallyZ(handleCountRef.get, (handleCount:Int) => handleCount == 3)
+        _ <- eventuallyZ(handleCountRef.get)(_ == 3)
       } yield ok
     }
 
@@ -111,7 +111,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
         _ <- adjustTestClockFor(1.second)
         metrics <- TestMetrics.reported
-        _ <- eventuallyZ(handleCountRef.get, (handleCount:Int) => handleCount >= 10)
+        _ <- eventuallyZ(handleCountRef.get)(_ >= 10)
       } yield {
         metrics must contain(BlockingRetryOnHandlerFailed(TopicPartition(topic, partition), offset))
       }
@@ -130,16 +130,16 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
           value <- bytes
           fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
           _ <- adjustTestClockFor(retryDurations.head, 0.5)
-          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => (
-            !list.contains(BlockingIgnoredOnceFor(tpartition, offset)) && list.contains(BlockingRetryOnHandlerFailed(tpartition, offset))))
+          _ <- eventuallyZ(TestMetrics.reported)(metrics =>
+            !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset)) && metrics.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
           _ <- blockingState.set(Map(TopicPartitionTarget(tpartition) -> IgnoringOnce))
           _ <- adjustTestClockFor(retryDurations.head)
           _ <- fiber.join
-          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingIgnoredOnceFor(tpartition, offset)))
+          _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredOnceFor(tpartition, offset)))
           _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
           _ <- adjustTestClockFor(retryDurations.head, 1.5)
-          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => (
-            !list.contains(BlockingIgnoredOnceFor(tpartition, offset + 1)) && list.contains(BlockingRetryOnHandlerFailed(tpartition, offset + 1))))
+          _ <- eventuallyZ(TestMetrics.reported)(metrics =>
+            !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset + 1)) && metrics.contains(BlockingRetryOnHandlerFailed(tpartition, offset + 1)))
         } yield ok
       }
     }
@@ -165,22 +165,21 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
           value <- bytes
           fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
           _ <- adjustTestClockFor(retryDurations.head, 0.5)
-          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) =>
-            (!list.contains(BlockingIgnoredForAllFor(tpartition, offset)) && list.contains(BlockingRetryOnHandlerFailed(tpartition, offset))))
+          _ <- eventuallyZ(TestMetrics.reported)(list => !list.contains(BlockingIgnoredForAllFor(tpartition, offset)) && list.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
           _ <- blockingState.set(Map(target(tpartition) -> IgnoringAll))
           _ <- adjustTestClockFor(retryDurations.head)
           _ <- fiber.join
-          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingIgnoredForAllFor(tpartition, offset)))
+          _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredForAllFor(tpartition, offset)))
           _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L))
-          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingIgnoredForAllFor(tpartition, offset + 1)))
+          _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredForAllFor(tpartition, offset + 1)))
 
           _ <- blockingState.set(Map(target(tpartition) -> InternalBlocking))
           _ <- handleCountRef.set(0)
           _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 2, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
           _ <- adjustTestClockFor(retryDurations.head)
           _ <- adjustTestClockFor(retryDurations(1))
-          _ <- eventuallyZ(TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingRetryOnHandlerFailed(tpartition, offset + 2)))
-          _ <- eventuallyZ(handleCountRef.get, (handleCount:Int) => handleCount == 3)
+          _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingRetryOnHandlerFailed(tpartition, offset + 2)))
+          _ <- eventuallyZ(handleCountRef.get)(_ == 3)
         } yield ok
       }
     }
@@ -199,10 +198,10 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
         _ <- adjustTestClockFor(4.seconds)
-        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported, (list:List[GreyhoundMetric]) => list.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
+        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(_.contains(BlockingRetryOnHandlerFailed(tpartition, offset)))
         _ <- adjustTestClockFor(1.second)
         record <- producer.records.take
-        _ <- eventuallyZ(handleCountRef.get, (handleCount:Int) => handleCount == 3)
+        _ <- eventuallyZ(handleCountRef.get)(_ == 3)
       } yield record.topic === retryTopic
     }
   }
