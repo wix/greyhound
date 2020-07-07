@@ -1,19 +1,11 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.util.concurrent.TimeUnit
-
-import com.wixpress.dst.greyhound.core.consumer.ZIOHelper.foreachWhile
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocking => InternalBlocking, IgnoringOnce}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.BlockingRetryOnHandlerFailed
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.Producer
 import zio._
-import zio.clock.{Clock, currentTime, sleep}
-import zio.duration._
+import zio.clock.Clock
 
 object RetryRecordHandler {
   /**
@@ -25,137 +17,26 @@ object RetryRecordHandler {
     * ordering will be lost for retried records!
     * 2. if blocking policy is chosen, the handling of the same message will be retried according to provided intervals
     * ordering is guaranteed
+    * 3. if both policies are chosen, the blocking policy will be invoked first, and only if it fails the non-blocking policy will be invoked
     */
   def withRetries[R2, R, E, K, V](handler: RecordHandler[R, E, K, V],
                                   retryConfig: RetryConfig, producer: Producer,
                                   subscription: ConsumerSubscription,
                                   blockingState: Ref[Map[BlockingTarget, BlockingState]],
                                   nonBlockingRetryPolicy: NonBlockingRetryPolicy)
-                                 (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with GreyhoundMetrics, Nothing, K, V] =
+                                 (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with GreyhoundMetrics, Nothing, K, V] = {
+
+    val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, subscription, evK, evV, nonBlockingRetryPolicy)
+    val blockingHandler = BlockingRetryRecordHandler(handler, retryConfig, blockingState, nonBlockingRetryPolicy, nonBlockingHandler)
+    val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(blockingHandler, nonBlockingHandler)
 
     (record: ConsumerRecord[K, V]) => {
       retryConfig.retryType match {
-        case BlockingFollowedByNonBlocking => blockingAndNonBlockingHandler(handler, record, retryConfig, nonBlockingRetryPolicy, blockingState, producer, subscription, evK, evV)
-        case NonBlocking => nonBlockingHandler(handler, producer, subscription, evK, evV, record, nonBlockingRetryPolicy)
-        case Blocking => blockingHandler(handler, record, retryConfig, blockingState, nonBlockingRetryPolicy)
+        case BlockingFollowedByNonBlocking => blockingAndNonBlockingHandler.handle(record)
+        case NonBlocking => nonBlockingHandler.handle(record)
+        case Blocking => blockingHandler.handle(record)
       }
     }
-
-  private def nonBlockingHandler[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], producer: Producer, subscription: ConsumerSubscription, evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte], record: ConsumerRecord[K, V], nonBlockingRetryPolicy: NonBlockingRetryPolicy) = {
-    nonBlockingRetryPolicy.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
-      ZIO.foreach_(retryAttempt)(_.sleep) *> handler.handle(record).catchAll {
-        case Right(_: NonRetryableException) => ZIO.unit
-        case error => maybeRetry(retryAttempt, error, nonBlockingRetryPolicy,evK, evV, record, subscription, producer)
-      }
-    }
-  }
-
-  def maybeRetry[V, K, E, R, R2](retryAttempt: Option[RetryAttempt], error: E, nonBlockingRetryPolicy: NonBlockingRetryPolicy,evK: K <:< Chunk[Byte],
-                                 evV: V <:< Chunk[Byte], record: ConsumerRecord[K, V],subscription: ConsumerSubscription,producer: Producer) = {
-    nonBlockingRetryPolicy.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
-      case RetryWith(retryRecord) =>
-        producer.produce(retryRecord).tapError(_ => sleep(5.seconds)).eventually
-      case NoMoreRetries =>
-        ZIO.unit //todo: report uncaught errors and producer failures
-    }
-  }
-
-
-  def blockingAndNonBlockingHandler[V, K, E, R, R2](
-                                                     handler: RecordHandler[R, E, K, V],
-                                                     record: ConsumerRecord[K, V],
-                                                     retryConfig: RetryConfig,
-                                                     nonBlockingRetryPolicy: NonBlockingRetryPolicy,
-                                                     blockingState: Ref[Map[BlockingTarget, BlockingState]],
-                                                     producer: Producer,
-                                                     subscription: ConsumerSubscription,
-                                                     evK: K <:< Chunk[Byte],
-                                                     evV: V <:< Chunk[Byte]): ZIO[R with Clock with GreyhoundMetrics, Nothing, Any] = {
-
-    def nonBlockingHandlerAfterBlockingFailed[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], producer: Producer, subscription: ConsumerSubscription, evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte], record: ConsumerRecord[K, V], nonBlockingRetryPolicy: NonBlockingRetryPolicy) = {
-
-      if (isHandlingRetryTopicMessage(nonBlockingRetryPolicy, record)) {
-        nonBlockingHandler(handler, producer, subscription, evK, evV, record, nonBlockingRetryPolicy)
-      } else {
-        nonBlockingRetryPolicy.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
-          maybeRetry(retryAttempt, BlockingHandlerFailed, nonBlockingRetryPolicy, evK, evV, record, subscription, producer)
-        }
-      }
-    }
-
-    blockingHandler(handler, record, retryConfig, blockingState, nonBlockingRetryPolicy).flatMap(result =>
-      if (!result.lastHandleSucceeded)
-        nonBlockingHandlerAfterBlockingFailed(handler, producer, subscription, evK, evV, record, nonBlockingRetryPolicy)
-      else
-        ZIO.unit
-    )
-  }
-
-
-  // TODO: extract to its own class
-  private def blockingHandler[V, K, E, R, R2](handler: RecordHandler[R, E, K, V], record: ConsumerRecord[K, V],
-                                              retryConfig: RetryConfig, blockingState: Ref[Map[BlockingTarget, BlockingState]],
-                                              nonBlockingRetryPolicy: NonBlockingRetryPolicy): ZIO[Clock with R with GreyhoundMetrics, Nothing, LastHandleResult] = {
-    val blockingStateResolver = BlockingStateResolver(blockingState)
-    case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
-    val topicPartition = TopicPartition(record.topic, record.partition)
-
-    def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[Clock with GreyhoundMetrics, PollResult] = {
-      for {
-        shouldBlock <- blockingStateResolver.shouldBlock(record)
-        shouldPollAgain <- if (shouldBlock) {
-          clock.sleep(100.milliseconds) *>
-            currentTime(TimeUnit.MILLISECONDS).flatMap(end =>
-              UIO(PollResult(pollAgain = end - start < interval.toMillis, blockHandling = true)))
-        } else
-          UIO(PollResult(pollAgain = false, blockHandling = false))
-      } yield shouldPollAgain
-    }
-
-    def blockOnErrorFor(interval: Duration) = {
-      for {
-        start <- currentTime(TimeUnit.MILLISECONDS)
-        continueBlocking <- if (interval.toMillis > 100L) {
-          pollBlockingStateWithSuspensions(interval, start).doWhile(result => result.pollAgain).map(_.blockHandling)
-        } else {
-          for {
-            shouldBlock <- blockingStateResolver.shouldBlock(record)
-            _ <- ZIO.when(shouldBlock)(clock.sleep(interval))
-          } yield shouldBlock
-        }
-      } yield LastHandleResult(lastHandleSucceeded = false, shouldContinue = continueBlocking)
-    }
-
-    def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics, Nothing, LastHandleResult] = {
-      (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll { _ =>
-        interval.map { interval =>
-          report(BlockingRetryOnHandlerFailed(topicPartition, record.offset)) *>
-            blockOnErrorFor(interval)
-        }.getOrElse(UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false)))
-      }
-    }
-
-    def backToBlockingForIgnoringOnce = {
-      blockingState.modify(state => state.get(TopicPartitionTarget(topicPartition)).map {
-        case IgnoringOnce => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
-        case _ => ((), state)
-      }.getOrElse(((), state)))
-    }
-
-    if (isHandlingRetryTopicMessage(nonBlockingRetryPolicy, record)) {
-        UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
-    } else {
-      val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs().map(Some(_)) :+ None
-      val result = foreachWhile(durationsIncludingForInvocationWithNoErrorHandling) { interval =>
-        handleAndMaybeBlockOnErrorFor(interval)
-      }
-      backToBlockingForIgnoringOnce *> result
-    }
-  }
-
-  private def isHandlingRetryTopicMessage[R2, R, E, K, V](nonBlockingRetryPolicy: NonBlockingRetryPolicy, record: ConsumerRecord[K, V]) = {
-    val option = nonBlockingRetryPolicy.retryTopicsFor("").-("").headOption
-    option.exists(retryTopicTemplate => record.topic.contains(retryTopicTemplate))
   }
 }
 
