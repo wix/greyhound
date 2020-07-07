@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.Offset
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
 import zio.{Ref, UIO}
 
 trait Offsets {

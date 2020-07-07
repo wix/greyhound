@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.Deserializer
 import com.wixpress.dst.greyhound.core.Headers.Header
-import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import zio.Task
 
 trait ContextDecoder[+C] {

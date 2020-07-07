@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.OffsetsTest._
+import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
 import com.wixpress.dst.greyhound.core.testkit.BaseTest
 import zio.{UManaged, ZManaged}
 

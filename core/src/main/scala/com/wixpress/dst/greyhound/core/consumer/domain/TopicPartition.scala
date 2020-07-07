@@ -1,4 +1,4 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.domain
 
 import com.wixpress.dst.greyhound.core.{Partition, Topic}
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}

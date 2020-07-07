@@ -3,7 +3,8 @@ package com.wixpress.dst.greyhound.java
 import java.util.concurrent.{CompletableFuture, Executor}
 
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.{SerializationError, ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.{SerializationError, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord => CoreConsumerRecord}
 import com.wixpress.dst.greyhound.core.{Deserializer => CoreDeserializer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import org.apache.kafka.clients.consumer.ConsumerRecord

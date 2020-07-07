@@ -7,6 +7,7 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
 import zio.blocking.Blocking
 import zio.duration.Duration
 import zio.{RIO, UIO, ZIO}

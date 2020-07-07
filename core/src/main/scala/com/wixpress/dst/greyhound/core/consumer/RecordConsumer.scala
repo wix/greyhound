@@ -2,13 +2,16 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
 
+import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
-import com.wixpress.dst.greyhound.core.consumer.BlockingState.{Blocking => InternalBlocking, IgnoringAll, IgnoringOnce}
-import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
-import com.wixpress.dst.greyhound.core.consumer.NonBlockingRetryPolicy.{patternRetryTopic, retryPattern}
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryPolicy.{patternRetryTopic, retryPattern}
+import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
@@ -45,7 +48,7 @@ object RecordConsumer {
    */
   def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env, Throwable, RecordConsumer[R with Env]] =
     for {
-      consumerSubscriptionRef <- Ref.make[consumer.ConsumerSubscription](config.initialSubscription).toManaged_
+      consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryPolicy = NonBlockingRetryPolicy(config.group, config.retryConfig)
       consumer <- Consumer.make(
         ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties))
@@ -171,16 +174,6 @@ case class RecordConsumerConfig(bootstrapServers: String,
 
 object RecordConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
-}
-
-sealed trait ConsumerSubscription
-
-object ConsumerSubscription {
-
-  case class TopicPattern(p: Pattern, discoveredTopics: Set[Topic] = Set.empty) extends ConsumerSubscription
-
-  case class Topics(topics: NonEmptySet[Topic]) extends ConsumerSubscription
-
 }
 
 sealed trait BlockingStateCommand

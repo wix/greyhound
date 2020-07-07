@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.testkit
 
 import com.wixpress.dst.greyhound.core.Offset
-import com.wixpress.dst.greyhound.core.consumer.ConsumerRecord
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import org.specs2.matcher.Matcher
 import org.specs2.matcher.Matchers._
 
