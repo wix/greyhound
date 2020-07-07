@@ -9,7 +9,7 @@ import zio.{Has, RIO, Ref, UIO, ZIO}
 package object testkit {
   type TestMetrics = Has[TestMetrics.Service] with GreyhoundMetrics
 
-  def eventuallyZ[R <: Has[_], T](f: RIO[R, T], predicate: T => Boolean): ZIO[R, Throwable, Unit] = for {
+  def eventuallyZ[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean): ZIO[R, Throwable, Unit] = for {
     resultRef <- Ref.make[Option[T]](None)
     timeoutRes <- f.flatMap(r =>
       resultRef.set(Some(r)) *> UIO(r))

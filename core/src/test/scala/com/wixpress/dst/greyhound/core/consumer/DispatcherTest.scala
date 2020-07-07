@@ -67,9 +67,9 @@ class DispatcherTest extends BaseTest[Clock with TestClock with TestMetrics] {
           dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
         }
         _ <- dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
-        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)), (set:Set[TopicPartition]) => set.isEmpty)
+        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
         _ <- ZIO.foreach_(1 to 4 )(_ => queue.take)
-        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)), (set:Set[TopicPartition]) => set == Set(TopicPartition(topic, partition)))
+        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
       } yield ok
     )
   }

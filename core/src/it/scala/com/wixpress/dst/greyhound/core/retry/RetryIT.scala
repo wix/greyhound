@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
+import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
@@ -131,9 +131,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       _ <- ZIO.foreach(1 to numOfMessages) { _ =>
       producer.produce(ProducerRecord(topic, "irrelevant"), StringSerde, StringSerde)
     }.fork
-      _ <- eventuallyZ(callCount.get, (count: Int) => count == 1)
+      _ <- eventuallyZ(callCount.get)(_ == 1)
       _ <- consumer.setBlockingState[Any](IgnoreOnceFor(TopicPartition(topic, 0)))
-      _ <- eventuallyZ(callCount.get, (count: Int) => count == (numOfMessages + 1))
+      _ <- eventuallyZ(callCount.get)(_ == (numOfMessages + 1))
     } yield ok
   }
 
@@ -271,10 +271,6 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
 
   private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
-
-  def eventuallyZ[T](f: UIO[T], predicate: T => Boolean) = {
-    f.repeat(Schedule.spaced(100.milliseconds) && Schedule.doUntil(predicate)).timeoutFail(new RuntimeException)(4.seconds)
-  }
 }
 
 case class SomeException() extends Exception("expected!", null, true, false)
