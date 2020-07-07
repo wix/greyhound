@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryPolicy.{patternRetryTopic, retryPattern}
 import com.wixpress.dst.greyhound.core.consumer.retry._

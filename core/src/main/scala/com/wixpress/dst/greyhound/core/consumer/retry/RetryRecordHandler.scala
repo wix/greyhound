@@ -1,7 +1,6 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
-import com.wixpress.dst.greyhound.core.consumer.retry._
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.Producer
 import zio._

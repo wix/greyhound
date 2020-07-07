@@ -1,12 +1,11 @@
-package com.wixpress.dst.greyhound.core.consumer
+package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingHandlerFailed, NonBlockingRetryPolicy, NonRetryableException, RetryAttempt}
 import com.wixpress.dst.greyhound.core.producer.Producer
 import zio.clock.{Clock, sleep}
-import zio.{Chunk, ZIO}
 import zio.duration._
+import zio.{Chunk, ZIO}
 
 trait NonBlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with R, Nothing, Any]

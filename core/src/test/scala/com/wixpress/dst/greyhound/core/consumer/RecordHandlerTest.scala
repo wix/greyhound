@@ -6,10 +6,10 @@ import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.RecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryOnHandlerFailed}
-import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingState, BlockingTarget, TopicPartitionTarget, TopicTarget, ZRetryConfig}
+import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingState, BlockingTarget, RetryRecordHandler, TopicPartitionTarget, TopicTarget, ZRetryConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import com.wixpress.dst.greyhound.core.testkit._
