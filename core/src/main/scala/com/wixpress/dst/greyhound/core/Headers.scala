@@ -15,6 +15,9 @@ case class Headers(headers: Map[Header, Chunk[Byte]] = Map.empty) {
   def +(header: (String, Chunk[Byte])): Headers =
     copy(headers = headers + header)
 
+  def ++(moreHeaders: Headers) =
+    copy(headers = headers ++ moreHeaders.headers)
+
   def get[A](header: Header, deserializer: Deserializer[A]): Task[Option[A]] =
     ZIO.foreach(headers.get(header))(deserializer.deserialize("", this, _)).map(_.headOption)
 }
