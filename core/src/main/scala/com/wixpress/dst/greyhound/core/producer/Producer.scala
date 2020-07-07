@@ -25,7 +25,7 @@ trait Producer {
     } yield ProducerRecord(
       topic = record.topic,
       value = valueBytes,
-      key = keyBytes.headOption,
+      key = keyBytes,
       partition = record.partition,
       headers = record.headers)
 
