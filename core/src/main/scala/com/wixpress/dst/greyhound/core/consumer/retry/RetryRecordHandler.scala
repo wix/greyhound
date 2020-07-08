@@ -30,7 +30,7 @@ object RetryRecordHandler {
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(blockingHandler, nonBlockingHandler)
 
     (record: ConsumerRecord[K, V]) => {
-      retryConfig.retryType match {
+      retryConfig.retryType() match {
         case BlockingFollowedByNonBlocking => blockingAndNonBlockingHandler.handle(record)
         case NonBlocking => nonBlockingHandler.handle(record)
         case Blocking => blockingHandler.handle(record)
