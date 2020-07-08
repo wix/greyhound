@@ -130,7 +130,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _ <- adjustTestClockFor(1.second)
+        _ <- adjustTestClockFor(1.second, 1.2)
         metrics <- TestMetrics.reported
         _ <- eventuallyZ(handleCountRef.get)(_ >= 10)
       } yield {
@@ -197,9 +197,9 @@ class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with 
           _ <- blockingState.set(Map(target(tpartition) -> InternalBlocking))
           _ <- handleCountRef.set(0)
           _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 2, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-          _ <- adjustTestClockFor(retryDurations.head)
-          _ <- adjustTestClockFor(retryDurations(1))
+          _ <- adjustTestClockFor(retryDurations.head * 1.2)
           _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingRetryOnHandlerFailed(tpartition, offset + 2)))
+          _ <- adjustTestClockFor(retryDurations(1) * 1.2)
           _ <- eventuallyZ(handleCountRef.get)(_ == 3)
         } yield ok
       }
