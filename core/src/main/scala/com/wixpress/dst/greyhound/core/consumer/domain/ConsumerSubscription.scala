@@ -10,6 +10,8 @@ object ConsumerSubscription {
 
   case class Topics(topics: NonEmptySet[Topic]) extends ConsumerSubscription
 
+  def topics(topic: Topic*): Topics = Topics(topic.toSet)
+
 }
 
 sealed trait ConsumerSubscription

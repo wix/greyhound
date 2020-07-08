@@ -1,13 +1,15 @@
 package com.wixpress.dst.greyhound.core
 
 import java.util.regex.Pattern
+import java.util.regex.Pattern.compile
 
+import com.wixpress.dst.greyhound.core.testkit.eventuallyZ
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.OffsetReset.Earliest
 import com.wixpress.dst.greyhound.core.consumer._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
@@ -45,7 +47,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       messages <- RecordConsumer.make(config, handler).use { consumer =>
         producer.produce(record, StringSerde, StringSerde) *>
           sleep(3.seconds) *>
-          consumer.resubscribe(Set(topic, topic2)) *>
+          consumer.resubscribe(ConsumerSubscription.topics(topic, topic2)) *>
           sleep(500.millis) *> // give the consumer some time to start polling topic2
           producer.produce(record.copy(topic = topic2, value = "BAR"), StringSerde, StringSerde) *>
           (queue.take zip queue.take)
@@ -215,25 +217,24 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   "subscribe to a pattern" in {
     for {
       _ <- console.putStrLn(">>>> starting test: patternTest")
-      topic = "core-subscribe-pattern-topic"
+      topic1 = "core-subscribe-pattern1-topic"
+      topic2 = "core-subscribe-pattern2-topic"
       TestResources(kafka, producer) <- getShared
-      _ <- kafka.createTopic(TopicConfig(topic, 1, 1, delete))
+      _ <- kafka.createTopics(Seq(topic1, topic2).map(t => TopicConfig(t, 1, 1, delete)): _*)
       group <- randomGroup
-      probe <- Ref.make[Option[Offset]](None)
+      probe <- Ref.make(Seq.empty[(Topic, Offset)])
       handler = RecordHandler { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-        probe.update(_ => Some(record.offset))
+        probe.update(_ :+ (record.topic, record.offset))
       }
 
-      _ <- makeConsumer(kafka, Pattern.compile("core-subscribe-pattern.*"), group, handler, 0).use_ {
-        val record = ProducerRecord(topic, Chunk.empty, key = Option(Chunk.empty))
-        producer.produce(record).flatMap(_ =>
-          probe.get.flatMap(actual =>
-            if (!actual.contains(0))
-              ZIO.fail(s"$actual != Some(0)")
-            else
-              UIO(actual))
-            .retry(Schedule.duration(5.seconds) && Schedule.spaced(1.second))
-        ).map(_ === Some(0))
+      _ <- makeConsumer(kafka, compile("core-subscribe-pattern1.*"), group, handler, 0).use { consumer =>
+        val record = ProducerRecord(topic1, Chunk.empty, key = Option(Chunk.empty))
+
+        producer.produce(record) *>
+          eventuallyZ(probe.get)(_ == (topic1, 0) :: Nil) *>
+          consumer.resubscribe(TopicPattern(compile("core-subscribe-pattern2.*"))) *>
+          producer.produce(record.copy(topic = topic2)) *>
+          eventuallyZ(probe.get)(_ == (topic1, 0) :: (topic2, 0) :: Nil)
       }
     } yield ok
   }
