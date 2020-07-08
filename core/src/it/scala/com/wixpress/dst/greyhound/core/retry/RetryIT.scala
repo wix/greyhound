@@ -67,15 +67,15 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       consumedValuesRef <- Ref.make(List.empty[String])
 
-      retryConfig = ZRetryConfig.exponentialBackoffBlockingRetry(500.millis, 3.seconds, 1)
+      retryConfig = ZRetryConfig.exponentialBackoffBlockingRetry(100.millis, 2, 1, infiniteRetryMaxInterval = false)
       retryHandler = failingBlockingRecordHandler(consumedValuesRef, topic).withDeserializers(StringSerde, StringSerde)
       _ <- RecordConsumer.make(configFor(kafka, topic, group, retryConfig), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
           producer.produce(ProducerRecord(topic, "baz", Some("foo")), StringSerde, StringSerde) *>
-          clock.sleep(5.seconds)
+          clock.sleep(2.seconds)
       }
       consumedValues <- consumedValuesRef.get
-    } yield consumedValues must atLeast("bar", "bar", "bar")
+    } yield consumedValues.take(4) === Seq("bar", "bar", "bar", "baz")
   }
 
   "configure a handler with infinite blocking retry policy" in {
@@ -280,7 +280,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     RecordHandler { r: ConsumerRecord[String, String] =>
       UIO(println(s">>>> failingBlockingRecordHandler: r ${r}")) *>
         ZIO.when(r.topic == originalTopic) {
-          consumedValues.updateAndGet(values => r.value :: values)
+          consumedValues.updateAndGet(values => values :+ r.value)
         } *>
         consumedValues.get.flatMap{values =>
           if(values.size <= stopFailingAfter)

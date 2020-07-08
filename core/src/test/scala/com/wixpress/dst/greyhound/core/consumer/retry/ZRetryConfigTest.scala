@@ -22,7 +22,7 @@ class ZRetryConfigTest extends SpecificationWithJUnit {
         val init = params.init
         val mult = params.mult
 
-        val config = ZRetryConfig.exponentialBackoffBlockingRetry(init.millis, max, mult)
+        val config = ZRetryConfig.exponentialBackoffBlockingRetry(init.millis, max, mult, infiniteRetryMaxInterval = true)
         val backoffs = config.blockingBackoffs()
 
         val absMult = abs(params.mult)
@@ -48,7 +48,7 @@ class ZRetryConfigTest extends SpecificationWithJUnit {
         val mult = params.mult
         val maxMult = params.maxMult
 
-        val config = ZRetryConfig.exponentialBackoffBlockingRetry(init.millis, maxDuration.millis, mult)
+        val config = ZRetryConfig.exponentialBackoffBlockingRetry(init.millis, maxDuration.millis, mult, infiniteRetryMaxInterval = true)
         val backoffs = config.blockingBackoffs()
 
         val absMult = abs(params.mult)
