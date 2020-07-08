@@ -10,7 +10,10 @@ import scala.math.{abs, log10, max}
 import scala.util.Try
 
 object ExponentialBackoffCalculator {
-  def exponentialBackoffs(initialInterval: ZDuration, maximalInterval: ZDuration, backOffMultiplier: Float): Seq[ZDuration] = {
+  def exponentialBackoffs(initialInterval: ZDuration,
+                          maximalInterval: ZDuration,
+                          backOffMultiplier: Float,
+                          infiniteRetryMaxInteval: Boolean): Seq[ZDuration] = {
     val logOfMultipier = (x: Double, multiplier: Float) => log10(x) / log10(multiplier)
 
     def calcMaxMultiplications(initialInterval: ZDuration, maximalInterval: ZDuration, backOffMultiplier: Float) = {
@@ -24,27 +27,31 @@ object ExponentialBackoffCalculator {
     }
 
     val maxMultiplications = calcMaxMultiplications(initialInterval, maximalInterval, backOffMultiplier)
-    exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier)
+    exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier, infiniteRetryMaxInteval)
   }
 
   def exponentialBackoffs(initialInterval: ZDuration,
-                                  maxMultiplications: Int,
-                                  backOffMultiplier: Float): Seq[ZDuration] = {
+                          maxMultiplications: Int,
+                          backOffMultiplier: Float,
+                          infiniteRetryMaxInteval: Boolean): Seq[ZDuration] = {
     val absBackOffMultiplier = abs(backOffMultiplier)
     val safeMaxMultiplications = max(0, maxMultiplications)
 
-    val safeInitialInterval = if(initialInterval.toMillis < 10) ZDuration(10, TimeUnit.MILLISECONDS) else initialInterval
+    val safeInitialInterval = if (initialInterval.toMillis < 10) ZDuration(10, TimeUnit.MILLISECONDS) else initialInterval
 
     val maxDuration = safeInitialInterval.toMillis * power((1 + absBackOffMultiplier), safeMaxMultiplications).toLong
 
-    Stream.iterate(safeInitialInterval)(prevInterval => {
+    val infiniteDurations = Stream.iterate(safeInitialInterval)(prevInterval => {
       val calclatedDuration = prevInterval * (1 + absBackOffMultiplier)
 
       if (calclatedDuration.toMillis > maxDuration)
         ZDuration(maxDuration, TimeUnit.MILLISECONDS)
       else
         calclatedDuration
-    }
-    )
+    })
+    if (!infiniteRetryMaxInteval)
+      infiniteDurations.take(maxMultiplications)
+    else
+      infiniteDurations
   }
 }
