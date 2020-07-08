@@ -20,19 +20,17 @@ object ZRetryConfig {
 
   def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
                                       maximalInterval: ZDuration,
-                                      backOffMultiplier: Float): RetryConfig = {
+                                      backOffMultiplier: Float): RetryConfig =
     RetryConfig(retryType = Blocking,
       blockingBackoffs = () => exponentialBackoffs(initialInterval, maximalInterval, backOffMultiplier),
       nonBlockingBackoffs = List.empty)
-  }
 
   def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
                                       maxMultiplications: Int,
-                                      backOffMultiplier: Float): RetryConfig = {
+                                      backOffMultiplier: Float): RetryConfig =
     RetryConfig(retryType = Blocking,
       blockingBackoffs = () => exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier),
       nonBlockingBackoffs = List.empty)
-  }
 
   def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[ZDuration], nonBlockingBackoffs: List[ZDuration]): RetryConfig =
     RetryConfig(retryType = BlockingFollowedByNonBlocking, blockingBackoffs = () => blockingBackoffs, nonBlockingBackoffs = nonBlockingBackoffs)
@@ -40,13 +38,23 @@ object ZRetryConfig {
 
 object RetryConfig {
   def nonBlockingRetry(firstRetry: Duration, otherRetries: Duration*): RetryConfig =
-    ZRetryConfig.nonBlockingRetry(ZDuration.fromScala(firstRetry), otherRetries.toList.map(ZDuration.fromScala):_*)
+    ZRetryConfig.nonBlockingRetry(ZDuration.fromScala(firstRetry), otherRetries.toList.map(ZDuration.fromScala): _*)
 
   def finiteBlockingRetry(firstRetry: Duration, otherRetries: Duration*): RetryConfig =
-    ZRetryConfig.finiteBlockingRetry(ZDuration.fromScala(firstRetry), otherRetries.toList.map(ZDuration.fromScala):_*)
+    ZRetryConfig.finiteBlockingRetry(ZDuration.fromScala(firstRetry), otherRetries.toList.map(ZDuration.fromScala): _*)
 
   def infiniteBlockingRetry(interval: Duration): RetryConfig =
     ZRetryConfig.infiniteBlockingRetry(ZDuration.fromScala(interval))
+
+  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
+                                      maximalInterval: ZDuration,
+                                      backOffMultiplier: Float): RetryConfig =
+    ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maximalInterval, backOffMultiplier)
+
+  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
+                                      maxMultiplications: Int,
+                                      backOffMultiplier: Float): RetryConfig =
+    ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maxMultiplications, backOffMultiplier)
 
   def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[Duration], nonBlockingBackoffs: List[Duration]): RetryConfig =
     ZRetryConfig.blockingFollowedByNonBlockingRetry(blockingBackoffs = blockingBackoffs.map(ZDuration.fromScala), nonBlockingBackoffs = nonBlockingBackoffs.map(ZDuration.fromScala))
@@ -61,4 +69,5 @@ case object NonBlocking extends RetryType
 case object BlockingFollowedByNonBlocking extends RetryType
 
 case class NonRetryableException(cause: Exception) extends Exception(cause)
+
 case object BlockingHandlerFailed extends RuntimeException
