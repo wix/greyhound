@@ -1,10 +1,10 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.retry.ExponentialBackoffCalculator.exponentialBackoffs
 import zio.duration.{Duration => ZDuration}
 
 import scala.concurrent.duration.Duration
-
 
 case class RetryConfig(retryType: RetryType, blockingBackoffs: () => Seq[ZDuration], nonBlockingBackoffs: Seq[ZDuration])
 
@@ -17,6 +17,22 @@ object ZRetryConfig {
 
   def infiniteBlockingRetry(interval: ZDuration): RetryConfig =
     RetryConfig(retryType = Blocking, blockingBackoffs = () => Stream.continually(interval), nonBlockingBackoffs = List.empty)
+
+  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
+                                      maximalInterval: ZDuration,
+                                      backOffMultiplier: Float): RetryConfig = {
+    RetryConfig(retryType = Blocking,
+      blockingBackoffs = () => exponentialBackoffs(initialInterval, maximalInterval, backOffMultiplier),
+      nonBlockingBackoffs = List.empty)
+  }
+
+  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
+                                      maxMultiplications: Int,
+                                      backOffMultiplier: Float): RetryConfig = {
+    RetryConfig(retryType = Blocking,
+      blockingBackoffs = () => exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier),
+      nonBlockingBackoffs = List.empty)
+  }
 
   def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[ZDuration], nonBlockingBackoffs: List[ZDuration]): RetryConfig =
     RetryConfig(retryType = BlockingFollowedByNonBlocking, blockingBackoffs = () => blockingBackoffs, nonBlockingBackoffs = nonBlockingBackoffs)
