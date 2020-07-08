@@ -1,12 +1,11 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler, TopicPartition}
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import org.apache.kafka.clients.consumer.ConsumerRecords
 import zio._
 import zio.blocking.Blocking
@@ -39,12 +38,7 @@ object EventLoop {
       // TODO how to handle errors in subscribe?
       runtime <- ZIO.runtime[R with GreyhoundMetrics with Clock]
       rebalanceListener = listener(runtime, pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
-      _ <- ZIO.whenCase(initialSubscription) {
-        case TopicPattern(pattern, _) =>
-          consumer.subscribePattern(pattern, rebalanceListener)
-        case Topics(topics) =>
-          consumer.subscribe(topics, rebalanceListener)
-      }
+      _ <- subscribe(initialSubscription, rebalanceListener)(consumer)
       running <- Ref.make(true)
       fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group)
         .doWhile(_ == true).forkDaemon

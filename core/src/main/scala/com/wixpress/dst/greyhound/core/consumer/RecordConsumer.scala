@@ -2,7 +2,6 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
 
-import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
@@ -31,7 +30,7 @@ trait RecordConsumer[-R] extends Resource[R] {
 
   def topology: UIO[RecordConsumerTopology]
 
-  def resubscribe[R1](topics: Set[Topic], listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
+  def resubscribe[R1](subscription: ConsumerSubscription, listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
 
   def setBlockingState[R1](command: BlockingStateCommand): RIO[Env with R1, Unit]
 
@@ -95,24 +94,24 @@ object RecordConsumer {
 
       override def group: Group = config.group
 
-      override def resubscribe[R1](topics: Set[Topic], listener: RebalanceListener[R1]): RIO[Env with R1, AssignedPartitions] =
+      override def resubscribe[R1](subscription: ConsumerSubscription, listener: RebalanceListener[R1]): RIO[Env with R1, AssignedPartitions] =
         for {
           assigned <- Ref.make[AssignedPartitions](Set.empty)
           promise <- Promise.make[Nothing, AssignedPartitions]
-          _ <- consumer.subscribe[R1](topics, listener *> new RebalanceListener[R1] {
+          rebalanceListener = listener *> new RebalanceListener[R1] {
             override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
               ZIO.unit
 
             //todo: we need to call EventLoop's listener here! otherwise we don't stop fibers on resubscribe
 
             override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] = for {
-              allAssigned <- assigned.updateAndGet(_ ++ partitions)
-              _ <- consumerSubscriptionRef.set(ConsumerSubscription.Topics(topics))
-              _ <- ZIO.when(allAssigned.map(_.topic) == topics)(
-                promise.succeed(allAssigned)
-              )
+              allAssigned <- assigned.updateAndGet(_ => partitions)
+              _ <- consumerSubscriptionRef.set(subscription)
+              _ <- promise.succeed(allAssigned)
             } yield ()
-          })
+          }
+
+          _ <- subscribe[R1](subscription, rebalanceListener)(consumer)
           result <- promise.await
         } yield result
 
@@ -120,14 +119,14 @@ object RecordConsumer {
     }
 
   private def maybeAddRetryTopics[E, R](config: RecordConsumerConfig, policy: NonBlockingRetryPolicy): (ConsumerSubscription, Set[String]) = {
-      config.initialSubscription match {
-        case Topics(topics) =>
-          val retryTopics = topics.flatMap(policy.retryTopicsFor)
-          // TODO: topics ++ seems meaningless here
-          (Topics(topics ++ retryTopics), retryTopics)
-        case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
-          (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
-      }
+    config.initialSubscription match {
+      case Topics(topics) =>
+        val retryTopics = topics.flatMap(policy.retryTopicsFor)
+        // TODO: topics ++ seems meaningless here
+        (Topics(topics ++ retryTopics), retryTopics)
+      case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
+        (0 until policy.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
+    }
   }
 
   private def addRetriesToHandler[R, E](config: RecordConsumerConfig,
