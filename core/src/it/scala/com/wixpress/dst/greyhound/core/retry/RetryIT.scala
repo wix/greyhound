@@ -59,6 +59,25 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield consumedValues must atLeast("bar", "bar", "bar")
   }
 
+  "configure a handler with blocking retry with exponential backoff policy" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic()
+      group <- randomGroup
+
+      consumedValuesRef <- Ref.make(List.empty[String])
+
+      retryConfig = ZRetryConfig.exponentialBackoffBlockingRetry(500.millis, 3.seconds, 1)
+      retryHandler = failingBlockingRecordHandler(consumedValuesRef, topic).withDeserializers(StringSerde, StringSerde)
+      _ <- RecordConsumer.make(configFor(kafka, topic, group, retryConfig), retryHandler).use_ {
+        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
+          producer.produce(ProducerRecord(topic, "baz", Some("foo")), StringSerde, StringSerde) *>
+          clock.sleep(5.seconds)
+      }
+      consumedValues <- consumedValuesRef.get
+    } yield consumedValues must atLeast("bar", "bar", "bar")
+  }
+
   "configure a handler with infinite blocking retry policy" in {
     for {
       TestResources(kafka, producer) <- getShared
