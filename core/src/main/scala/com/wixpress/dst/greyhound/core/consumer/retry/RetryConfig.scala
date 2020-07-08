@@ -6,34 +6,43 @@ import zio.duration.{Duration => ZDuration}
 
 import scala.concurrent.duration.Duration
 
-case class RetryConfig(retryType: RetryType, blockingBackoffs: () => Seq[ZDuration], nonBlockingBackoffs: Seq[ZDuration])
+case class RetryConfig(blockingBackoffs: () => Seq[ZDuration], nonBlockingBackoffs: Seq[ZDuration]) {
+  def retryType(): RetryType = {
+    if (blockingBackoffs.apply().nonEmpty) {
+      if (nonBlockingBackoffs.nonEmpty)
+        BlockingFollowedByNonBlocking
+      else
+        Blocking
+    } else {
+      NonBlocking
+    }
+  }
+}
 
 object ZRetryConfig {
   def nonBlockingRetry(firstRetry: ZDuration, otherRetries: ZDuration*): RetryConfig =
-    RetryConfig(retryType = NonBlocking, nonBlockingBackoffs = firstRetry :: otherRetries.toList, blockingBackoffs = () => List.empty)
+    RetryConfig(nonBlockingBackoffs = firstRetry :: otherRetries.toList, blockingBackoffs = () => List.empty)
 
   def finiteBlockingRetry(firstRetry: ZDuration, otherRetries: ZDuration*): RetryConfig =
-    RetryConfig(retryType = Blocking, blockingBackoffs = () => firstRetry :: otherRetries.toList, nonBlockingBackoffs = List.empty)
+    RetryConfig(blockingBackoffs = () => firstRetry :: otherRetries.toList, nonBlockingBackoffs = List.empty)
 
   def infiniteBlockingRetry(interval: ZDuration): RetryConfig =
-    RetryConfig(retryType = Blocking, blockingBackoffs = () => Stream.continually(interval), nonBlockingBackoffs = List.empty)
+    RetryConfig(blockingBackoffs = () => Stream.continually(interval), nonBlockingBackoffs = List.empty)
 
   def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
                                       maximalInterval: ZDuration,
                                       backOffMultiplier: Float): RetryConfig =
-    RetryConfig(retryType = Blocking,
-      blockingBackoffs = () => exponentialBackoffs(initialInterval, maximalInterval, backOffMultiplier),
+    RetryConfig(blockingBackoffs = () => exponentialBackoffs(initialInterval, maximalInterval, backOffMultiplier),
       nonBlockingBackoffs = List.empty)
 
   def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
                                       maxMultiplications: Int,
                                       backOffMultiplier: Float): RetryConfig =
-    RetryConfig(retryType = Blocking,
-      blockingBackoffs = () => exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier),
+    RetryConfig(blockingBackoffs = () => exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier),
       nonBlockingBackoffs = List.empty)
 
   def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[ZDuration], nonBlockingBackoffs: List[ZDuration]): RetryConfig =
-    RetryConfig(retryType = BlockingFollowedByNonBlocking, blockingBackoffs = () => blockingBackoffs, nonBlockingBackoffs = nonBlockingBackoffs)
+    RetryConfig(blockingBackoffs = () => blockingBackoffs, nonBlockingBackoffs = nonBlockingBackoffs)
 }
 
 object RetryConfig {
