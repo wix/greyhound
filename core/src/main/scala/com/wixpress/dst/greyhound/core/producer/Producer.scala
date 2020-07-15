@@ -52,14 +52,8 @@ object Producer {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
       new Producer {
-        override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata] =
-          ZIO.effectAsync[Any, ProducerError, RecordMetadata] { cb =>
-            producer.send(recordFrom(record), new Callback {
-              override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit =
-                if (exception != null) cb(ProducerError(exception))
-                else cb(ZIO.succeed(RecordMetadata(metadata)))
-            })
-          }
+        override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata] =
+          produceAsync(record).flatten
 
         private def recordFrom(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) =
           new KafkaProducerRecord(
