@@ -6,14 +6,15 @@ import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.ReportingProducerTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, FakeProducer, TestMetrics}
 import zio._
+import zio.blocking.Blocking
 import zio.duration._
 import zio.test.environment.{TestClock, TestEnvironment}
 
 import scala.concurrent.duration.FiniteDuration
 
-class ReportingProducerTest extends BaseTest[Unit] {
+class ReportingProducerTest extends BaseTest[Blocking] {
 
-  override def env: UManaged[Unit] = ZManaged.succeed(())
+  override def env: UManaged[Blocking] = testEnv
 
   def testEnv: UManaged[TestEnvironment with TestMetrics] =
     for {
@@ -45,6 +46,9 @@ class ReportingProducerTest extends BaseTest[Unit] {
       internal = new Producer {
         override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata] =
           promise.await.as(metadata)
+
+        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
+          promise.await.as(UIO(metadata))
       }
       producer = producerFrom(deps, internal)
       fiber <- producer.produce(record).fork
