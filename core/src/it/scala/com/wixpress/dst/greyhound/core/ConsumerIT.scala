@@ -29,7 +29,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   val resources = testResources()
 
-  "produce and consume a single message" in {
+  "produce, consume and rebalance" in {
     for {
       TestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
@@ -247,7 +247,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     RecordConsumer.make(configFor(kafka, group, pattern).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
 
   private def configFor(kafka: ManagedKafka, group: Group, topic: Topic) =
-    RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching)
+    RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
 
   private def configFor(kafka: ManagedKafka, group: Group, pattern: Pattern) =
     RecordConsumerConfig(kafka.bootstrapServers, group, TopicPattern(pattern), extraProperties = fastConsumerMetadataFetching)
