@@ -4,6 +4,7 @@ import com.wixpress.dst.greyhound.core.Offset
 import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
 import com.wixpress.dst.greyhound.core.producer._
 import zio._
+import zio.blocking.Blocking
 
 case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]],
                         offsets: Ref[Map[TopicPartition, Offset]],
@@ -29,6 +30,8 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
 
   def failing: FakeProducer = copy(config = ProducerConfig.Failing)
 
+  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
+    produce(record).map(m => UIO(m))
 }
 
 object FakeProducer {

@@ -15,7 +15,7 @@ case class TimeoutError(cause: TimeoutException) extends ProducerError(cause)
 case class KafkaError(cause: KafkaException) extends ProducerError(cause)
 
 object ProducerError {
-  def apply(exception: Exception): IO[ProducerError, Nothing] = exception match {
+  def apply(exception: Throwable): IO[ProducerError, Nothing] = exception match {
     case e: AuthenticationException => IO.fail(AuthenticationError(e))
     case e: AuthorizationException => IO.fail(AuthorizationError(e))
     case e: IllegalStateException => IO.fail(IllegalStateError(e))
