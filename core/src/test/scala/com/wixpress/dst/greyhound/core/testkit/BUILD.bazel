@@ -16,6 +16,7 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/zioutils",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_streams_2_12",
+        "@dev_zio_zio_test_2_12",
         "@org_specs2_specs2_common_2_12",
         "@org_specs2_specs2_core_2_12",
         "@org_specs2_specs2_fp_2_12",
