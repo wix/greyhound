@@ -13,7 +13,6 @@ import zio.test.environment.{TestClock, TestEnvironment}
 import scala.concurrent.duration.FiniteDuration
 
 class ReportingProducerTest extends BaseTest[Blocking] {
-
   override def env: UManaged[Blocking] = testEnv
 
   def testEnv: UManaged[TestEnvironment with TestMetrics] =
@@ -44,18 +43,14 @@ class ReportingProducerTest extends BaseTest[Blocking] {
       promise <- Promise.make[Nothing, Unit]
       metadata = RecordMetadata(topic, partition, 0)
       internal = new Producer {
-        override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): IO[ProducerError, RecordMetadata] =
-          promise.await.as(metadata)
-
         override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
           promise.await.as(UIO(metadata))
       }
       producer = producerFrom(deps, internal)
-      fiber <- producer.produce(record).fork
-      _ <- adjustTestClock(deps, 1.second)
-      _ <- promise.succeed(()) *> fiber.join
+      _ <- promise.succeed(())
+      _ <- producer.produceAsync(record).tap(_.tap(_ => adjustTestClock(deps, 1.second)))
       metrics <- reportedMetrics(deps)
-    } yield metrics must contain(RecordProduced(metadata, FiniteDuration(1, TimeUnit.SECONDS)))
+    } yield metrics must contain(RecordProduced(metadata, FiniteDuration(0, TimeUnit.SECONDS)))
   )
 
   "report metric when produce fails" in testEnv.use(deps =>
@@ -63,6 +58,7 @@ class ReportingProducerTest extends BaseTest[Blocking] {
       internal <- FakeProducer.make
       producer = producerFrom(deps, internal.failing)
       _ <- producer.produce(record).either
+      _ <- adjustTestClock(deps, 1.second)
       metrics <- reportedMetrics(deps)
     } yield metrics must contain(beAnInstanceOf[ProduceFailed])
   )
