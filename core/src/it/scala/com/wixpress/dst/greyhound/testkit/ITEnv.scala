@@ -11,7 +11,7 @@ import zio.random.Random
 import zio.{ZIO, ZManaged, random, test}
 
 object ITEnv {
-  type Env = GreyhoundMetrics with Blocking with Console with Clock with Random
+  type Env = GreyhoundMetrics with zio.ZEnv
   case class TestResources(kafka: ManagedKafka, producer: ReportingProducer)
 
   def ManagedEnv =
