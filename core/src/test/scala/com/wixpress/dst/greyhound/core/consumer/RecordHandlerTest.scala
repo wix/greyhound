@@ -15,12 +15,13 @@ import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
 import com.wixpress.dst.greyhound.core.testkit._
 import org.specs2.specification.core.Fragment
 import zio._
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
 import zio.random.{Random, nextBytes, nextIntBounded}
 import zio.test.environment.{TestClock, TestRandom}
 
-class RecordHandlerTest extends BaseTest[Random with Clock with TestRandom with TestClock with TestMetrics] {
+class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
 
   override def env =
     for {
