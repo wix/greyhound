@@ -16,16 +16,6 @@ import scala.concurrent.duration.FiniteDuration
 
 case class ReportingProducer(internal: Producer, layers: Dependencies)
   extends Producer {
-
-  override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata] =
-    (GreyhoundMetrics.report(ProducingRecord(record)) *>
-      internal.produce(record).timed.flatMap {
-        case (duration, metadata) =>
-          GreyhoundMetrics.report(RecordProduced(metadata, FiniteDuration(duration.toMillis, MILLISECONDS))).as(metadata)
-      }.tapError { error =>
-        GreyhoundMetrics.report(ProduceFailed(error))
-      }).provideLayer(layers)
-
   override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
     (GreyhoundMetrics.report(ProducingRecord(record)) *>
       internal.produceAsync(record)
@@ -35,7 +25,7 @@ case class ReportingProducer(internal: Producer, layers: Dependencies)
               GreyhoundMetrics.report(RecordProduced(metadata, FiniteDuration(duration.toMillis, MILLISECONDS))).as(metadata)
           }.tapError { error =>
             GreyhoundMetrics.report(ProduceFailed(error))
-          }.fork)
+          }.provideLayer(layers).forkDaemon)
       ).provideLayer(layers)
 }
 
