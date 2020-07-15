@@ -4,6 +4,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Consumer
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.Producer
 import zio._
+import zio.blocking.Blocking
 import zio.clock.Clock
 
 object RetryRecordHandler {
@@ -23,7 +24,7 @@ object RetryRecordHandler {
                                   subscription: ConsumerSubscription,
                                   blockingState: Ref[Map[BlockingTarget, BlockingState]],
                                   nonBlockingRetryPolicy: NonBlockingRetryPolicy)
-                                 (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with GreyhoundMetrics, Nothing, K, V] = {
+                                 (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] = {
 
     val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, subscription, evK, evV, nonBlockingRetryPolicy)
     val blockingHandler = BlockingRetryRecordHandler(handler, retryConfig, blockingState, nonBlockingRetryPolicy, nonBlockingHandler)
