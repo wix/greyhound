@@ -26,6 +26,7 @@ deps = [
     dependency("com.fasterxml.jackson.module:jackson-module-scala_2.12:2.9.6"),
     dependency("com.github.luben:zstd-jni:1.4.3-1"),
     dependency("com.google.guava:guava:16.0.1"),
+    dependency("com.h2database:h2:1.4.197"),
     dependency("com.thoughtworks.paranamer:paranamer:2.8"),
     dependency("com.typesafe.scala-logging:scala-logging_2.12:3.8.0"),
     dependency("com.yammer.metrics:metrics-core:2.2.0"),
