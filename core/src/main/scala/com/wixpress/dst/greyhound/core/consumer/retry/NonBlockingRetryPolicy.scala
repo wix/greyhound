@@ -39,7 +39,7 @@ object NonBlockingRetryPolicy {
         private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))
 
         override def retryTopicsFor(topic: Topic): Set[Topic] =
-          (backoffs.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt")) + topic
+          (backoffs.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt"))
 
         override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = {
           (for {
