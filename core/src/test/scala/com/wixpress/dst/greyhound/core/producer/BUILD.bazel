@@ -8,7 +8,6 @@ specs2_unit_test(
         ":sources",
     ],
     deps = [
-        "//data-streams/infra-zio-test/src/main/com/wixpress/infra/zio/test:test",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
