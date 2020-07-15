@@ -16,7 +16,8 @@ import scala.collection.JavaConverters._
 trait Producer {
   def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]]
 
-  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata]
+  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata] =
+    produceAsync(record).flatten
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
@@ -78,7 +79,9 @@ object Producer {
                 runtime.unsafeRun(
                   if (exception != null) produceCompletePromise.complete(ProducerError(exception))
                   else produceCompletePromise.succeed(RecordMetadata(metadata)))
-            })).mapError(e => runtime.unsafeRun(ProducerError(e)))
+            }))
+              .tapError(e => produceCompletePromise.complete(ProducerError(e)))
+              .mapError(e => runtime.unsafeRun(ProducerError(e)))
           } yield produceCompletePromise.await
       }
     }
