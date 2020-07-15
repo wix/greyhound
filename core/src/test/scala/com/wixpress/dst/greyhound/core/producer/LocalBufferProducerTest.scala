@@ -1,7 +1,5 @@
 package com.wixpress.dst.greyhound.core.producer
 
-import java.time.Instant
-
 import com.wixpress.dst.greyhound.core.Offset
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.producer.MockProducer.{Key, Value}
@@ -9,7 +7,6 @@ import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.{BufferedProduceResult, LocalBufferProducer}
 import com.wixpress.dst.greyhound.core.testkit.TestClockUtils.adjustClock
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics, eventuallyTimeout}
-import com.wixpress.dst.greyhound.core.{Offset, Serializer}
 import org.apache.kafka.common.errors.{RecordTooLargeException, TimeoutException}
 import org.apache.kafka.common.serialization.Serdes.{IntegerSerde, StringSerde => KStringSerde}
 import org.specs2.specification.Scope
@@ -19,7 +16,6 @@ import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
-import zio.test.environment.TestClock
 
 import scala.util.Random
 
