@@ -1,14 +1,15 @@
 package com.wixpress.dst.greyhound.core.producer
 
+import java.time.Instant
+
 import com.wixpress.dst.greyhound.core.Offset
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.producer.MockProducer.{Key, Value}
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.{BufferedProduceResult, LocalBufferProducer}
+import com.wixpress.dst.greyhound.core.testkit.TestClockUtils.adjustClock
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics, eventuallyTimeout}
 import com.wixpress.dst.greyhound.core.{Offset, Serializer}
-import com.wixpress.infra.zio.test.BaseTest.TestEnvironment
-import com.wixpress.infra.zio.test.TestClockUtils.adjustClock
 import org.apache.kafka.common.errors.{RecordTooLargeException, TimeoutException}
 import org.apache.kafka.common.serialization.Serdes.{IntegerSerde, StringSerde => KStringSerde}
 import org.specs2.specification.Scope
@@ -18,15 +19,16 @@ import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
+import zio.test.environment.TestClock
 
 import scala.util.Random
 
-class LocalBufferProducerTest extends BaseTest[ZEnv with TestEnvironment] {
+class LocalBufferProducerTest extends BaseTest[ZEnv] {
   sequential
 
-  override def env: UManaged[ZEnv with TestEnvironment] = testEnv
+  override def env: UManaged[ZEnv] = testEnv
 
-  def testEnv: UManaged[ZEnv with TestEnvironment] =
+  def testEnv: UManaged[ZEnv] =
     for {
       env <- zio.test.environment.testEnvironment.build
       testMetrics <- TestMetrics.make
