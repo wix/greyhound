@@ -3,16 +3,17 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import zio.ZIO
+import zio.blocking.Blocking
 import zio.clock.Clock
 
 trait BlockingAndNonBlockingRetryRecordHandler[K, V, R] {
-  def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R, Nothing, Any]
+  def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any]
 }
 
 object BlockingAndNonBlockingRetryRecordHandler {
   def apply[V, K, R](blockingHandler: BlockingRetryRecordHandler[V, K, R],
                      nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]): BlockingAndNonBlockingRetryRecordHandler[K, V, R] = new BlockingAndNonBlockingRetryRecordHandler[K, V, R] {
-    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R, Nothing, Any] = {
+    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
       val value = blockingHandler.handle(record)
       value.flatMap(result =>
         ZIO.when(!result.lastHandleSucceeded) {
@@ -21,7 +22,7 @@ object BlockingAndNonBlockingRetryRecordHandler {
       )
     }
 
-    private def nonBlockingHandlerAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R, Nothing, Any] = {
+    private def nonBlockingHandlerAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
       if (nonBlockingHandler.isHandlingRetryTopicMessage(record)) {
         nonBlockingHandler.handle(record)
       } else {
