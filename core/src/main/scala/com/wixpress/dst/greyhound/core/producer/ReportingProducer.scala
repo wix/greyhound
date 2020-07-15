@@ -2,10 +2,14 @@ package com.wixpress.dst.greyhound.core.producer
 
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
+import _root_.zio.blocking.Blocking
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.ReportingProducer.Dependencies
 import zio.clock.Clock
+import zio.console.Console
+import zio.random.Random
+import zio.system.System
 import zio.{Chunk, ULayer, ZIO}
 
 import scala.concurrent.duration.FiniteDuration
@@ -13,7 +17,7 @@ import scala.concurrent.duration.FiniteDuration
 case class ReportingProducer(internal: Producer, layers: Dependencies)
   extends Producer {
 
-  override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Any, ProducerError, RecordMetadata] =
+  override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata] =
     (GreyhoundMetrics.report(ProducingRecord(record)) *>
       internal.produce(record).timed.flatMap {
         case (duration, metadata) =>
@@ -21,13 +25,27 @@ case class ReportingProducer(internal: Producer, layers: Dependencies)
       }.tapError { error =>
         GreyhoundMetrics.report(ProduceFailed(error))
       }).provideLayer(layers)
+
+  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
+    (GreyhoundMetrics.report(ProducingRecord(record)) *>
+      internal.produceAsync(record)
+        .tap(kafkaResultIO =>
+          kafkaResultIO.timed.flatMap {
+            case (duration, metadata) =>
+              GreyhoundMetrics.report(RecordProduced(metadata, FiniteDuration(duration.toMillis, MILLISECONDS))).as(metadata)
+          }.tapError { error =>
+            GreyhoundMetrics.report(ProduceFailed(error))
+          }.fork)
+      ).provideLayer(layers)
 }
 
 object ReportingProducer {
-  type Dependencies = ULayer[GreyhoundMetrics with Clock]
+  type Dependencies = ULayer[GreyhoundMetrics with zio.ZEnv]
 
-  def apply(internal: Producer, layers: ULayer[GreyhoundMetrics with Clock] = GreyhoundMetrics.liveLayer ++ Clock.live): ReportingProducer =
+  def apply(internal: Producer, layers: ULayer[GreyhoundMetrics with zio.ZEnv] = GreyhoundMetrics.liveLayer ++ zenv): ReportingProducer =
     new ReportingProducer(internal, layers)
+
+  private val zenv = Clock.live ++ System.live ++ Random.live ++ Blocking.live ++ Console.live
 }
 
 sealed trait ProducerMetric extends GreyhoundMetric
