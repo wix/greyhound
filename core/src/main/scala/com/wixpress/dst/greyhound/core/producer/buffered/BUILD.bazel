@@ -1,0 +1,15 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+scala_library(
+    name = "buffered",
+    srcs = [
+      ":sources",
+    ],
+    deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered/buffers:buffers",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:producer",
+        "@dev_zio_zio_2_12",
+    ]
+)
