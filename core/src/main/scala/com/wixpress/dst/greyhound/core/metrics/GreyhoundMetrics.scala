@@ -21,7 +21,7 @@ object GreyhoundMetrics {
   object Service {
     lazy val Live = {
       val logger = LoggerFactory.getLogger("metrics")
-      fromReporter(metric => logger.info(metric.toString))
+      fromReporter(metric => /*logger.info(metric.toString)*/ZIO.unit)
     }
   }
 

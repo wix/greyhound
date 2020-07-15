@@ -5,6 +5,9 @@
         </encoder>
     </appender>
 
+    <logger name="org.apache.kafka" level="WARN"/>
+    <logger name="kafka" level="WARN"/>
+    <logger name="greyhound" level="INFO"/>
     <logger name="com.wixpress.dst.greyhound" level="INFO"/>
 
     <root level="INFO">
