@@ -3,16 +3,17 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.producer.Producer
+import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration._
 import zio.{Chunk, ZIO}
 
 trait NonBlockingRetryRecordHandler[V, K, R] {
-  def handle(record: ConsumerRecord[K, V]): ZIO[Clock with R, Nothing, Any]
+  def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any]
 
   def isHandlingRetryTopicMessage(record: ConsumerRecord[K, V]): Boolean
 
-  def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with R, Nothing, Any]
+  def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any]
 }
 
 object NonBlockingRetryRecordHandler {
@@ -22,7 +23,7 @@ object NonBlockingRetryRecordHandler {
                             evK: K <:< Chunk[Byte],
                             evV: V <:< Chunk[Byte],
                             nonBlockingRetryPolicy: NonBlockingRetryPolicy): NonBlockingRetryRecordHandler[V, K, R] = new NonBlockingRetryRecordHandler[V, K, R]{
-    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with R, Nothing, Any] = {
+    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {
       nonBlockingRetryPolicy.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
         ZIO.foreach_(retryAttempt)(_.sleep) *> handler.handle(record).catchAll {
           case Right(_: NonRetryableException) => ZIO.unit
@@ -36,13 +37,13 @@ object NonBlockingRetryRecordHandler {
       option.exists(retryTopicTemplate => record.topic.contains(retryTopicTemplate))
     }
 
-    override def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with R, Nothing, Any] = {
+    override def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {
       nonBlockingRetryPolicy.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
         maybeRetry(retryAttempt, BlockingHandlerFailed, record)
       }
     }
 
-    private def maybeRetry[E](retryAttempt: Option[RetryAttempt], error: E, record: ConsumerRecord[K, V]): ZIO[Clock with R, Nothing, Any] = {
+    private def maybeRetry[E](retryAttempt: Option[RetryAttempt], error: E, record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {
       nonBlockingRetryPolicy.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
         case RetryWith(retryRecord) =>
           producer.produce(retryRecord).tapError(_ => sleep(5.seconds)).eventually.ignore
