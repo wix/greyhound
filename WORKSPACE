@@ -68,3 +68,13 @@ pinned_maven_install()
 
 load("@maven//:compat.bzl", "compat_repositories")
 compat_repositories()
+
+http_archive(
+    name = "io_buildbuddy_toolchain",
+    strip_prefix = "toolchain-master",
+    urls = ["https://github.com/buildbuddy-io/toolchain/archive/master.tar.gz"],
+)
+
+load("@io_buildbuddy_toolchain//:rules.bzl", "register_buildbuddy_toolchain")
+
+register_buildbuddy_toolchain(name = "buildbuddy_toolchain")
