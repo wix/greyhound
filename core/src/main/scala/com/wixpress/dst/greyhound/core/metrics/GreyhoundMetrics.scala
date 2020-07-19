@@ -4,8 +4,6 @@ import org.slf4j.LoggerFactory
 import zio.{Has, UIO, URIO, ZIO, ZLayer}
 
 object GreyhoundMetrics {
-  type GreyhoundMetrics = Has[GreyhoundMetrics.Service]
-
   trait Service {
     self =>
     def report(metric: GreyhoundMetric): UIO[Unit]
