@@ -13,6 +13,7 @@ case class IllegalStateError(cause: IllegalStateException) extends ProducerError
 case class InterruptError(cause: InterruptException) extends ProducerError(cause)
 case class TimeoutError(cause: TimeoutException) extends ProducerError(cause)
 case class KafkaError(cause: KafkaException) extends ProducerError(cause)
+case class ProducerClosedError() extends ProducerError(ProducerClosed())
 
 object ProducerError {
   def apply(exception: Throwable): IO[ProducerError, Nothing] = exception match {
@@ -23,6 +24,9 @@ object ProducerError {
     case e: SerializationException => IO.fail(SerializationError(e))
     case e: TimeoutException => IO.fail(TimeoutError(e))
     case e: KafkaException => IO.fail(KafkaError(e))
+    case _: ProducerClosed => IO.fail(ProducerClosedError())
     case e => IO.die(e)
   }
 }
+
+case class ProducerClosed()  extends RuntimeException("Producer is closing, not accepting writes")
