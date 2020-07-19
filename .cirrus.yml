@@ -1,7 +1,7 @@
 bazel_build:
   name: test
   container:
-    image: l.gcr.io/google/bazel:2.1.0
+    image: l.gcr.io/google/bazel:2.2.0
   
   environment:
     XDG_CACHE_HOME: /xdg_cache
