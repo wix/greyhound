@@ -7,11 +7,11 @@ specs2_unit_test(
     srcs = [
         ":sources",
     ],
-        deps = [
-            "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
-            "//core/src/main/scala/com/wixpress/dst/greyhound/core",
-            "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
-            "//core/src/test/scala/com/wixpress/dst/greyhound/core/consumer",
-            "@dev_zio_zio_2_12",
-            ]
+    deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/test/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
+        "@dev_zio_zio_2_12",
+    ],
 )
