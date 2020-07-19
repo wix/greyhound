@@ -4,14 +4,20 @@ import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.Persist
 import com.wixpress.dst.greyhound.core.{Headers, Partition, Topic}
 import zio.clock.Clock
 import zio.duration.Duration
-import zio.{Chunk, IO, ZIO}
+import zio.{Chunk, IO, Task, ZIO}
 
 trait LocalBuffer {
+  def failedRecordsCount: ZIO[Any, LocalBufferError, Int]
+
+  def close: Task[Unit]
+
   def enqueue(message: PersistedMessage): ZIO[Clock, LocalBufferError, PersistedMessageId]
 
   def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedMessage]]
 
   def delete(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
+
+  def markDead(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
 }
 
 case class PersistedMessage(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {
@@ -20,7 +26,7 @@ case class PersistedMessage(id: PersistedMessageId, target: SerializableTarget, 
 
 case class EncodedMessage(value: Chunk[Byte], headers: Headers)
 
-case class LocalBufferError(cause: Throwable)
+case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 
 case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
 
