@@ -27,13 +27,13 @@ object H2LocalBuffer {
       currentSequenceNumber <- Ref.make(0)
       _ <- initDatabase(connection, currentSequenceNumber)(localPath, keepDeadMessages)
     } yield new LocalBuffer {
-      override def enqueue(message: PersistedMessage): ZIO[Clock, LocalBufferError, PersistedMessageId] =
+      override def enqueue(message: PersistedRecord): ZIO[Clock, LocalBufferError, PersistedMessageId] =
         executeInsert(connection, currentSequenceNumber)(message)
           .flatMap(i => when(i < 1)(fail(H2FailedToAppendMessage(message.topic, message.target, i))))
           .mapError(LocalBufferError.apply)
           .as(message.id)
 
-      override def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedMessage]] = {
+      override def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedRecord]] = {
         val takeQuery = s"SELECT * FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT $upTo"
 
         (for {
@@ -69,8 +69,8 @@ object H2LocalBuffer {
     })
       .toManaged(m => m.close.ignore)
 
-  private def list(resultSet: ResultSet, count: Int): Task[List[PersistedMessage]] = {
-    def next(rs: ResultSet): IO[Option[Throwable], PersistedMessage] = {
+  private def list(resultSet: ResultSet, count: Int): Task[List[PersistedRecord]] = {
+    def next(rs: ResultSet): IO[Option[Throwable], PersistedRecord] = {
       (for {
         _ <- ZIO.when(!rs.next)(ZIO.fail(null))
         produceKey <- Task(Try(Chunk.fromArray(rs.getBytes(3))).toOption)
@@ -80,7 +80,7 @@ object H2LocalBuffer {
         encodedPayload = Try(Chunk.fromArray(rs.getBytes(5))).toOption.orNull
         header <- decodeHeaders(rs.getString(6))
         submitted <- UIO(rs.getLong(9))
-      } yield PersistedMessage(id, SerializableTarget(topic, producePartition, produceKey), EncodedMessage(encodedPayload, header), submitted))
+      } yield PersistedRecord(id, SerializableTarget(topic, producePartition, produceKey), EncodedMessage(encodedPayload, header), submitted))
         .mapError(Option(_))
     }
 
@@ -92,7 +92,7 @@ object H2LocalBuffer {
   }
 
 
-  private def executeInsert(connection: Connection, currentSequenceNumber: Ref[Int])(message: PersistedMessage): RIO[Clock, Int] =
+  private def executeInsert(connection: Connection, currentSequenceNumber: Ref[Int])(message: PersistedRecord): RIO[Clock, Int] =
     for {
       insertStatement <- Task(connection.prepareStatement(InsertQuery))
       payloadBytes = Option(message.encodedMsg.value).map(_.toArray).orNull
@@ -115,10 +115,10 @@ object H2LocalBuffer {
     } yield res
 
 
-  private def keyBytes(message: PersistedMessage): Task[Option[Array[Byte]]] =
+  private def keyBytes(message: PersistedRecord): Task[Option[Array[Byte]]] =
     Task(message.target.key.map(_.toArray))
 
-  private def encodeHeaderToBase64(message: PersistedMessage): ZIO[Any, Throwable, String] = {
+  private def encodeHeaderToBase64(message: PersistedRecord): ZIO[Any, Throwable, String] = {
     ZIO.foreach(message.encodedMsg.headers.headers) { case (k, v) => Base64Adapter.encode(k.getBytes("UTF-8")) zip Base64Adapter.encode(v) }
       .map(pairs => pairs.map { case (k, v) => s"$k:$v" })
       .map(_.mkString(";"))
@@ -215,139 +215,3 @@ object H2StatementSupport {
 }
 
 case class H2FailedToAppendMessage(topic: Topic, target: SerializableTarget, result: Int) extends RuntimeException(s"H2 Local DB returned $result ( != 1 )")
-
-
-//
-//class H2MessagesQueue(path: String,
-//                      keepDeadMessages: Duration = defaultKeepDeadMessages,
-//                      clock: TimeProvider = new SystemTimeProvider) {
-//  lazy private val cp = JdbcConnectionPool.create(s"jdbc:h2:$path;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound")
-//  override lazy protected val connection = cp.getConnection()
-//  private val currentSequenceNumber = new AtomicLong(0)
-//  //  private val base64 = new Base64Adapter
-//
-//  init()
-//
-//  private def init(): Unit = withStatement { statement =>
-//    createTableIfNeed(statement)
-//    restoreUnsentStatusForPendingMessages(statement)
-//    setLastSequenceNumber(statement)
-//    deleteObsoleteDeadMessages(statement)
-//  }
-//
-//  private def setLastSequenceNumber(statement: Statement) = {
-//    val resultSet = statement.executeQuery("SELECT MAX(SEQ_NUM) FROM MESSAGES")
-//    if (resultSet.next())
-//      currentSequenceNumber.set(resultSet.getInt(1))
-//  }
-//
-//  private def restoreUnsentStatusForPendingMessages(statement: Statement) = {
-//    statement.execute(s"UPDATE MESSAGES SET STATE='$notSent' WHERE STATE != '$failed'")
-//  }
-//
-//  private def deleteObsoleteDeadMessages(statement: Statement) = {
-//    val purgeFrom = clock.time - keepDeadMessages.toMillis
-//    statement.execute(s"DELETE FROM MESSAGES WHERE STATE = '$failed' AND SUBMITTED < $purgeFrom")
-//  }
-//
-//  private def createTableIfNeed(statement: Statement) = {
-//    Try(Files.createDirectory(Paths.get(path.substring(0, path.lastIndexOf("/")))))
-//    Seq(
-//      "CREATE TABLE IF NOT EXISTS MESSAGES(ID BIGINT, TARGET VARCHAR, MESSAGE CLOB, HEADERS CLOB, STATE VARCHAR, SEQ_NUM BIGINT, SUBMITTED BIGINT)",
-//      "CREATE INDEX IF NOT EXISTS SEQNUM_INDEX ON MESSAGES(SEQ_NUM)",
-//      "CREATE INDEX IF NOT EXISTS STATE_INDEX ON MESSAGES(STATE)",
-//      "CREATE INDEX IF NOT EXISTS ID_INDEX ON MESSAGES(ID)")
-//      .foreach(statement.execute)
-//  }
-//
-//  private def executeInsert(message: PersistedMessage): Int = {
-//    val insertStatement = connection.prepareStatement(insertQuery)
-//
-//    val base64Payload = base64.encode(message.encodedMsg.encodedPayload)
-//    val base64Headers = base64.encode(Option(message.encodedMsg.header).getOrElse(Header()).asJsonStr)
-//    val base64ProduceTarget = base64.encode(message.target.asJsonStr)
-//
-//    insertStatement.setLong(1, message.id)
-//    insertStatement.setString(2, base64ProduceTarget)
-//    insertStatement.setString(3, base64Payload)
-//    insertStatement.setString(4, base64Headers)
-//    insertStatement.setString(5, notSent)
-//    insertStatement.setLong(6, currentSequenceNumber.incrementAndGet)
-//    insertStatement.setLong(7, clock.time)
-//
-//    insertStatement.executeUpdate()
-//  }
-//
-//  override def enqueue(message: PersistedMessage): Int = {
-//    executeInsert(message)
-//  }
-//
-//  override def take(batchSize: Int): Seq[PersistedMessage] = {
-//    val takeQuery = s"SELECT * FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT $batchSize"
-//    val msgs = query(takeQuery)(rs => list(rs, batchSize))
-//
-//    val setPendingQuery = s"UPDATE MESSAGES SET STATE='$pending' WHERE ID IN (${msgs.map(_.id).mkString(",")})"
-//    update(setPendingQuery)
-//
-//    msgs
-//  }
-//
-//  override def delete(messageId: PersistedMessageId): Boolean =
-//    update(s"DELETE TOP 1 FROM MESSAGES WHERE ID=$messageId") > 0
-//
-//  override def shutdown(): Unit = {
-//    if (!connection.isClosed) {
-//      connection.close()
-//      cp.dispose()
-//    }
-//  }
-//
-//  override def markDead(messageId: PersistedMessageId): Boolean =
-//    update(s"UPDATE MESSAGES SET STATE='$failed' WHERE ID=$messageId") > 0
-//
-//  def purgeAll() = update("DELETE FROM MESSAGES")
-//
-//  private def failedMessagesCondition(from: Int, to: Int) =
-//    s"WHERE STATE = '$failed' ORDER BY SEQ_NUM OFFSET $from LIMIT ${to - from + 1}"
-//
-//  override def failedMessages(from: Int, to: Int): Seq[PersistedMessage] = {
-//    query(s"SELECT * FROM MESSAGES ${failedMessagesCondition(from, to)}") {
-//      rs => list(rs, to - from + 1)
-//    }
-//  }
-//
-//
-//  override def deleteFailedMessages(from: Int, to: Int): Int =
-//    update(s"DELETE FROM MESSAGES WHERE ID IN (SELECT ID FROM MESSAGES ${failedMessagesCondition(from, to)})")
-//
-//  override def numPendingMessages: Int = count(pending)
-//
-//  override def numDeadMessages: Int = count(failed)
-//
-//  override def unsentMessages: Int = count(notSent)
-//
-//  private def count(field: String) = query(s"SELECT COUNT(*) FROM MESSAGES WHERE STATE = '$field'") {
-//    rs =>
-//      rs.next()
-//      rs.getInt(1)
-//  }
-//
-//  override def oldestUnsent =
-//    query(s"SELECT SUBMITTED FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT 1") {
-//      rs => (if (rs.next()) clock.time - rs.getLong("SUBMITTED") else 0l).millis
-//    }
-//
-//  private def list(resultSet: ResultSet, count: Int) =
-//    new Iterator[PersistedMessage] {
-//      def hasNext = resultSet.next()
-//
-//      def next() = {
-//        val produceTarget = base64.decode(resultSet.getString(2)).as[ProduceTarget]
-//        val id = resultSet.getLong(1)
-//        val encodedPayload = base64.decode(resultSet.getString(3))
-//        val header = base64.decode(resultSet.getString(4)).as[Header]
-//        val submitted = resultSet.getLong(7)
-//        PersistedMessage(id, produceTarget, EncodedMessage(encodedPayload, header), submitted)
-//      }
-//    }.take(count).toList
-//}
