@@ -9,10 +9,6 @@ sealed trait BlockingState {
 }
 
 object BlockingState {
-  case object Normal extends BlockingState {
-    override def metric[V, K](record: ConsumerRecord[K, V]) = Silent
-  }
-
   case class Blocked[V, K](key: Option[K], value: V, messageHeaders: Headers, topicPartition: TopicPartition, offset: Offset) extends BlockingState {
     override def metric[V, K](record: ConsumerRecord[K, V]) =
       BlockingFor(TopicPartition(record.topic, record.partition), record.offset)

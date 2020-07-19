@@ -4,7 +4,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPar
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringAll, IgnoringOnce, shouldBlockFrom, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
-import zio.{Ref, URIO, ZIO}
+import zio.{Ref, UIO, URIO, ZIO}
 
 object BlockingStateResolver {
   def apply(blockingState: Ref[Map[BlockingTarget, BlockingState]]): BlockingStateResolver = {
@@ -15,9 +15,7 @@ object BlockingStateResolver {
         for {
           state <- blockingState.get
           topicPartitionBlockingState = state.getOrElse(TopicPartitionTarget(topicPartition),InternalBlocking)
-          maybeTopicTarget = state.get(TopicTarget(record.topic))
-          isTopicTarget = maybeTopicTarget.isDefined
-          topicBlockingState = maybeTopicTarget.getOrElse(InternalBlocking)
+          topicBlockingState = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
           mergedBlockingState = topicBlockingState match {
             case IgnoringAll => IgnoringAll
             case IgnoringOnce => IgnoringOnce
@@ -27,7 +25,12 @@ object BlockingStateResolver {
           _ <- ZIO.when(!shouldBlock) {
             report(mergedBlockingState.metric(record))
           }
-          _ <- ZIO.when(shouldBlock && !isTopicTarget) {
+
+          isBlockedAlready = mergedBlockingState match {
+            case _:BlockingState.Blocked[K,V] => true
+            case _ => false
+          }
+          _ <- ZIO.when(shouldBlock && !isBlockedAlready) {
               blockingState.update(map => map.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record.key, record.value, record.headers, topicPartition, record.offset)))
           }
         } yield shouldBlock
