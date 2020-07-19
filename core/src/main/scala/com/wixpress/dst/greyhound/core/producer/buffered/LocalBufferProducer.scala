@@ -3,9 +3,11 @@ package com.wixpress.dst.greyhound.core.producer.buffered
 import java.lang.System.currentTimeMillis
 
 import com.wixpress.dst.greyhound.core.Serializer
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{GreyhoundMetrics, report}
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerError, ProducerRecord, RecordMetadata}
 import org.apache.kafka.common.errors._
 import zio.Schedule.{doUntil, spaced}
 import zio._
@@ -26,44 +28,56 @@ trait LocalBufferProducer {
                     valueSerializer: Serializer[V]): ZIO[ZEnv, LocalBufferError, BufferedProduceResult]
 
   def currentState: UIO[LocalBufferProducerState]
+
+  def shutdown: UIO[Unit]
 }
 
-case class LocalBufferProducerState(maxRecordedConcurrency: Int)
+case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolean, localBufferQueryCount: Int,
+                                    failedRecords: Int) {
+  def incQueryCount = copy(localBufferQueryCount = localBufferQueryCount + 1)
+}
 
 object LocalBufferProducerState {
-  val empty = LocalBufferProducerState(0)
+  val empty = LocalBufferProducerState(0, running = true, localBufferQueryCount = 0, failedRecords = 0)
 }
 
 case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: ZIO[ZEnv, ProducerError, RecordMetadata])
 
 object LocalBufferProducer {
-
   @deprecated("still work in progress - do not use this yet")
-  def make(producer: Producer, localBuffer: LocalBuffer, config: LocalBufferProducerConfig): URIO[ZEnv, LocalBufferProducer] =
-    for {
+  def make(producer: Producer, localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics, LocalBufferProducer] =
+    (for {
+      state <- Ref.make(LocalBufferProducerState.empty)
       kafkaResponses <- TRef.makeCommit(Map.empty[PersistedMessageId, Either[ProducerError, RecordMetadata]])
-      pendingOnBuffer <- Ref.make(0)
+      // todo i got the pendingOnBuffer mixed up!! meaning was how many on disk right now. is it still the same meaning?
+      pendingOnBuffer <- TRef.makeCommit(0)
       router <- ProduceFiberRouter.make(producer, config.maxConcurrency, config.giveUpAfter)
-      _ <- localBuffer.take(100).flatMap(msgs => {
-        ZIO.foreach(msgs)(msg =>
-          router.produce(record(msg))
-            .tap(metadata => kafkaResponses.update(_ + (msg.id -> Right(metadata))).commit)
-            .tapError(error => kafkaResponses.update(_ + (msg.id -> Left(error))).commit)
-            .tap(_ => localBuffer.delete(msg.id))
-            .tapBoth(_ => scheduleDeleteReference(kafkaResponses, msg), _ => scheduleDeleteReference(kafkaResponses, msg))) <*
-          pendingOnBuffer.update(_ - msgs.size)
-      })
-        .forever
+      _ <- localBuffer.take(100).flatMap(msgs =>
+        state.update(_.incQueryCount) *>
+          ZIO.foreach(msgs)(msg =>
+            router.produce(record(msg))
+              .tapBoth(
+                error => updateReferences(Left(error), pendingOnBuffer, kafkaResponses, msg) *>
+                  localBuffer.markDead(msg.id),
+                metadata => updateReferences(Right(metadata), pendingOnBuffer, kafkaResponses, msg) *>
+                  localBuffer.delete(msg.id))
+              .ignore
+          ) <*
+          pendingOnBuffer.update(_ - msgs.size).commit)
+        .flatMap(r => ZIO.when(r.isEmpty)(pendingOnBuffer.get.map(_ > 0).flatMap(STM.check(_)).commit)) // this waits until there are more messages in buffer
+        .doWhileM(_ => state.get.map(_.running))
+        .flatMap(_ => localBuffer.close)
         .forkDaemon
     } yield new LocalBufferProducer {
       override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv, LocalBufferError, BufferedProduceResult] =
-        validateBufferFull(config, pendingOnBuffer) *>
+        validate(config, pendingOnBuffer, state) *>
           nextInt.flatMap(generatedMsgId =>
-            enqueueRecordToBuffer(localBuffer, kafkaResponses, record, generatedMsgId)) <*
-          pendingOnBuffer.update(_ + 1)
+            pendingOnBuffer.update(_ + 1).commit *>
+              enqueueRecordToBuffer(localBuffer, kafkaResponses, record, generatedMsgId))
+
 
       override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]): ZIO[ZEnv, LocalBufferError, BufferedProduceResult] =
-        validateBufferFull(config, pendingOnBuffer) *>
+        validate(config, pendingOnBuffer, state) *>
           (for {
             key <- record.key.map(k => keySerializer.serialize(record.topic, k).map(Option(_))).getOrElse(ZIO.none).mapError(LocalBufferError.apply)
             value <- valueSerializer.serialize(record.topic, record.value).mapError(LocalBufferError.apply)
@@ -71,8 +85,15 @@ object LocalBufferProducer {
           } yield response)
 
       override def currentState: UIO[LocalBufferProducerState] =
-        router.recordedConcurrency.map(LocalBufferProducerState.apply)
-    }
+        (state.get zip router.recordedConcurrency zip localBuffer.failedRecordsCount.catchAll(_ => UIO(-1))).map { case ((state, concurrency), failedRecordsCount) =>
+          state.copy(maxRecordedConcurrency = concurrency, failedRecords = failedRecordsCount)
+        }
+
+
+      override def shutdown: UIO[Unit] =
+          state.update(_.copy(running = false))
+    })
+      .toManaged(_.shutdown.ignore)
 
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, kafkaResponses: TRef[Map[PersistedMessageId, Either[ProducerError, RecordMetadata]]], record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int) = {
     localBuffer.enqueue(
@@ -82,12 +103,26 @@ object LocalBufferProducer {
       .map(id => BufferedProduceResult(id, kafkaResultIO(kafkaResponses, id)))
   }
 
-  private def validateBufferFull(config: LocalBufferProducerConfig, pendingOnBuffer: Ref[Int]) =
-    ZIO.whenM(pendingOnBuffer.get.map(_ > config.maxMessagesOnDisk))(ZIO.fail(LocalBufferError(LocalBufferFull(config.maxMessagesOnDisk))))
+  private def validate(config: LocalBufferProducerConfig, pendingOnBuffer: TRef[Int], state: Ref[LocalBufferProducerState]) =
+    validateBufferFull(config, pendingOnBuffer) *> validateIsRunning(state)
 
-  private def scheduleDeleteReference(inflights: TRef[Map[PersistedMessageId, Either[ProducerError, RecordMetadata]]],
-                                      msg: PersistedMessage): URIO[Clock, Unit] =
-    inflights.update(_ - msg.id).commit.delay(1.second).fork.unit
+  private def validateBufferFull(config: LocalBufferProducerConfig, pendingOnBuffer: TRef[Int]) =
+    ZIO.whenM(pendingOnBuffer.get.commit.map(_ > config.maxMessagesOnDisk))(ZIO.fail(LocalBufferError(LocalBufferFull(config.maxMessagesOnDisk))))
+
+  private def validateIsRunning(running: Ref[LocalBufferProducerState]) =
+    ZIO.whenM(running.get.map(!_.running))(ZIO.fail(LocalBufferError(ProducerClosed())))
+
+  private def updateReferences(result: Either[ProducerError, RecordMetadata],
+                               inflightCounter: TRef[Int],
+                               inflights: TRef[Map[PersistedMessageId, Either[ProducerError, RecordMetadata]]],
+                               msg: PersistedMessage): URIO[Clock, Unit] =
+    inflights.update(_ + (msg.id -> result))
+      .commit *>
+      inflights.update(_ - msg.id)
+        .commit
+        .delay(1.second)
+        .fork
+        .unit
 
   private def kafkaResultIO(inflights: TRef[Map[PersistedMessageId, Either[ProducerError, RecordMetadata]]],
                             id: PersistedMessageId): ZIO[Any, ProducerError, RecordMetadata] =
@@ -106,18 +141,28 @@ trait ProduceFiberRouter extends Producer {
 }
 
 object ProduceFiberRouter {
-  def make(producer: Producer, maxConcurrency: Int, giveUpAfter: Duration): URIO[ZEnv, ProduceFiberRouter] =
+  def make(producer: Producer, maxConcurrency: Int, giveUpAfter: Duration): URIO[ZEnv with GreyhoundMetrics, ProduceFiberRouter] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
       queues <- ZIO.foreach(0 until maxConcurrency)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
       _ <- ZIO.foreach(queues.values)(
         _.take
-          .flatMap(req => producer.produceAsync(req.record)
-            .retry(spaced(1.second) && doUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
-            .tapBoth(req.fail, req.succeed))
+          .flatMap((req: ProduceRequest) =>
+            ZIO.whenCase(timeoutPassed(req)) {
+              case true =>
+                ProducerError(new TimeoutException).flip.flatMap(timeout =>
+                  report(LocalBufferProduceTimeoutExceeded(req.giveUpTimestamp, System.currentTimeMillis)) *>
+                    req.fail(timeout))
+              case false =>
+                producer.produce(req.record)
+                  .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
+                  .retry(spaced(1.second) && doUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
+                  .tapBoth(req.fail, req.succeed)
+            }.ignore
+          )
           .forever
-          .forkDaemon
-      )
+          .forkDaemon)
+
     } yield new ProduceFiberRouter {
 
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
@@ -125,7 +170,7 @@ object ProduceFiberRouter {
       override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] = {
         val queueNum = Math.abs(record.key.getOrElse(Random.nextString(10)).hashCode % maxConcurrency)
 
-        Promise.make[ProducerError, IO[ProducerError, RecordMetadata]].flatMap(promise =>
+        Promise.make[ProducerError, RecordMetadata].map(promise =>
           queues(queueNum).offer(ProduceRequest(record, promise, currentTimeMillis + giveUpAfter.toMillis)) *>
             usedFibers.update(_ + queueNum) *>
             promise.await)
@@ -147,8 +192,12 @@ object ProduceFiberRouter {
 
 case class CallbackForProduceNotFound(generatedMessageId: Int) extends IllegalStateException(s"Producer callback wasn't found using the generated id: $generatedMessageId")
 
-case class ProduceRequest(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], promise: Promise[ProducerError, IO[ProducerError, RecordMetadata]], giveUpTimestamp: Long) {
-  def succeed(r: IO[ProducerError, RecordMetadata]) = promise.succeed(r)
+case class ProduceRequest(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], promise: Promise[ProducerError, RecordMetadata], giveUpTimestamp: Long) {
+  def succeed(r: RecordMetadata) = promise.succeed(r)
 
   def fail(e: ProducerError) = promise.fail(e)
 }
+
+case class LocalBufferProduceAttemptFailed(cause: Throwable, nonRetriable: Boolean) extends GreyhoundMetric
+
+case class LocalBufferProduceTimeoutExceeded(giveUpTimestamp: Long, currentTimestamp: Long) extends GreyhoundMetric

@@ -2,22 +2,23 @@ package com.wixpress.dst.greyhound.testkit
 
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ReportingProducer}
+import com.wixpress.dst.greyhound.core.testkit.TestMetrics
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import zio.blocking.Blocking
-import zio.clock.Clock
-import zio.console.Console
 import zio.duration._
-import zio.random.Random
-import zio.{ZIO, ZManaged, random, test}
+import zio._
 
 object ITEnv {
-  type Env = GreyhoundMetrics with zio.ZEnv
+  type Env = TestMetrics with zio.ZEnv
   case class TestResources(kafka: ManagedKafka, producer: ReportingProducer)
 
-  def ManagedEnv =
-    (GreyhoundMetrics.liveLayer ++ test.environment.liveEnvironment).build
+  def ManagedEnv: UManaged[zio.ZEnv with TestMetrics] =
+    for {
+      env <- (GreyhoundMetrics.liveLayer ++ test.environment.liveEnvironment).build
+      testMetrics <- TestMetrics.make
+    } yield env ++ testMetrics
 
-  def testResources(): ZManaged[Blocking with GreyhoundMetrics, Throwable, TestResources] = {
+  def testResources(): ZManaged[Blocking with TestMetrics, Throwable, TestResources] = {
     for {
       kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
       producer <- Producer.make(ProducerConfig(kafka.bootstrapServers))
@@ -39,9 +40,9 @@ object ITEnv {
   val randomGroup = randomId.map(id => s"group-$id")
 
   implicit class ManagedKafkaOps(val kafka: ManagedKafka) {
-    def createRandomTopic(partitions: Int = partitions, prefix: String = "topic") = for {
+    def createRandomTopic(partitions: Int = partitions, prefix: String = "topic", params: Map[String, String] = Map.empty) = for {
       topic <- randomId.map(id => s"$prefix-$id")
-      _ <- kafka.createTopic(TopicConfig(topic, partitions, 1, delete))
+      _ <- kafka.createTopic(TopicConfig(topic, partitions, 1, delete, params))
     } yield topic
   }
 }
