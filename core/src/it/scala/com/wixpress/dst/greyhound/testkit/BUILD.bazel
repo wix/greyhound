@@ -12,6 +12,7 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_test_2_12",
         "@org_apache_curator_curator_test",
