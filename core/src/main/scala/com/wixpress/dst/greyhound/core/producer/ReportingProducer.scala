@@ -10,21 +10,21 @@ import zio.clock.Clock
 import zio.console.Console
 import zio.random.Random
 import zio.system.System
-import zio.{Chunk, ULayer, ZIO}
+import zio.{Chunk, Promise, UIO, ULayer, ZIO}
 
 import scala.concurrent.duration.FiniteDuration
 
 case class ReportingProducer(internal: Producer, layers: Dependencies)
   extends Producer {
-  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
+  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
     (GreyhoundMetrics.report(ProducingRecord(record)) *>
       internal.produceAsync(record)
         .tap(kafkaResultIO =>
-          kafkaResultIO.timed.flatMap {
+          kafkaResultIO.await.timed.flatMap {
             case (duration, metadata) =>
               GreyhoundMetrics.report(RecordProduced(metadata, FiniteDuration(duration.toMillis, MILLISECONDS))).as(metadata)
           }.tapError { error =>
-            GreyhoundMetrics.report(ProduceFailed(error))
+              GreyhoundMetrics.report(ProduceFailed(error))
           }.provideLayer(layers).forkDaemon)
       ).provideLayer(layers)
 }
