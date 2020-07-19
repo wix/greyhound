@@ -11,16 +11,16 @@ trait LocalBuffer {
 
   def close: Task[Unit]
 
-  def enqueue(message: PersistedMessage): ZIO[Clock, LocalBufferError, PersistedMessageId]
+  def enqueue(message: PersistedRecord): ZIO[Clock, LocalBufferError, PersistedMessageId]
 
-  def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedMessage]]
+  def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedRecord]]
 
   def delete(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
 
   def markDead(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
 }
 
-case class PersistedMessage(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {
+case class PersistedRecord(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {
   def topic: Topic = target.topic
 }
 
@@ -30,7 +30,7 @@ case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 
 case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
 
-case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Long, giveUpAfter: Duration) {
+case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Long, giveUpAfter: Duration, shutdownFlushTimeout: Duration) {
   def withMaxConcurrency(m: Int): LocalBufferProducerConfig = copy(maxConcurrency = m)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
