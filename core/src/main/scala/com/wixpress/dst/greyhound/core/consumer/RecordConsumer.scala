@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitio
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryPolicy.{patternRetryTopic, retryPattern}
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
@@ -76,8 +76,22 @@ object RecordConsumer {
         eventLoop.isAlive
 
       override def setBlockingState[R1](command: BlockingStateCommand): RIO[Env with R1, Unit] = {
+        def handleIgnoreOnceRequest(topicPartition: TopicPartition) = {
+          for {
+            previouslyBlocked <- blockingState.get.map(_.get(TopicPartitionTarget(topicPartition)).exists {
+              case InternalBlocking => true
+              case _: Blocked[Chunk[Byte], Chunk[Byte]] => true
+              case _ => false
+            })
+            _ <- if (previouslyBlocked)
+              blockingState.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringOnce))
+            else
+              ZIO.fail(new RuntimeException("Request to IgnoreOnce when message is not blocked"))
+          } yield ()
+        }
+
         command match {
-          case IgnoreOnceFor(topicPartition: TopicPartition)  => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringOnce))
+          case IgnoreOnceFor(topicPartition: TopicPartition)  => handleIgnoreOnceRequest(topicPartition)
           case IgnoreAllFor(topicPartition: TopicPartition)   => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
           case BlockErrorsFor(topicPartition: TopicPartition) => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
           case IgnoreAll(topic: Topic)                        => blockingState.update(_.updated(TopicTarget(topic), IgnoringAll))
@@ -86,8 +100,10 @@ object RecordConsumer {
         }
       }
 
-      override def state: UIO[RecordConsumerExposedState] =
-        eventLoop.state.map(state => RecordConsumerExposedState(state, config.clientId))
+      override def state: UIO[RecordConsumerExposedState] = for {
+        dispatcherState <-  eventLoop.state
+        blockingStateMap <- blockingState.get
+      } yield RecordConsumerExposedState(dispatcherState, config.clientId, blockingStateMap)
 
       override def topology: UIO[RecordConsumerTopology] =
         consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(subscription))
@@ -156,7 +172,7 @@ object RecordConsumerMetric {
 
 }
 
-case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, consumerId: String) {
+case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, consumerId: String, blockingState: Map[BlockingTarget, BlockingState]) {
   def topics = dispatcherState.topics
 }
 

@@ -3,8 +3,8 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import java.util.concurrent.TimeUnit
 
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{IgnoringOnce, Blocking => InternalBlocking}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryOnHandlerFailed, NoRetryOnNonRetryableFailure}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
@@ -19,7 +19,8 @@ trait BlockingRetryRecordHandler[V, K, R] {
 
 object BlockingRetryRecordHandler {
   def apply[R, E, V, K](handler: RecordHandler[R, E, K, V],
-                        retryConfig: RetryConfig, blockingState: Ref[Map[BlockingTarget, BlockingState]],
+                        retryConfig: RetryConfig,
+                        blockingState: Ref[Map[BlockingTarget, BlockingState]],
                         nonBlockingRetryPolicy: NonBlockingRetryPolicy,
                         nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
     val blockingStateResolver = BlockingStateResolver(blockingState)
@@ -30,7 +31,7 @@ object BlockingRetryRecordHandler {
 
       def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[Clock with GreyhoundMetrics, PollResult] = {
         for {
-          shouldBlock <- blockingStateResolver.shouldBlock(record)
+          shouldBlock <- blockingStateResolver.resolve(record)
           shouldPollAgain <- if (shouldBlock) {
             clock.sleep(100.milliseconds) *>
               currentTime(TimeUnit.MILLISECONDS).flatMap(end =>
@@ -47,7 +48,7 @@ object BlockingRetryRecordHandler {
             pollBlockingStateWithSuspensions(interval, start).doWhile(result => result.pollAgain).map(_.blockHandling)
           } else {
             for {
-              shouldBlock <- blockingStateResolver.shouldBlock(record)
+              shouldBlock <- blockingStateResolver.resolve(record)
               _ <- ZIO.when(shouldBlock)(clock.sleep(interval))
             } yield shouldBlock
           }
@@ -59,16 +60,17 @@ object BlockingRetryRecordHandler {
           case ex: NonRetryableException =>
             report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause)) *>
               UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
-          case _ => interval.map { interval =>
-            report(BlockingRetryOnHandlerFailed(topicPartition, record.offset)) *>
+          case error => interval.map { interval =>
+            report(BlockingRetryHandlerInvocationFailed(topicPartition, record.offset, error.toString)) *>
               blockOnErrorFor(interval)
           }.getOrElse(UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false)))
         }
       }
 
-      def backToBlockingForIgnoringOnce = {
+      def maybeBackToStateBlocking = {
         blockingState.modify(state => state.get(TopicPartitionTarget(topicPartition)).map {
           case IgnoringOnce => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
+          case _:Blocked[V, K] => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
           case _ => ((), state)
         }.getOrElse(((), state)))
       }
@@ -77,10 +79,12 @@ object BlockingRetryRecordHandler {
         UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       } else {
         val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs().map(Some(_)) :+ None
-        val result = foreachWhile(durationsIncludingForInvocationWithNoErrorHandling) { interval =>
-          handleAndMaybeBlockOnErrorFor(interval)
-        }
-        backToBlockingForIgnoringOnce *> result
+        for {
+          result <- foreachWhile(durationsIncludingForInvocationWithNoErrorHandling) { interval =>
+            handleAndMaybeBlockOnErrorFor(interval)
+          }
+          _ <- maybeBackToStateBlocking
+        } yield result
       }
     }
   }
