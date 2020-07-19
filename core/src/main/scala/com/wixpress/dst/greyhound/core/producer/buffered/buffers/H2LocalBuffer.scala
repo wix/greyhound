@@ -20,8 +20,8 @@ import scala.util.Try
 object H2LocalBuffer {
   private val InsertQuery = "INSERT INTO MESSAGES VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
-  def make(localPath: String, keepDeadMessages: Duration): RIO[Clock, LocalBuffer] =
-    for {
+  def make(localPath: String, keepDeadMessages: Duration): RManaged[Clock, LocalBuffer] =
+    (for {
       cp <- Task(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
       connection <- Task(cp.getConnection())
       currentSequenceNumber <- Ref.make(0)
@@ -47,7 +47,27 @@ object H2LocalBuffer {
       override def delete(messageId: PersistedMessageId): IO[LocalBufferError, Boolean] =
         update(connection)(s"DELETE TOP 1 FROM MESSAGES WHERE ID=$messageId").map(_ > 0)
           .mapError(LocalBufferError.apply)
-    }
+
+      override def markDead(messageId: PersistedMessageId): IO[LocalBufferError, Boolean] =
+        update(connection)(s"UPDATE MESSAGES SET STATE='$failed' WHERE ID=$messageId").map(_ > 0)
+          .mapError(LocalBufferError.apply)
+
+      override def close: Task[Unit] =
+        ZIO.when(!connection.isClosed)(
+          Task(connection) *> Task(cp.dispose()))
+
+      override def failedRecordsCount: ZIO[Any, LocalBufferError, Int] =
+        query(connection, s"SELECT COUNT(*) FROM MESSAGES WHERE STATE = '$failed'")(rs => Task(rs.next()) *> Task(rs.getInt(1)))
+          .mapError(LocalBufferError.apply)
+
+
+      //      override def numPendingMessages: Int = count(pending)
+      //
+      //  override def numDeadMessages: Int = count(failed)
+      //
+      //  override def unsentMessages: Int = count(notSent)
+    })
+      .toManaged(m => m.close.ignore)
 
   private def list(resultSet: ResultSet, count: Int): Task[List[PersistedMessage]] = {
     def next(rs: ResultSet): IO[Option[Throwable], PersistedMessage] = {
