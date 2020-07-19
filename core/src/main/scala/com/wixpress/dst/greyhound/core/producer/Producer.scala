@@ -27,6 +27,7 @@ import scala.collection.JavaConverters._
 // for the h2 we'll have an interface so it's pluggable
 
 trait Producer {
+
   def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]]
 
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata] =
@@ -45,6 +46,8 @@ trait Producer {
     serialized(record, keySerializer, valueSerializer)
       .mapError(SerializationError)
       .flatMap(produceAsync)
+
+  def shutdown: UIO[Unit] = UIO.unit
 
   private def serialized[V, K](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]) = {
     for {
@@ -94,7 +97,7 @@ object Producer {
                   else produceCompletePromise.succeed(RecordMetadata(metadata)))
             }))
               .tapError(e => produceCompletePromise.complete(ProducerError(e)))
-              .mapError(e => runtime.unsafeRun(ProducerError(e)))
+              .mapError(e => runtime.unsafeRun(ProducerError(e).flip))
           } yield produceCompletePromise.await
       }
     }
