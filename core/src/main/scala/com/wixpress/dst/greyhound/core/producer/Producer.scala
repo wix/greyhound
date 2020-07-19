@@ -13,25 +13,11 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
-// LocalBufferProducer API:
-//def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Any, Either[LocalBufferError, ProducerError], RecordMetadata]
-//def produce[K, V](record: ProducerRecord[K, V],
-//                    keySerializer: Serializer[K],
-//                    valueSerializer: Serializer[V]): ZIO[Any, Either[LocalBufferError, ProducerError], RecordMetadata]
-// make function accepts a Producer and uses it
-// Get topic partitions size and lazy create number of fibers (min 1) by modulo on the key hash
-// this will guarantee keys are always on the same fiber so order is preserved
-// we can add a NoOrder(concurrentRequests: Int) config so we round robin the worker fiber
-// counter for inflight to await requests (with timeout, configurable)
-// case class LocalBufferProducerConfig(inflightRequests: Int, queueFullTimeout: Duration)
-// for the h2 we'll have an interface so it's pluggable
-
 trait Producer {
-
-  def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]]
+  def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]]
 
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata] =
-    produceAsync(record).flatten
+    produceAsync(record).flatMap(_.await)
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
@@ -42,7 +28,7 @@ trait Producer {
 
   def produceAsync[K, V](record: ProducerRecord[K, V],
                          keySerializer: Serializer[K],
-                         valueSerializer: Serializer[V]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
+                         valueSerializer: Serializer[V]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
     serialized(record, keySerializer, valueSerializer)
       .mapError(SerializationError)
       .flatMap(produceAsync)
@@ -70,7 +56,7 @@ object Producer {
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
       new Producer {
         override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, RecordMetadata] =
-          produceAsync(record).flatten
+          produceAsync(record).flatMap(_.await)
 
         private def recordFrom(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) =
           new KafkaProducerRecord(
@@ -86,7 +72,7 @@ object Producer {
               new RecordHeader(key, value.toArray)
           }
 
-        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, ZIO[Any, ProducerError, RecordMetadata]] =
+        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
           for {
             produceCompletePromise <- Promise.make[ProducerError, RecordMetadata]
             runtime <- ZIO.runtime[Any]
@@ -98,7 +84,7 @@ object Producer {
             }))
               .tapError(e => produceCompletePromise.complete(ProducerError(e)))
               .mapError(e => runtime.unsafeRun(ProducerError(e).flip))
-          } yield produceCompletePromise.await
+          } yield produceCompletePromise
       }
     }
   }
