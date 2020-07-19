@@ -9,12 +9,15 @@ import zio.{Ref, URIO, ZIO}
 object BlockingStateResolver {
   def apply(blockingState: Ref[Map[BlockingTarget, BlockingState]]): BlockingStateResolver = {
     new BlockingStateResolver {
-      override def shouldBlock[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics, Boolean] = {
+      override def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics, Boolean] = {
         val topicPartition = TopicPartition(record.topic, record.partition)
 
         for {
-          topicPartitionBlockingState <- blockingState.get.map(_.getOrElse(TopicPartitionTarget(topicPartition),InternalBlocking))
-          topicBlockingState <- blockingState.get.map(_.getOrElse(TopicTarget(record.topic), InternalBlocking))
+          state <- blockingState.get
+          topicPartitionBlockingState = state.getOrElse(TopicPartitionTarget(topicPartition),InternalBlocking)
+          maybeTopicTarget = state.get(TopicTarget(record.topic))
+          isTopicTarget = maybeTopicTarget.isDefined
+          topicBlockingState = maybeTopicTarget.getOrElse(InternalBlocking)
           mergedBlockingState = topicBlockingState match {
             case IgnoringAll => IgnoringAll
             case IgnoringOnce => IgnoringOnce
@@ -24,6 +27,9 @@ object BlockingStateResolver {
           _ <- ZIO.when(!shouldBlock) {
             report(mergedBlockingState.metric(record))
           }
+          _ <- ZIO.when(shouldBlock && !isTopicTarget) {
+              blockingState.update(map => map.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record.key, record.value, record.headers, topicPartition, record.offset)))
+          }
         } yield shouldBlock
       }
     }
@@ -31,5 +37,5 @@ object BlockingStateResolver {
 }
 
 trait BlockingStateResolver {
-  def shouldBlock[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics, Boolean]
+  def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics, Boolean]
 }
