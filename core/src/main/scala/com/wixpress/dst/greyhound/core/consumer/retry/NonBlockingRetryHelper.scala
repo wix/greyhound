@@ -16,7 +16,7 @@ import zio.{Chunk, UIO, URIO, _}
 
 import scala.util.Try
 
-trait NonBlockingRetryPolicy {
+trait NonBlockingRetryHelper {
   def retryTopicsFor(originalTopic: Topic): Set[Topic]
 
   def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]]
@@ -29,8 +29,8 @@ trait NonBlockingRetryPolicy {
   def retrySteps = retryTopicsFor("").size
 }
 
-object NonBlockingRetryPolicy {
-  def apply(group: Group, retryConfig: Option[RetryConfig]): NonBlockingRetryPolicy = new NonBlockingRetryPolicy{
+object NonBlockingRetryHelper {
+  def apply(group: Group, retryConfig: Option[RetryConfig]): NonBlockingRetryHelper = new NonBlockingRetryHelper{
         val backoffs: Seq[Duration] = retryConfig.map(_.nonBlockingBackoffs).getOrElse(Seq.empty)
 
         private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
@@ -81,6 +81,7 @@ object NonBlockingRetryPolicy {
                   (RetryHeader.Submitted -> toChunk(now.toEpochMilli)) +
                   (RetryHeader.Backoff -> toChunk(backoff.toMillis)) +
                   (RetryHeader.OriginalTopic -> toChunk(originalTopic))
+                // RetryAttempt
               )
             }
             }.fold[RetryDecision](NoMoreRetries)(RetryWith)

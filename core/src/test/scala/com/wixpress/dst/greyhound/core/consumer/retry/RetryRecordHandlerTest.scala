@@ -7,10 +7,10 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
-import com.wixpress.dst.greyhound.core.consumer.retry.RecordHandlerTest.{offset, partition, _}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
+import com.wixpress.dst.greyhound.core.testkit.FakeRetryHelper._
 import com.wixpress.dst.greyhound.core.testkit._
 import org.specs2.specification.core.Fragment
 import zio._
@@ -20,7 +20,7 @@ import zio.duration._
 import zio.random.{Random, nextBytes, nextIntBounded}
 import zio.test.environment.{TestClock, TestRandom}
 
-class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
+class RetryRecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
 
   override def env =
     for {
@@ -35,7 +35,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
         topic <- randomTopicName
         retryTopic = s"$topic-retry"
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(failingHandler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+        retryHandler = RetryRecordHandler.withRetries(failingHandler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
@@ -64,7 +64,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
           currentTime.flatMap(executionTime.succeed)
         }
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(handler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+        retryHandler = RetryRecordHandler.withRetries(handler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         value <- bytes
         begin <- currentTime
         retryAttempt <- IntSerde.serialize(retryTopic, 0)
@@ -88,7 +88,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
         handleCountRef <- Ref.make(0)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
-          ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+          ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
@@ -110,7 +110,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
         handleCountRef <- Ref.make(0)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(nonRetryableHandlerWith(handleCountRef),
-          ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+          ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
@@ -129,7 +129,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
         handleCountRef <- Ref.make(0)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
-          ZRetryConfig.infiniteBlockingRetry(100.millis), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+          ZRetryConfig.infiniteBlockingRetry(100.millis), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
@@ -149,7 +149,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
           tpartition = TopicPartition(topic, partition)
           blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
           retryHandler = RetryRecordHandler.withRetries(failingHandler,
-            ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1):_*), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+            ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1):_*), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
           key <- bytes
           value <- bytes
           fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
@@ -176,7 +176,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
         tpartition = TopicPartition(topic, partition)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(failingHandler,
-          ZRetryConfig.finiteBlockingRetry(50.millis, 1.second), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+          ZRetryConfig.finiteBlockingRetry(50.millis, 1.second), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
         _ <- blockingState.set(Map(TopicPartitionTarget(tpartition) -> IgnoringOnce))
@@ -207,7 +207,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
           handleCountRef <- Ref.make(0)
           blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
           retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
-            ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1):_*), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+            ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1):_*), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
           key <- bytes
           value <- bytes
           fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
@@ -240,7 +240,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
         handleCountRef <- Ref.make(0)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(failingHandlerWith(handleCountRef),
-          ZRetryConfig.blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), List(1.second)), producer, Topics(Set(topic)), blockingState, FakeRetryPolicy(topic))
+          ZRetryConfig.blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), List(1.second)), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
@@ -259,7 +259,7 @@ class RecordHandlerTest extends BaseTest[Random with Clock with Blocking with Te
   }
 }
 
-object RecordHandlerTest {
+object RetryRecordHandlerTest {
   val group = "some-group"
   val partition = 0
   val offset = 0L
