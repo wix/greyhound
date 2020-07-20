@@ -23,15 +23,15 @@ object RetryRecordHandler {
                                   retryConfig: RetryConfig, producer: Producer,
                                   subscription: ConsumerSubscription,
                                   blockingState: Ref[Map[BlockingTarget, BlockingState]],
-                                  nonBlockingRetryPolicy: NonBlockingRetryPolicy)
+                                  nonBlockingRetryHelper: NonBlockingRetryHelper)
                                  (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] = {
 
-    val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, subscription, evK, evV, nonBlockingRetryPolicy)
-    val blockingHandler = BlockingRetryRecordHandler(handler, retryConfig, blockingState, nonBlockingRetryPolicy, nonBlockingHandler)
+    val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, subscription, evK, evV, nonBlockingRetryHelper)
+    val blockingHandler = BlockingRetryRecordHandler(handler, retryConfig, blockingState, nonBlockingHandler)
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(blockingHandler, nonBlockingHandler)
 
     (record: ConsumerRecord[K, V]) => {
-      retryConfig.retryType() match {
+      retryConfig.retryType match {
         case BlockingFollowedByNonBlocking => blockingAndNonBlockingHandler.handle(record)
         case NonBlocking => nonBlockingHandler.handle(record)
         case Blocking => blockingHandler.handle(record)

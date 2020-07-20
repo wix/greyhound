@@ -17,11 +17,10 @@ trait BlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R, Nothing, LastHandleResult]
 }
 
-object BlockingRetryRecordHandler {
+private[retry] object BlockingRetryRecordHandler {
   def apply[R, E, V, K](handler: RecordHandler[R, E, K, V],
                         retryConfig: RetryConfig,
                         blockingState: Ref[Map[BlockingTarget, BlockingState]],
-                        nonBlockingRetryPolicy: NonBlockingRetryPolicy,
                         nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
@@ -34,8 +33,8 @@ object BlockingRetryRecordHandler {
           shouldBlock <- blockingStateResolver.resolve(record)
           shouldPollAgain <- if (shouldBlock) {
             clock.sleep(100.milliseconds) *>
-              currentTime(TimeUnit.MILLISECONDS).flatMap(end =>
-                UIO(PollResult(pollAgain = end - start < interval.toMillis, blockHandling = true)))
+            currentTime(TimeUnit.MILLISECONDS).map(end =>
+                PollResult(pollAgain = end - start < interval.toMillis, blockHandling = true))
           } else
             UIO(PollResult(pollAgain = false, blockHandling = false))
         } yield shouldPollAgain
@@ -58,8 +57,8 @@ object BlockingRetryRecordHandler {
       def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics, Nothing, LastHandleResult] = {
         (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll {
           case ex: NonRetryableException =>
-            report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause)) *>
-              UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
+            report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause))
+              .as(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
           case error => interval.map { interval =>
             report(BlockingRetryHandlerInvocationFailed(topicPartition, record.offset, error.toString)) *>
               blockOnErrorFor(interval)
