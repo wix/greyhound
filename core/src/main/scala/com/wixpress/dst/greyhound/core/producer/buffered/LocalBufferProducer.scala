@@ -33,7 +33,8 @@ trait LocalBufferProducer {
 }
 
 case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolean, localBufferQueryCount: Int,
-                                    failedRecords: Int, inflightCount: Int, promises: Map[PersistedMessageId, Promise[ProducerError, RecordMetadata]]) {
+                                    failedRecords: Int, enqueued: Int, inflight: Int,
+                                    promises: Map[PersistedMessageId, Promise[ProducerError, RecordMetadata]]) {
   def withPromise(id: PersistedMessageId, promise: Promise[ProducerError, RecordMetadata]): LocalBufferProducerState =
     copy(promises = promises + (id -> promise))
 
@@ -41,11 +42,12 @@ case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolea
 
   def incQueryCount = copy(localBufferQueryCount = localBufferQueryCount + 1)
 
-  def updateInFlightCount(by: Int) = copy(inflightCount = inflightCount + by)
+  def updateEnqueuedCount(by: Int) = copy(enqueued = enqueued + by)
 }
 
 object LocalBufferProducerState {
-  val empty = LocalBufferProducerState(0, running = true, localBufferQueryCount = 0, failedRecords = 0, inflightCount = 0, promises = Map.empty)
+  val empty = LocalBufferProducerState(maxRecordedConcurrency = 0, running = true,
+    localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, promises = Map.empty)
 }
 
 case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: Promise[ProducerError, RecordMetadata])
@@ -55,7 +57,7 @@ object LocalBufferProducer {
   def make(producer: Producer, localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics, LocalBufferProducer] =
     (for {
       state <- TRef.makeCommit(LocalBufferProducerState.empty)
-      router <- ProduceFiberRouter.make(producer, config.maxConcurrency, config.giveUpAfter)
+      router <- ProduceFiberRouter.make(producer, config.maxConcurrency, config.giveUpAfter, config.retryInterval)
       fiber <- localBuffer.take(100).flatMap(msgs =>
           state.update(_.incQueryCount).commit *>
           ZIO.foreach(msgs)(record =>
@@ -71,14 +73,14 @@ object LocalBufferProducer {
                 .fork)
           ).as(msgs)
       )
-        .flatMap(r => ZIO.when(r.isEmpty)(state.get.flatMap(state => STM.check(state.inflightCount > 0 || !state.running).as(state)).commit.delay(1.millis))) // this waits until there are more messages in buffer
-        .doWhileM(_ => state.get.map(s => s.running || s.inflightCount > 0).commit)
+        .flatMap(r => ZIO.when(r.isEmpty)(state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running).as(state)).commit.delay(1.millis))) // this waits until there are more messages in buffer
+        .doWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
         .forkDaemon
     } yield new LocalBufferProducer {
       override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv, LocalBufferError, BufferedProduceResult] =
         validate(config, state) *>
           nextInt.flatMap(generatedMsgId =>
-            state.update(_.updateInFlightCount(1)).commit *>
+            state.update(_.updateEnqueuedCount(1)).commit *>
               enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId))
 
       override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]): ZIO[ZEnv, LocalBufferError, BufferedProduceResult] =
@@ -90,14 +92,17 @@ object LocalBufferProducer {
           } yield response)
 
       override def currentState: UIO[LocalBufferProducerState] =
-        (state.get.commit zip router.recordedConcurrency zip localBuffer.failedRecordsCount.catchAll(_ => UIO(-1))).map { case ((state, concurrency), failedRecordsCount) =>
-          state.copy(maxRecordedConcurrency = concurrency, failedRecords = failedRecordsCount)
-        }
-
+        for {
+          stateRef <- state.get.commit
+          concurrency <- router.recordedConcurrency
+          failedCount <- localBuffer.failedRecordsCount.catchAll(_ => UIO(-1))
+          inflight <- localBuffer.inflightRecordsCount.catchAll(_ => UIO(-1))
+          unsent <- localBuffer.unsentRecordsCount.catchAll(_ => UIO(-1))
+        } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount, enqueued = unsent, inflight = inflight)
 
       override def shutdown: URIO[ZEnv, Unit] =
         state.update(_.copy(running = false)).commit *>
-          (state.get.map(_.inflightCount == 0).flatMap(STM.check(_)).commit *>
+          (state.get.map(_.enqueued == 0).flatMap(STM.check(_)).commit *>
             fiber.join)
             .timeout(config.shutdownFlushTimeout)
             .ignore
@@ -121,7 +126,7 @@ object LocalBufferProducer {
     validateIsRunning(state) *> validateBufferFull(config, state)
 
   private def validateBufferFull(config: LocalBufferProducerConfig, state: TRef[LocalBufferProducerState]) =
-    ZIO.whenM(state.get.map(_.inflightCount > config.maxMessagesOnDisk).commit)(ZIO.fail(LocalBufferError(LocalBufferFull(config.maxMessagesOnDisk))))
+    ZIO.whenM(state.get.map(_.enqueued > config.maxMessagesOnDisk).commit)(ZIO.fail(LocalBufferError(LocalBufferFull(config.maxMessagesOnDisk))))
 
   private def validateIsRunning(state: TRef[LocalBufferProducerState]) =
     ZIO.whenM(state.get.map(!_.running).commit)(ZIO.fail(LocalBufferError(ProducerClosed())))
@@ -129,7 +134,7 @@ object LocalBufferProducer {
   private def updateReferences(result: Either[ProducerError, RecordMetadata],
                                state: TRef[LocalBufferProducerState],
                                msg: PersistedRecord): URIO[ZEnv, Unit] =
-    state.updateAndGet(_.updateInFlightCount(-1)).commit
+    state.updateAndGet(_.updateEnqueuedCount(-1)).commit
       .flatMap(_.promises.get(msg.id).map(promise =>
         promise.complete(ZIO.fromEither(result)) *>
           state.update(_.removePromise(msg.id))
@@ -148,7 +153,7 @@ trait ProduceFiberRouter extends Producer {
 }
 
 object ProduceFiberRouter {
-  def make(producer: Producer, maxConcurrency: Int, giveUpAfter: Duration): URIO[ZEnv with GreyhoundMetrics, ProduceFiberRouter] =
+  def make(producer: Producer, maxConcurrency: Int, giveUpAfter: Duration, retryInterval: Duration): URIO[ZEnv with GreyhoundMetrics, ProduceFiberRouter] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
       queues <- ZIO.foreach(0 until maxConcurrency)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
@@ -163,7 +168,7 @@ object ProduceFiberRouter {
               case false =>
                 producer.produce(req.record)
                   .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-                  .retry(spaced(1.second) && doUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
+                  .retry(spaced(retryInterval) && doUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
                   .tapBoth(req.fail, req.succeed)
             }.ignore
           )
