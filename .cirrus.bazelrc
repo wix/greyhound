@@ -8,7 +8,6 @@ build --crosstool_top=@buildbuddy_toolchain//:toolchain
 build --javabase=@buildbuddy_toolchain//:javabase_jdk8
 build --host_javabase=@buildbuddy_toolchain//:javabase_jdk8
 build --java_toolchain=@buildbuddy_toolchain//:toolchain_jdk8
-build --config=remote_shared
 
 build --bes_results_url=https://app.buildbuddy.io/invocation/
 build --bes_backend=grpcs://cloud.buildbuddy.io
