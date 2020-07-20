@@ -10,7 +10,7 @@ trait BlockingAndNonBlockingRetryRecordHandler[K, V, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any]
 }
 
-object BlockingAndNonBlockingRetryRecordHandler {
+private[retry] object BlockingAndNonBlockingRetryRecordHandler {
   def apply[V, K, R](blockingHandler: BlockingRetryRecordHandler[V, K, R],
                      nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]): BlockingAndNonBlockingRetryRecordHandler[K, V, R] = new BlockingAndNonBlockingRetryRecordHandler[K, V, R] {
     override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {

@@ -5,17 +5,16 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
-import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingHandlerFailed, NonBlockingRetryPolicy, RetryAttempt, RetryDecision}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
+import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingHandlerFailed, NonBlockingRetryHelper, RetryAttempt, RetryDecision}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.testkit.FakeRetryPolicy._
+import com.wixpress.dst.greyhound.core.testkit.FakeRetryHelper._
+import zio._
 import zio.clock.Clock
 import zio.duration._
-import zio._
 
-trait FakeNonBlockingRetryPolicy extends NonBlockingRetryPolicy{
+trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper{
   val topic: Topic
 
   override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
@@ -68,9 +67,9 @@ trait FakeNonBlockingRetryPolicy extends NonBlockingRetryPolicy{
   }
 }
 
-case class FakeRetryPolicy(topic: Topic) extends FakeNonBlockingRetryPolicy
+case class FakeRetryHelper(topic: Topic) extends FakeNonBlockingRetryHelper
 
-object FakeRetryPolicy {
+object FakeRetryHelper {
 
   object Header {
     val Attempt = "retry-attempt"

@@ -13,25 +13,28 @@ object BlockingStateResolver {
         val topicPartition = TopicPartition(record.topic, record.partition)
 
         for {
-          state <- blockingState.get
-          topicPartitionBlockingState = state.getOrElse(TopicPartitionTarget(topicPartition),InternalBlocking)
-          topicBlockingState = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
-          mergedBlockingState = topicBlockingState match {
-            case IgnoringAll => IgnoringAll
-            case IgnoringOnce => IgnoringOnce
-            case _ => topicPartitionBlockingState
+          mergedBlockingState <- blockingState.modify { state =>
+            val topicPartitionBlockingState = state.getOrElse(TopicPartitionTarget(topicPartition),InternalBlocking)
+            val topicBlockingState = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
+            val mergedBlockingState = topicBlockingState match {
+              case IgnoringAll => IgnoringAll
+              case IgnoringOnce => IgnoringOnce
+              case _ => topicPartitionBlockingState
+            }
+            val shouldBlock = shouldBlockFrom(mergedBlockingState)
+            val isBlockedAlready = mergedBlockingState match {
+              case _:BlockingState.Blocked[K,V] => true
+              case _ => false
+            }
+            val updatedState = if(shouldBlock && !isBlockedAlready) {
+              state.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record.key, record.value, record.headers, topicPartition, record.offset))
+            } else
+              state
+            (mergedBlockingState, updatedState)
           }
           shouldBlock = shouldBlockFrom(mergedBlockingState)
           _ <- ZIO.when(!shouldBlock) {
             report(mergedBlockingState.metric(record))
-          }
-
-          isBlockedAlready = mergedBlockingState match {
-            case _:BlockingState.Blocked[K,V] => true
-            case _ => false
-          }
-          _ <- ZIO.when(shouldBlock && !isBlockedAlready) {
-              blockingState.update(map => map.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record.key, record.value, record.headers, topicPartition, record.offset)))
           }
         } yield shouldBlock
       }

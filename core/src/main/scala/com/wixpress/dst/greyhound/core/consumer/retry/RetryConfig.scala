@@ -7,7 +7,7 @@ import zio.duration.{Duration => ZDuration}
 import scala.concurrent.duration.Duration
 
 case class RetryConfig(blockingBackoffs: () => Seq[ZDuration], nonBlockingBackoffs: Seq[ZDuration]) {
-  def retryType(): RetryType = {
+  def retryType: RetryType = {
     if (blockingBackoffs.apply().nonEmpty) {
       if (nonBlockingBackoffs.nonEmpty)
         BlockingFollowedByNonBlocking
