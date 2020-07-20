@@ -37,7 +37,7 @@ object H2LocalBuffer {
         val takeQuery = s"SELECT * FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT $upTo"
 
         (for {
-          msgs <- query(connection, takeQuery)(rs => list(rs, upTo))
+          msgs <- query(connection)(takeQuery)(rs => list(rs, upTo))
           setPendingQuery = s"UPDATE MESSAGES SET STATE='$pending' WHERE ID IN (${msgs.map(_.id).mkString(",")})"
           _ <- update(connection)(setPendingQuery)
         } yield msgs)
@@ -52,22 +52,25 @@ object H2LocalBuffer {
         update(connection)(s"UPDATE MESSAGES SET STATE='$failed' WHERE ID=$messageId").map(_ > 0)
           .mapError(LocalBufferError.apply)
 
-      override def close: Task[Unit] =
+      override def close: IO[LocalBufferError, Unit] =
         ZIO.when(!connection.isClosed)(
           Task(connection) *> Task(cp.dispose()))
-
-      override def failedRecordsCount: ZIO[Any, LocalBufferError, Int] =
-        query(connection, s"SELECT COUNT(*) FROM MESSAGES WHERE STATE = '$failed'")(rs => Task(rs.next()) *> Task(rs.getInt(1)))
           .mapError(LocalBufferError.apply)
 
+      override def failedRecordsCount: ZIO[Any, LocalBufferError, Int] =
+        count(connection)(failed)
 
-      //      override def numPendingMessages: Int = count(pending)
-      //
-      //  override def numDeadMessages: Int = count(failed)
-      //
-      //  override def unsentMessages: Int = count(notSent)
+      override def inflightRecordsCount: IO[LocalBufferError, Int] =
+        count(connection)(pending)
+
+      override def unsentRecordsCount: IO[LocalBufferError, Int] =
+        count(connection)(notSent)
     })
       .toManaged(m => m.close.ignore)
+
+  private def count(connection: Connection)(field: String) =
+    query(connection)(s"SELECT COUNT(*) FROM MESSAGES WHERE STATE = '$field'")(rs => Task(rs.next()) *> Task(rs.getInt(1)))
+      .mapError(LocalBufferError.apply)
 
   private def list(resultSet: ResultSet, count: Int): Task[List[PersistedRecord]] = {
     def next(rs: ResultSet): IO[Option[Throwable], PersistedRecord] = {
@@ -196,7 +199,7 @@ object H2StatementSupport {
   val pending = "PENDING"
   val defaultKeepDeadMessages: Duration = 7.days
 
-  def query[K](connection: Connection, queryStr: String)(f: ResultSet => Task[K]): Task[K] =
+  def query[K](connection: Connection)(queryStr: String)(f: ResultSet => Task[K]): Task[K] =
     withStatement(connection) { statement =>
       ZManaged.make(
         acquire = Task(statement.executeQuery(queryStr)))(
