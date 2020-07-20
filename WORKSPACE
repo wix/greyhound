@@ -73,6 +73,7 @@ http_archive(
     name = "io_buildbuddy_toolchain",
     strip_prefix = "toolchain-6a50799da26f34e9aab6b85dc187aa7fed4b127c",
     urls = ["https://github.com/buildbuddy-io/toolchain/archive/6a50799da26f34e9aab6b85dc187aa7fed4b127c.tar.gz"],
+    sha256 = "d00a2ba3aa689cced99fcfe4442a7ee7741ce6de744e4c0ccde2cfe47c5aa86f",
 )
 
 load("@io_buildbuddy_toolchain//:rules.bzl", "register_buildbuddy_toolchain")
