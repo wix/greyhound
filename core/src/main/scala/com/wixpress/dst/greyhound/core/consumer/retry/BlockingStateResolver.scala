@@ -15,13 +15,15 @@ object BlockingStateResolver {
 
         for {
           mergedBlockingState <- blockingStateRef.modify { state =>
-            val topicPartitionBlockingState = state.getOrElse(TopicPartitionTarget(topicPartition),InternalBlocking)
+            val topicPartitionBlockingState = state.get(TopicPartitionTarget(topicPartition))
             val topicBlockingState = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
-            val mergedBlockingState = topicBlockingState match {
+            val mergedBlockingState = topicPartitionBlockingState.map{
               case IgnoringAll => IgnoringAll
               case IgnoringOnce => IgnoringOnce
-              case _ => topicPartitionBlockingState // default is InternalBlocking
-            }
+              case InternalBlocking => InternalBlocking
+              case b: Blocked[V, K] => b
+              case _ => InternalBlocking
+            }.getOrElse(topicBlockingState)
             val shouldBlock = shouldBlockFrom(mergedBlockingState)
             val isBlockedAlready = mergedBlockingState match {
               case _:BlockingState.Blocked[K,V] => true
