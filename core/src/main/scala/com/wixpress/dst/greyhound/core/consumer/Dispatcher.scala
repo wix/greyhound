@@ -12,17 +12,17 @@ import zio.clock.Clock
 import zio.duration.{Duration, _}
 
 trait Dispatcher[-R] {
-  def submit(record: Record): URIO[R with Clock with GreyhoundMetrics,SubmitResult]
+  def submit(record: Record): URIO[R with Clock with GreyhoundMetrics, SubmitResult]
 
   def resumeablePartitions(paused: Set[TopicPartition]): UIO[Set[TopicPartition]]
 
-  def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics,Unit]
+  def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics with ZEnv, Unit]
 
   def pause: URIO[GreyhoundMetrics, Unit]
 
   def resume: URIO[GreyhoundMetrics, Unit]
 
-  def shutdown: URIO[GreyhoundMetrics, Unit]
+  def shutdown: URIO[GreyhoundMetrics with ZEnv, Unit]
 
   def expose: UIO[DispatcherExposedState]
 
@@ -40,7 +40,7 @@ object Dispatcher {
       state <- Ref.make[State](State.Running)
       workers <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
-      override def submit(record: Record): URIO[R with Clock with GreyhoundMetrics,SubmitResult] =
+      override def submit(record: Record): URIO[R with Clock with GreyhoundMetrics, SubmitResult] =
         for {
           _ <- report(SubmittingRecord(group, clientId, record))
           partition = TopicPartition(record)
@@ -71,7 +71,7 @@ object Dispatcher {
           workersState <- ZIO.foreach(workers) { case (tp, worker) => worker.expose.map(pending => (tp, pending)) }.map(_.toMap)
         } yield DispatcherExposedState(workersState, dispatcherState)
 
-      override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] =
+      override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics with ZEnv, Unit] =
         workers.modify { workers =>
           partitions.foldLeft((List.empty[(TopicPartition, Worker)], workers)) {
             case ((revoked, remaining), partition) =>
@@ -95,7 +95,7 @@ object Dispatcher {
         case state => (ZIO.unit, state)
       }.flatten
 
-      override def shutdown: URIO[GreyhoundMetrics, Unit] =
+      override def shutdown: URIO[GreyhoundMetrics with ZEnv, Unit] =
         state.modify(state => (state, State.ShuttingDown)).flatMap {
           case State.Paused(resume) => resume.succeed(()).unit
           case _ => ZIO.unit
@@ -128,7 +128,8 @@ object Dispatcher {
         ZIO.foreachPar_(workers) {
           case (partition, worker) =>
             report(StoppingWorker(group, clientId, partition)) *>
-              worker.shutdown
+              worker.shutdown.timed.map(_._1).flatMap(duration =>
+                report(WorkerStopped(group, clientId, partition, duration.toMillis)))
         }
     }
 
@@ -233,6 +234,8 @@ object DispatcherMetric {
   case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
 
   case class StoppingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
+
+  case class WorkerStopped(group: Group, clientId: ClientId, partition: TopicPartition, durationMs: Long) extends DispatcherMetric
 
   case class SubmittingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V]) extends DispatcherMetric
 

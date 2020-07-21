@@ -37,7 +37,7 @@ trait RecordConsumer[-R] extends Resource[R] {
 }
 
 object RecordConsumer {
-  type Env = GreyhoundMetrics with Blocking with Clock
+  type Env = GreyhoundMetrics with ZEnv
   type AssignedPartitions = Set[TopicPartition]
 
   /**
