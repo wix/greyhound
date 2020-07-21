@@ -2,17 +2,17 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
-import zio.clock.Clock
 import zio.duration.{Duration, _}
 
 trait Dispatcher[-R] {
-  def submit(record: Record): URIO[R with Clock with GreyhoundMetrics, SubmitResult]
+  def submit(record: Record): URIO[R with Env, SubmitResult]
 
   def resumeablePartitions(paused: Set[TopicPartition]): UIO[Set[TopicPartition]]
 
@@ -40,7 +40,7 @@ object Dispatcher {
       state <- Ref.make[State](State.Running)
       workers <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
-      override def submit(record: Record): URIO[R with Clock with GreyhoundMetrics, SubmitResult] =
+      override def submit(record: Record): URIO[R with Env, SubmitResult] =
         for {
           _ <- report(SubmittingRecord(group, clientId, record))
           partition = TopicPartition(record)
@@ -161,7 +161,7 @@ object Dispatcher {
                 capacity: Int,
                 group: Group,
                 clientId: ClientId,
-                partition: TopicPartition): URIO[R with Clock with GreyhoundMetrics, Worker] = for {
+                partition: TopicPartition): URIO[R with Env, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
       internalState <- Ref.make(WorkerInternalState.empty)
       fiber <-
@@ -187,7 +187,7 @@ object Dispatcher {
                             queue: Queue[Record],
                             group: Group,
                             clientId: ClientId,
-                            partition: TopicPartition): URIO[R with Clock with GreyhoundMetrics, Boolean] =
+                            partition: TopicPartition): URIO[R with Env, Boolean] =
       internalState.update(_.cleared) *>
         state.get.flatMap {
           case State.Running => queue.take.flatMap { record =>

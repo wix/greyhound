@@ -79,7 +79,7 @@ object EventLoop {
                            offsets: Offsets,
                            config: EventLoopConfig,
                            clientId: ClientId,
-                           group: Group): URIO[R2 with GreyhoundMetrics with Clock with Blocking, Boolean] =
+                           group: Group): URIO[R2 with Env, Boolean] =
     running.get.flatMap {
       case true =>
         for {
