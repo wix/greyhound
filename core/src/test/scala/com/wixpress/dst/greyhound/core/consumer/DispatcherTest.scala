@@ -3,6 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core.Headers
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric.RecordHandled
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, CountDownLatch, TestMetrics, eventuallyZ}
@@ -12,9 +13,9 @@ import zio.duration._
 import zio.test.environment.TestClock
 import zio.{test, _}
 
-class DispatcherTest extends BaseTest[Clock with TestClock with TestMetrics] {
+class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
 
-  override def env: UManaged[Clock with TestClock with TestMetrics] =
+  override def env: UManaged[Env with TestClock with TestMetrics] =
     for {
       env <- test.environment.testEnvironment.build
       testMetrics <- TestMetrics.make
