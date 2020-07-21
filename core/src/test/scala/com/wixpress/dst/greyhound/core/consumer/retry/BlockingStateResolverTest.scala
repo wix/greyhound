@@ -120,12 +120,13 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
     }
 
     Fragment.foreach(Seq((InternalBlocking, InternalBlocking, true), (InternalBlocking, IgnoringAll, false), (InternalBlocking, IgnoringOnce, false),
-      (IgnoringAll, InternalBlocking, false), (IgnoringAll, IgnoringAll, false), (IgnoringAll, IgnoringOnce, false),
-      (IgnoringOnce, InternalBlocking, false), (IgnoringOnce, IgnoringAll, false), (IgnoringOnce, IgnoringOnce, false),
-        (InternalBlocking, BlockedMessageState, true), (IgnoringAll, BlockedMessageState, false),
-      (IgnoringOnce, BlockedMessageState, false))) { pair =>
+      (IgnoringAll, InternalBlocking, true), (IgnoringAll, IgnoringAll, false), (IgnoringAll, IgnoringOnce, false),
+      (IgnoringOnce, InternalBlocking, true), (IgnoringOnce, IgnoringAll, false), (IgnoringOnce, IgnoringOnce, false),
+        (InternalBlocking, BlockedMessageState, true), (IgnoringAll, BlockedMessageState, true),
+      (IgnoringOnce, BlockedMessageState, true))) { pair =>
       val (topicTargetState, topicPartitionTargetState, expectedShouldBlock) = pair
-      s"prefer to return false when both targets are available and one is Ignoring ($topicTargetState,$topicPartitionTargetState)" in {
+      s"prefer the state of TopicPartitionTarget when it differs from TopicTarget " +
+        s"because whenever TopicTarget is set it also sets TopicPartitionTarget ($topicTargetState,$topicPartitionTargetState)" in {
         for {
           topic <- randomTopicName
           blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
@@ -193,6 +194,27 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
         updatedState1 === IgnoringOnce and
         failed2 === true and
         updatedState2 === InternalBlocking
+    }
+
+    "Update state to Blocked when Blocking is set for TopicPartitionTarget while IgnoreAll is set for TopicTarget" in {
+      for {
+        topic <- randomTopicName
+        tpartition = TopicPartition(topic, partition)
+        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map(
+          TopicTarget(topic) -> IgnoringAll,
+          TopicPartitionTarget(tpartition) -> InternalBlocking))
+        key <- bytes
+        value <- bytes
+
+        resolver = BlockingStateResolver(blockingState)
+
+        shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+        updatedStateMap <- blockingState.get
+        updatedStateTopic = updatedStateMap(TopicTarget(topic))
+        updatedStateTopicPartition = updatedStateMap(TopicPartitionTarget(tpartition))
+      } yield shouldBlock === true and
+        updatedStateTopic === IgnoringAll and
+        updatedStateTopicPartition === Blocked(Some(key), value, Headers.Empty, tpartition, offset)
     }
   }
 
