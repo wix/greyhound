@@ -27,7 +27,7 @@ object EventLoop {
               consumer: Consumer,
               handler: Handler[R],
               clientId: ClientId,
-              config: EventLoopConfig = EventLoopConfig.Default): RManaged[R with GreyhoundMetrics with Env, EventLoop[GreyhoundMetrics]] = {
+              config: EventLoopConfig = EventLoopConfig.Default): RManaged[R with Env, EventLoop[GreyhoundMetrics]] = {
     val start = for {
       _ <- report(StartingEventLoop(clientId, group))
       offsets <- Offsets.make
@@ -36,7 +36,7 @@ object EventLoop {
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
-      runtime <- ZIO.runtime[R with GreyhoundMetrics with Clock]
+      runtime <- ZIO.runtime[R with Env]
       rebalanceListener = listener(runtime, pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
       _ <- subscribe(initialSubscription, rebalanceListener)(consumer)
       running <- Ref.make(true)
@@ -91,7 +91,7 @@ object EventLoop {
       case false => UIO(false)
     }
 
-  private def listener[R2, R1](runtime: Runtime[R2 with GreyhoundMetrics with Clock],
+  private def listener[R2, R1](runtime: Runtime[R2 with Env],
                                pausedPartitionsRef: Ref[Set[TopicPartition]],
                                config: EventLoopConfig,
                                dispatcher: Dispatcher[R2],
