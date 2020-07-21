@@ -57,6 +57,7 @@ object RecordConsumer {
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
+      blockingStateResolver = BlockingStateResolver(blockingState)
       handlerWithRetries <- addRetriesToHandler(config, handler, blockingState, nonBlockingRetryHelper)
       eventLoop <- EventLoop.make(
         group = config.group,
@@ -76,28 +77,7 @@ object RecordConsumer {
         eventLoop.isAlive
 
       override def setBlockingState[R1](command: BlockingStateCommand): RIO[Env with R1, Unit] = {
-        def handleIgnoreOnceRequest(topicPartition: TopicPartition) = {
-          for {
-            previouslyBlocked <- blockingState.get.map(_.get(TopicPartitionTarget(topicPartition)).exists {
-              case InternalBlocking => true
-              case _: Blocked[Chunk[Byte], Chunk[Byte]] => true
-              case _ => false
-            })
-            _ <- if (previouslyBlocked)
-              blockingState.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringOnce))
-            else
-              ZIO.fail(new RuntimeException("Request to IgnoreOnce when message is not blocked"))
-          } yield ()
-        }
-
-        command match {
-          case IgnoreOnceFor(topicPartition: TopicPartition)  => handleIgnoreOnceRequest(topicPartition)
-          case IgnoreAllFor(topicPartition: TopicPartition)   => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
-          case BlockErrorsFor(topicPartition: TopicPartition) => blockingState.update(_.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
-          case IgnoreAll(topic: Topic)                        => blockingState.update(_.updated(TopicTarget(topic), IgnoringAll))
-          case BlockErrors(topic: Topic)                      => blockingState.update(_.updated(TopicTarget(topic), InternalBlocking))
-          case _                                              => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
-        }
+        blockingStateResolver.setBlockingState(command)
       }
 
       override def state: UIO[RecordConsumerExposedState] = for {
@@ -189,11 +169,3 @@ case class RecordConsumerConfig(bootstrapServers: String,
 object RecordConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
 }
-
-sealed trait BlockingStateCommand
-
-case class IgnoreOnceFor(topicPartition: TopicPartition) extends BlockingStateCommand
-case class IgnoreAllFor(topicPartition: TopicPartition) extends BlockingStateCommand
-case class BlockErrorsFor(topicPartition: TopicPartition) extends BlockingStateCommand
-case class IgnoreAll(topic: Topic) extends BlockingStateCommand
-case class BlockErrors(topic: Topic) extends BlockingStateCommand
