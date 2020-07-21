@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
-import com.wixpress.dst.greyhound.core.testkit.eventuallyZ
+import com.wixpress.dst.greyhound.core.testkit.{eventuallyZ, eventuallyTimeout}
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
@@ -21,6 +21,7 @@ import zio.duration._
 import zio.{console, _}
 
 class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
+
   sequential
 
   override def env: UManaged[ITEnv.Env] = ITEnv.ManagedEnv
@@ -191,25 +192,27 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       messagesPerPartition = 500
       handler = RecordHandler { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
         sleep(10.millis) *>
-          probe.update(curr => curr + (record.partition -> (curr.getOrElse(record.partition, Nil) :+ record.offset)))
+          probe.getAndUpdate(curr => curr + (record.partition -> (curr.getOrElse(record.partition, Nil) :+ record.offset)))
+            .flatMap(map =>
+              ZIO.when(map.getOrElse(record.partition, Nil).contains(record.offset))(console.putStrLn(OffsetWasAlreadyProcessed(record.partition, record.offset).toString))
+            )
       }
-
       createConsumerTask = (i: Int) => makeConsumer(kafka, topic, group, handler, i)
       test <- createConsumerTask(0).use_ {
         val record = ProducerRecord(topic, Chunk.empty, partition = Some(0))
         for {
-          _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
-            ZIO.foreachPar(0 until partitions) { p =>
-              producer.produce(record.copy(partition = Some(p)))
-            }
+          _ <- ZIO.foreachPar(0 until partitions) { p =>
+            ZIO.foreach(0 until messagesPerPartition)(_ =>
+              producer.produceAsync(record.copy(partition = Some(p)))
+            )
           }
           _ <- createConsumerTask(1).useForever.fork // rebalance
           _ <- createConsumerTask(2).useForever.fork // rebalance
           expected = (0 until partitions).map(p => (p, 0L until messagesPerPartition)).toMap
-          _ <- probe.get.flatMap(actual =>
-            if (actual != expected) ZIO.fail(errorMsg(actual, expected)) else UIO(actual))
-            .retry(Schedule.duration(60.seconds) && Schedule.spaced(1.second))
-        } yield ok
+          _ <- eventuallyTimeout(probe.get)(m => m.mapValues(_.lastOption).values.toSet == Set(Option(messagesPerPartition - 1L)) && m.size == partitions)(120.seconds)
+          finalResult <- probe.get
+          _ <- console.putStrLn(finalResult.mapValues(_.size).mkString(","))
+        } yield finalResult === expected
       }
     } yield test
   }
@@ -240,14 +243,18 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   }
 
 
-  private def makeConsumer(kafka: ManagedKafka, topic: String, group: String, handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
-    RecordConsumer.make(configFor(kafka, group, topic).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
+  private def makeConsumer(kafka: ManagedKafka, topic: String, group: String,
+                           handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int,
+                           mutateEventLoop: EventLoopConfig => EventLoopConfig = identity): ZManaged[RecordConsumer.Env, Throwable, RecordConsumer[Console with Clock with RecordConsumer.Env]] =
+    RecordConsumer.make(configFor(kafka, group, topic, mutateEventLoop).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
 
-  private def makeConsumer(kafka: ManagedKafka, pattern: Pattern, group: String, handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
+  private def makeConsumer(kafka: ManagedKafka, pattern: Pattern, group: String,
+                           handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
     RecordConsumer.make(configFor(kafka, group, pattern).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
 
-  private def configFor(kafka: ManagedKafka, group: Group, topic: Topic) =
-    RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
+  private def configFor(kafka: ManagedKafka, group: Group, topic: Topic, mutateEventLoop: EventLoopConfig => EventLoopConfig = identity) =
+    RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest,
+      eventLoopConfig = mutateEventLoop(EventLoopConfig.Default))
 
   private def configFor(kafka: ManagedKafka, group: Group, pattern: Pattern) =
     RecordConsumerConfig(kafka.bootstrapServers, group, TopicPattern(pattern), extraProperties = fastConsumerMetadataFetching)
@@ -261,3 +268,5 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 }
 
 object TimedOutWaitingForMessages extends RuntimeException
+
+case class OffsetWasAlreadyProcessed(partition: Partition, offset: Offset) extends RuntimeException
