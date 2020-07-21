@@ -18,9 +18,9 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
-class EventLoopTest extends BaseTest[Blocking with Clock with TestMetrics] {
+class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
 
-  override def env: UManaged[Blocking with Clock with TestMetrics] =
+  override def env: UManaged[ZEnv with TestMetrics] =
     for {
       env <- test.environment.liveEnvironment.build
       testMetrics <- TestMetrics.make
