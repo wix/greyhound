@@ -5,11 +5,12 @@ sources()
 scala_library(
     name = "buffered",
     srcs = [
-      ":sources",
+        ":sources",
     ],
     deps = [
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered/buffers:buffers",
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:producer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered/buffers",
         "@dev_zio_zio_2_12",
-    ]
+        "@org_apache_kafka_kafka_clients",
+    ],
 )
