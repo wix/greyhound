@@ -72,12 +72,12 @@ object BlockingStateResolver {
         }
 
         command match {
-          case IgnoreOnceFor(topicPartition: TopicPartition)  => handleIgnoreOnceRequest(topicPartition)
-          case IgnoreAllFor(topicPartition: TopicPartition)   => blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
+          case IgnoreOnceFor(topicPartition: TopicPartition) => handleIgnoreOnceRequest(topicPartition)
+          case IgnoreAllFor(topicPartition: TopicPartition) => blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
           case BlockErrorsFor(topicPartition: TopicPartition) => blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
-          case IgnoreAll(topic: Topic)                        => updateTopicTargetAndPartitionTargets(topic, IgnoringAll)
-          case BlockErrors(topic: Topic)                      => updateTopicTargetAndPartitionTargets(topic, InternalBlocking)
-          case _                                              => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
+          case IgnoreAll(topic: Topic) => updateTopicTargetAndPartitionTargets(topic, IgnoringAll)
+          case BlockErrors(topic: Topic) => updateTopicTargetAndPartitionTargets(topic, InternalBlocking)
+          case _ => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
         }
       }
     }
