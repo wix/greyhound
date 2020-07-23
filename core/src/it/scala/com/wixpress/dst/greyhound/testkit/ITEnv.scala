@@ -4,7 +4,6 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ReportingProducer}
 import com.wixpress.dst.greyhound.core.testkit.TestMetrics
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
-import zio.blocking.Blocking
 import zio.duration._
 import zio.{ZIO, ZManaged, random, test}
 import zio._
@@ -19,7 +18,7 @@ object ITEnv {
       testMetrics <- TestMetrics.make
     } yield env ++ testMetrics
 
-  def testResources(): ZManaged[Blocking with TestMetrics, Throwable, TestResources] = {
+  def testResources(): ZManaged[zio.ZEnv with TestMetrics, Throwable, TestResources] = {
     for {
       kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
       producer <- Producer.make(ProducerConfig(kafka.bootstrapServers))
