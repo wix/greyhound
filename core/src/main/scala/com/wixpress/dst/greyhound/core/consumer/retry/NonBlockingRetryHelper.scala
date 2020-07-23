@@ -80,8 +80,8 @@ object NonBlockingRetryHelper {
                 headers = record.headers +
                   (RetryHeader.Submitted -> toChunk(now.toEpochMilli)) +
                   (RetryHeader.Backoff -> toChunk(backoff.toMillis)) +
-                  (RetryHeader.OriginalTopic -> toChunk(originalTopic))
-                // RetryAttempt
+                  (RetryHeader.OriginalTopic -> toChunk(originalTopic)) +
+                  (RetryHeader.RetryAttempt -> toChunk(nextRetryAttempt))
               )
             }
             }.fold[RetryDecision](NoMoreRetries)(RetryWith)
@@ -124,6 +124,7 @@ object RetryHeader {
   val Submitted = "submitTimestamp"
   val Backoff = "backOffTimeMs"
   val OriginalTopic = "GH_OriginalTopic"
+  val RetryAttempt = "GH_RetryAttempt"
 }
 
 case class RetryAttempt(originalTopic: Topic,
