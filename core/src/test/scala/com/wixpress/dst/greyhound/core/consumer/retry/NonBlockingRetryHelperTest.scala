@@ -9,6 +9,5 @@ class NonBlockingRetryHelperTest extends SpecificationWithJUnit {
       val topic = "some-topic"
       NonBlockingRetryHelper("group",None).retryTopicsFor(topic) must not(contain(topic))
     }
-
   }
 }
