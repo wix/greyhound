@@ -83,7 +83,7 @@ val config = GreyhoundConfig(Set("localhost:9092"))
 val builder = GreyhoundConsumersBuilder(config)
   .withConsumer(
     GreyhoundConsumer(
-      topic = "some-topic",
+      initialTopics = Set("some-topic"),
       group = "some-consumer-group",
       handle = aRecordHandler {
         new RecordHandler[Int, String] {
@@ -94,7 +94,8 @@ val builder = GreyhoundConsumersBuilder(config)
         }
       },
       keyDeserializer = Serdes.IntSerde,
-      valueDeserializer = Serdes.StringSerde))
+      valueDeserializer = Serdes.StringSerde,
+      clientId = "client-id-1"))
 
 for {
   // Start consuming
@@ -214,6 +215,7 @@ You can transform your handler by using the built-in combinators like so (types 
 
 ```scala
 import java.util.UUID
+import com.wixpress.dst.greyhound.core.consumer.domain.RecordHandler
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.Deserializer
 import com.wixpress.dst.greyhound.core.Serdes
@@ -319,23 +321,24 @@ import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain._
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.producer._
+import com.wixpress.dst.greyhound.core.Serdes._
 import zio.duration._
 import zio.ZIO
 
 val group = "groupId"
 val topic = "topicY"
 val handler = RecordHandler { record: ConsumerRecord[String, String] =>
-  if (record.value === "OK")
+  if (record.value == "OK")
     ZIO.unit
       else 
     ZIO.fail(new RuntimeException("Failed..."))     
 }
 
-val retryPolicy = RetryPolicy.nonBlockingOnly(group, 1.second, 30.seconds, 1.minute)
+val retryConfig = ZRetryConfig.nonBlockingRetry(group, 1.second, 30.seconds, 1.minute)
 val bootstrapServers = "localhost:9092"
 val topics = Set("topic-A")
 RecordConsumer.make(
-  RecordConsumerConfig(bootstrapServers, group, ConsumerSubscription.Topics(topics), retryPolicy = Some(retryPolicy)),
+  RecordConsumerConfig(bootstrapServers, group, ConsumerSubscription.Topics(topics), retryConfig = Some(retryConfig)),
   handler.withDeserializers(StringSerde, StringSerde)
   ).useForever
 ```
@@ -357,9 +360,59 @@ Doing something like this will result in separate consumers 'stealing' each othe
 It may seem like an implementation detail - but it's important to proceed with the last part in mind.
 <br>
 
+#### Consumer Blocking Retries
+In case the consumer needs to process messages in-order, a blocking retry configuration is available.
+
+When retry configuration is setup this way, the user provided handler code will be retried on the **same** message according to the provided intervals.
+There are several different options when configuring blocking retries:
+* finiteBlockingRetry
+* infiniteBlockingRetry
+* exponentialBackoffBlockingRetry
+* blockingFollowedByNonBlockingRetry
+
+```scala
+import com.wixpress.dst.greyhound.core.consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain._
+import com.wixpress.dst.greyhound.core.consumer.retry._
+import com.wixpress.dst.greyhound.core.producer._
+import com.wixpress.dst.greyhound.core.Serdes._
+import zio.duration._
+import zio.ZIO
+
+val group = "groupId"
+val topic = "topicY"
+val handler = RecordHandler { record: ConsumerRecord[String, String] =>
+  if (record.value == "OK")
+    ZIO.unit
+      else 
+    ZIO.fail(new RuntimeException("Failed..."))     
+}
+
+val retryConfig = ZRetryConfig.finiteBlockingRetry(1.second, 30.seconds, 1.minute)
+val bootstrapServers = "localhost:9092"
+val topics = Set("topic-A")
+RecordConsumer.make(
+  RecordConsumerConfig(bootstrapServers, group, ConsumerSubscription.Topics(topics), retryConfig = Some(retryConfig)),
+  handler.withDeserializers(StringSerde, StringSerde)
+  ).useForever
+```
+
+In order to avoid a lag build-up between producer and consumer for the partition on which a message is failing to process, there is a consumer API call to skip retrying for that partition:
+
+```scala
+import com.wixpress.dst.greyhound.core.consumer._
+
+RecordConsumer.make(
+  RecordConsumerConfig(...),
+  handler
+  ).flatMap(consumer => consumer.setBlockingState(IgnoreOnceFor(TopicPartition("topic-A", 0))))
+```
+
 ### Testing
 Use the embedded Kafka to test your app:
 ```scala
+import com.wixpress.dst.greyhound.testkit._
+
 ManagedKafka.make(ManagedKafkaConfig(kafkaPort = 9092, zooKeeperPort = 2181)).use { kafka =>
   // Start producing and consuming messages,
   // configure broker address on producers and consumers to localhost:9092
