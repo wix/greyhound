@@ -65,6 +65,14 @@ object H2LocalBuffer {
 
       override def unsentRecordsCount: IO[LocalBufferError, Int] =
         count(connection)(notSent)
+
+      override def oldestUnsent: IO[LocalBufferError, Long] =
+        query(connection)(s"SELECT SUBMITTED FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT 1") {
+          rs => Task(rs.next()).map(found =>
+            if (found) System.currentTimeMillis - rs.getLong("SUBMITTED") else 0L
+          )
+        }
+        .mapError(LocalBufferError.apply)
     })
       .toManaged(m => m.close.ignore)
 
