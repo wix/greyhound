@@ -13,6 +13,8 @@ trait LocalBuffer {
 
   def unsentRecordsCount: IO[LocalBufferError, Int]
 
+  def oldestUnsent: IO[LocalBufferError, Long]
+
   def close: IO[LocalBufferError, Unit]
 
   def enqueue(message: PersistedRecord): ZIO[Clock, LocalBufferError, PersistedMessageId]

@@ -33,7 +33,7 @@ trait LocalBufferProducer {
 }
 
 case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolean, localBufferQueryCount: Int,
-                                    failedRecords: Int, enqueued: Int, inflight: Int,
+                                    failedRecords: Int, enqueued: Int, inflight: Int, lagMs: Long,
                                     promises: Map[PersistedMessageId, Promise[ProducerError, RecordMetadata]]) {
   def withPromise(id: PersistedMessageId, promise: Promise[ProducerError, RecordMetadata]): LocalBufferProducerState =
     copy(promises = promises + (id -> promise))
@@ -47,7 +47,7 @@ case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolea
 
 object LocalBufferProducerState {
   val empty = LocalBufferProducerState(maxRecordedConcurrency = 0, running = true,
-    localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, promises = Map.empty)
+    localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, lagMs = 0L, promises = Map.empty)
 }
 
 case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: Promise[ProducerError, RecordMetadata])
@@ -59,7 +59,7 @@ object LocalBufferProducer {
       state <- TRef.makeCommit(LocalBufferProducerState.empty)
       router <- ProduceFiberRouter.make(producer, config.maxConcurrency, config.giveUpAfter, config.retryInterval)
       fiber <- localBuffer.take(100).flatMap(msgs =>
-          state.update(_.incQueryCount).commit *>
+        state.update(_.incQueryCount).commit *>
           ZIO.foreach(msgs)(record =>
             router.produceAsync(producerRecord(record))
               .tap(_.await
@@ -98,7 +98,9 @@ object LocalBufferProducer {
           failedCount <- localBuffer.failedRecordsCount.catchAll(_ => UIO(-1))
           inflight <- localBuffer.inflightRecordsCount.catchAll(_ => UIO(-1))
           unsent <- localBuffer.unsentRecordsCount.catchAll(_ => UIO(-1))
-        } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount, enqueued = unsent, inflight = inflight)
+          lagMs <- localBuffer.oldestUnsent.catchAll(_ => UIO(-1L))
+        } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount,
+          enqueued = unsent, inflight = inflight, lagMs = lagMs)
 
       override def shutdown: URIO[ZEnv, Unit] =
         state.update(_.copy(running = false)).commit *>
