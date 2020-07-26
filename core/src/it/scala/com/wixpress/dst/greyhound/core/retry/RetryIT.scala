@@ -153,7 +153,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       producer.produce(ProducerRecord(topic, "irrelevant"), StringSerde, StringSerde)
     }.fork
       _ <- eventuallyZ(callCount.get)(_ == 1)
-      _ <- consumer.setBlockingState[Any](IgnoreOnceFor(TopicPartition(topic, 0)))
+      _ <- consumer.setBlockingState(IgnoreOnceFor(TopicPartition(topic, 0)))
       _ <- eventuallyZ(callCount.get)(_ == (numOfMessages + 1))
     } yield ok
   }
