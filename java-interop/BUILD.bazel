@@ -2,7 +2,7 @@ package(default_visibility = ["//visibility:public"])
 
 load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "assemble_maven", "deploy_maven")
 
-scala_library(
+java_library(
     name = "greyhound-java",
     srcs = [
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java:sources",
