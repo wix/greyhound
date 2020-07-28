@@ -215,7 +215,7 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
         maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
         retryInterval = retryInterval)))
 
-  private def makeH2Buffer: RManaged[Clock, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-${Math.abs(Random.nextInt(100000))}", keepDeadMessages = 1.day)
+  private def makeH2Buffer: RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-${Math.abs(Random.nextInt(100000))}", keepDeadMessages = 1.day)
 
   private def configFor(kafka: ManagedKafka, group: Group, topic: Topic) = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
 

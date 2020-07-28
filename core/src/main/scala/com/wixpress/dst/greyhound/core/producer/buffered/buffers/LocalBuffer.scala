@@ -2,28 +2,29 @@ package com.wixpress.dst.greyhound.core.producer.buffered.buffers
 
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
 import com.wixpress.dst.greyhound.core.{Headers, Partition, Topic}
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration.Duration
-import zio.{Chunk, IO, ZIO}
+import zio.{Chunk, ZIO}
 
 trait LocalBuffer {
-  def failedRecordsCount: IO[LocalBufferError, Int]
+  def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def inflightRecordsCount: IO[LocalBufferError, Int]
+  def inflightRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def unsentRecordsCount: IO[LocalBufferError, Int]
+  def unsentRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def oldestUnsent: IO[LocalBufferError, Long]
+  def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Long]
 
-  def close: IO[LocalBufferError, Unit]
+  def close: ZIO[Blocking, LocalBufferError, Unit]
 
-  def enqueue(message: PersistedRecord): ZIO[Clock, LocalBufferError, PersistedMessageId]
+  def enqueue(message: PersistedRecord): ZIO[Clock with Blocking, LocalBufferError, PersistedMessageId]
 
-  def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedRecord]]
+  def take(upTo: Int): ZIO[Clock with Blocking, LocalBufferError, Seq[PersistedRecord]]
 
-  def delete(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
+  def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking,LocalBufferError, Boolean]
 
-  def markDead(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
+  def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking,LocalBufferError, Boolean]
 }
 
 case class PersistedRecord(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {
