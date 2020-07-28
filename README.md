@@ -1,5 +1,5 @@
 # Greyhound 
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12) [![Build Status](https://api.cirrus-ci.com/github/wix/greyhound.svg)](https://cirrus-ci.com/github/wix/greyhound/master)
+[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12) [![CircleCI](https://circleci.com/gh/wix/greyhound.svg?style=shield)](https://circleci.com/gh/wix/greyhound)
 
 Scala/Java High-level SDK for [Apache Kafka](https://kafka.apache.org/).
 
