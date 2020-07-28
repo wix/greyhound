@@ -27,7 +27,7 @@ trait LocalBufferProducer {
                     keySerializer: Serializer[K],
                     valueSerializer: Serializer[V]): ZIO[ZEnv, LocalBufferError, BufferedProduceResult]
 
-  def currentState: UIO[LocalBufferProducerState]
+  def currentState: URIO[Blocking with Clock, LocalBufferProducerState]
 
   def shutdown: URIO[ZEnv, Unit]
 }
@@ -91,7 +91,7 @@ object LocalBufferProducer {
             response <- produce(record.copy(key = key, value = value))
           } yield response)
 
-      override def currentState: UIO[LocalBufferProducerState] =
+      override def currentState: URIO[Blocking with Clock, LocalBufferProducerState] =
         for {
           stateRef <- state.get.commit
           concurrency <- router.recordedConcurrency
@@ -112,7 +112,7 @@ object LocalBufferProducer {
       .toManaged(_.shutdown.ignore)
 
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState],
-                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int): ZIO[Clock, LocalBufferError, BufferedProduceResult] =
+                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
     Promise.make[producer.ProducerError, producer.RecordMetadata].flatMap(promise =>
       localBuffer.enqueue(persistedRecord(record, generatedMessageId))
         .tap(id => state.update(_.withPromise(id, promise)).commit)
