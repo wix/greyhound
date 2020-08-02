@@ -6,7 +6,8 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topi
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.{H2LocalBuffer, LocalBuffer, LocalBufferError, LocalBufferFull, LocalBufferProducerConfig}
-import com.wixpress.dst.greyhound.core.producer.buffered.{LocalBufferProduceAttemptFailed, LocalBufferProducer}
+import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducer
+import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.LocalBufferProduceAttemptFailed
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeout, eventuallyZ}
 import com.wixpress.dst.greyhound.testkit.ITEnv.ManagedKafkaOps
@@ -166,7 +167,7 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
           test <- makeProducer(producer, maxConcurrency = 1, giveUpAfter = 10.millis).use { localBufferProducer =>
             for {
               produceError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.await).repeat(recurs(1000)).either
-              _ <- localBufferProducer.shutdown
+              _ <- localBufferProducer.close
               produceAfterShutdown <- localBufferProducer.produce(record, IntSerde, StringSerde).flip
             } yield (produceError.left.get.getClass === classOf[TimeoutError]) and (produceAfterShutdown.cause.getClass === classOf[ProducerClosed])
           }
