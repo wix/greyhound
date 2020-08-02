@@ -7,6 +7,8 @@ import zio.clock.Clock
 import zio.duration.Duration
 import zio.{Chunk, ZIO}
 
+import scala.util.Random
+
 trait LocalBuffer {
   def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
@@ -38,7 +40,7 @@ case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
 
 case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Long, giveUpAfter: Duration,
-                                     shutdownFlushTimeout: Duration, retryInterval: Duration) {
+                                     shutdownFlushTimeout: Duration, retryInterval: Duration, id: Int = Random.nextInt(100000)) {
   def withMaxConcurrency(m: Int): LocalBufferProducerConfig = copy(maxConcurrency = m)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
