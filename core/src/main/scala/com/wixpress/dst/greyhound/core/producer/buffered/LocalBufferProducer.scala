@@ -74,7 +74,10 @@ object LocalBufferProducer {
                 .fork)
           ).as(msgs)
       )
-        .flatMap(r => ZIO.when(r.isEmpty)(state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running).as(state)).commit.delay(1.millis))) // this waits until there are more messages in buffer
+        .tap(r => ZIO.whenCase(r.size) {
+          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running).as(state)).commit.delay(1.millis) // this waits until there are more messages in buffer
+          case x if x <= 10 => zio.clock.sleep(10.millis)
+        })
         .doWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
         .forkDaemon
     } yield new LocalBufferProducer {
