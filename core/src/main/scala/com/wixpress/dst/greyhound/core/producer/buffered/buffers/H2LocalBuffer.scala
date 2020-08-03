@@ -55,7 +55,7 @@ object H2LocalBuffer {
 
       override def close: ZIO[Blocking, LocalBufferError, Unit] =
         ZIO.when(!connection.isClosed)(
-          Task(connection) *> Task(cp.dispose()))
+          Task(connection.close()) *> Task(cp.dispose()))
           .mapError(LocalBufferError.apply)
 
       override def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int] =

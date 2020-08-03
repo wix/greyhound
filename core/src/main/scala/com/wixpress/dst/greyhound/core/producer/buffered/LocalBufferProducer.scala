@@ -105,13 +105,13 @@ object LocalBufferProducer {
           enqueued = unsent, inflight = inflight, lagMs = lagMs)
 
       override def close: URIO[ZEnv with GreyhoundMetrics, Unit] =
-        state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
+        (state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
           report(LocalBufferFlushingRecords(toFlush, config.id)) *>
             (state.get.map(s => s.enqueued + s.inflight == 0).flatMap(STM.check(_)).commit
               .timed.tap(d => report(LocalBufferFlushedRecords(toFlush, d._1.toMillis, config.id))) *>
               fiber.join)
-              .timeout(config.shutdownFlushTimeout)
-              .ignore)
+              .timeout(config.shutdownFlushTimeout) *> localBuffer.close)
+          .ignore)
     })
       .toManaged(_.close.ignore)
 
