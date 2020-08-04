@@ -24,7 +24,7 @@ trait LocalBuffer {
 
   def take(upTo: Int): ZIO[Clock with Blocking, LocalBufferError, Seq[PersistedRecord]]
 
-  def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking,LocalBufferError, Boolean]
+  def delete(messageIds: Seq[PersistedMessageId]): ZIO[Clock with Blocking,LocalBufferError, Boolean]
 
   def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking,LocalBufferError, Boolean]
 }

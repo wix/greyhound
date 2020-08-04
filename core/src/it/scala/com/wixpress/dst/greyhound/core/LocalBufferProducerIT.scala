@@ -50,7 +50,8 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
           record = ProducerRecord(topic, "bar", Some("foo"))
           _ <- RecordConsumer.make(configFor(kafka, "group123", topic), handler).use_ {
             localBufferProducer.produce(record, StringSerde, StringSerde) *>
-              eventuallyZ(queue.takeUpTo(100))(_.nonEmpty)
+              eventuallyZ(queue.takeUpTo(100))(_.nonEmpty) *>
+              eventuallyZ(localBufferProducer.currentState)(s => (s.inflight == 0) && s.enqueued == 0)
           }
         } yield ok
       }
@@ -115,13 +116,14 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
           topic <- kafka.createRandomTopic(prefix = s"buffered-4", partitions = 1)
           (timeoutCount, state) <- makeProducer(producer, maxConcurrency = 10, flushTimeout = 1.second).use { localBufferProducer =>
             for {
-              _ <- localBufferProducer.produce(record(topic), IntSerde, StringSerde).fork
+              _ <- localBufferProducer.produce(record(topic), IntSerde, StringSerde)
               _ <- localBufferProducer.produce(record(topic), IntSerde, StringSerde).flatMap(_.kafkaResult.await).timeout(10.second)
               timeouts <- TestMetrics.reported.map(_.collect { case e@LocalBufferProduceAttemptFailed(TimeoutError(_), false) => e })
               state <- localBufferProducer.currentState
             } yield (timeouts.size, state)
           }
-        } yield ((timeoutCount must beGreaterThan(1))) and (state.inflight === 2) and (state.enqueued === 0))
+        } yield ((timeoutCount must beGreaterThan(1))) and
+          (state.inflight + state.enqueued === 2))
       }
     } yield test
   }
