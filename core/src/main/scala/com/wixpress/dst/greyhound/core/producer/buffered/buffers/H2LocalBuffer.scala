@@ -212,13 +212,13 @@ object H2StatementSupport {
   def query[K](connection: Connection)(queryStr: String)(f: ResultSet => Task[K]): RIO[Blocking, K] =
     withStatement(connection) { statement =>
       ZManaged.make(
-        acquire = effectBlocking(statement.executeQuery(queryStr)))(
+        acquire = Task(statement.executeQuery(queryStr)))(
         release = rs => Task(rs.close()).catchAll(e => UIO(e.printStackTrace())))
         .use(f)
     }
 
   def update(connection: Connection)(updateQuery: String): RIO[Blocking, Int] =
-    withStatement(connection)(statement => effectBlocking(statement.executeUpdate(updateQuery)))
+    withStatement(connection)(statement => Task(statement.executeUpdate(updateQuery)))
 
   def withStatement[R, K](connection: Connection)(f: Statement => RIO[R with Blocking, K]): RIO[R with Blocking, K] =
     ZManaged.make(
