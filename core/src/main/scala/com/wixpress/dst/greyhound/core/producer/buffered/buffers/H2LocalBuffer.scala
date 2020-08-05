@@ -45,8 +45,8 @@ object H2LocalBuffer {
           .mapError(LocalBufferError.apply)
       }
 
-      override def delete(messageIds: Seq[PersistedMessageId]): ZIO[Blocking, LocalBufferError, Boolean] =
-        update(connection)(s"DELETE TOP ${messageIds.size} FROM MESSAGES WHERE ID IN (${messageIds.mkString(",")})").map(_ > 0)
+      override def delete(messageId: PersistedMessageId): ZIO[Blocking, LocalBufferError, Boolean] =
+        update(connection)(s"DELETE TOP 1 FROM MESSAGES WHERE ID=$messageId").map(_ > 0)
           .mapError(LocalBufferError.apply)
 
       override def markDead(messageId: PersistedMessageId): ZIO[Blocking, LocalBufferError, Boolean] =

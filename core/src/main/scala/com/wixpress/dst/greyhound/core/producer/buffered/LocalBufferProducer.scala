@@ -62,14 +62,25 @@ object LocalBufferProducer {
     (for {
       state <- TRef.makeCommit(LocalBufferProducerState.empty)
       router <- ProduceFiberRouter.make(producer, config.maxConcurrency, config.giveUpAfter, config.retryInterval)
-      fiber <- localBuffer.take(100).tap(
-        msgs =>
-          state.update(_.incQueryCount).commit *>
-            produceRecords(router, localBuffer, state)(msgs) *>
-            ZIO.whenCase(msgs.size) {
-              case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running).as(state)).commit.delay(1.millis) // this waits until there are more messages in buffer
-              case x if x <= 10 => zio.clock.sleep(10.millis)
-            })
+      fiber <- localBuffer.take(100).flatMap(msgs =>
+        state.update(_.incQueryCount).commit *>
+          ZIO.foreach(msgs)(record =>
+            router.produceAsync(producerRecord(record))
+              .tap(_.await
+                .tapBoth(
+                  error => updateReferences(Left(error), state, record) *>
+                    localBuffer.markDead(record.id),
+                  metadata =>
+                    updateReferences(Right(metadata), state, record) *>
+                      localBuffer.delete(record.id))
+                .ignore
+                .fork)
+          ).as(msgs)
+      )
+        .tap(r => ZIO.whenCase(r.size) {
+          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running).as(state)).commit.delay(1.millis) // this waits until there are more messages in buffer
+          case x if x <= 10 => zio.clock.sleep(10.millis)
+        })
         .doWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
         .forkDaemon
     } yield new LocalBufferProducer {
@@ -110,20 +121,6 @@ object LocalBufferProducer {
     })
       .toManaged(_.close.ignore)
 
-  private def produceRecords(router: Producer, localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState])(msgs: Seq[PersistedRecord]) =
-    ZIO.foreach(msgs)(record =>
-      router.produceAsync(producerRecord(record)).map(p => (record, p))).flatMap(promises =>
-      ZIO.foreach(promises) { case (record, promise) => promise.await.either.map(p => (record, p)) }.flatMap(
-        results => {
-          val failures = results.collect { case (r, _: Left[_, _]) => r.id }
-          val successes = results.collect { case (r, _: Right[_, _]) => r.id }
-
-          updateReferences(results.map { case (r, res) => (r.id, res) }.toMap, state) *>
-            (ZIO.foreach(failures)(localBuffer.markDead) *>
-              localBuffer.delete(successes)).forkDaemon
-        }
-      ))
-
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState],
                                     record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
     Promise.make[producer.ProducerError, producer.RecordMetadata].flatMap(promise =>
@@ -146,17 +143,17 @@ object LocalBufferProducer {
   private def validateIsRunning(state: TRef[LocalBufferProducerState]) =
     ZIO.whenM(state.get.map(!_.running).commit)(ZIO.fail(LocalBufferError(ProducerClosed())))
 
-  private def updateReferences(results: Map[PersistedMessageId, Either[ProducerError, RecordMetadata]],
-                               state: TRef[LocalBufferProducerState]): URIO[ZEnv, Unit] =
-    state.updateAndGet(_.updateEnqueuedCount(results.size * (-1))).commit
-      .map(_.promises.filter(r => results.keys.exists(_ == r._1))).flatMap(promises =>
-      ZIO.foreach(promises) { case (id, promise) =>
-        promise.complete(ZIO.fromEither(results(id)))
-      } *>
-        state.update(_.removePromises(results.keys))
-          .commit
-          .delay(1.minutes)
-          .forkDaemon)
+  private def updateReferences(result: Either[ProducerError, RecordMetadata],
+                               state: TRef[LocalBufferProducerState],
+                               msg: PersistedRecord): URIO[ZEnv, Unit] =
+    state.updateAndGet(_.updateEnqueuedCount(-1)).commit
+      .flatMap(_.promises.get(msg.id).map(promise =>
+        promise.complete(ZIO.fromEither(result)) *>
+          state.update(_.removePromise(msg.id))
+            .commit
+            .delay(1.minutes)
+            .forkDaemon)
+        .getOrElse(ZIO.unit))
       .unit
 
   private def producerRecord(msg: PersistedRecord): ProducerRecord[Chunk[Byte], Chunk[Byte]] =
