@@ -23,8 +23,8 @@ object H2LocalBuffer {
 
   def make(localPath: String, keepDeadMessages: Duration): RManaged[Clock with Blocking, LocalBuffer] =
     (for {
-      cp <- Task(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
-      connection <- Task(cp.getConnection())
+      cp <- effectBlocking(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
+      connection <- effectBlocking(cp.getConnection())
       currentSequenceNumber <- Ref.make(0)
       _ <- initDatabase(connection, currentSequenceNumber)(localPath, keepDeadMessages)
     } yield new LocalBuffer {
@@ -55,7 +55,7 @@ object H2LocalBuffer {
 
       override def close: ZIO[Blocking, LocalBufferError, Unit] =
         ZIO.when(!connection.isClosed)(
-          Task(connection.close()) *> Task(cp.dispose()))
+          effectBlocking(connection.close()) *> effectBlocking(cp.dispose()))
           .mapError(LocalBufferError.apply)
 
       override def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
@@ -107,7 +107,7 @@ object H2LocalBuffer {
 
   private def executeInsert(connection: Connection, currentSequenceNumber: Ref[Int])(message: PersistedRecord): RIO[Clock with Blocking, Int] =
     for {
-      insertStatement <- Task(connection.prepareStatement(InsertQuery))
+      insertStatement <- effectBlocking(connection.prepareStatement(InsertQuery))
       payloadBytes = Option(message.encodedMsg.value).map(_.toArray).orNull
       base64Headers <- encodeHeaderToBase64(message)
       base64Key <- keyBytes(message)
@@ -154,15 +154,15 @@ object H2LocalBuffer {
         setLastSequenceNumber(statement, currentSequenceNumber) *>
         deleteObsoleteDeadMessages(statement)(keepDeadMessages))
 
-  private def createTableIfNeed(statement: Statement)(localPath: String): Task[Unit] =
-    Task(Files.createDirectory(Paths.get(localPath.substring(0, localPath.lastIndexOf("/"))))).catchSome { case _: FileAlreadyExistsException => ZIO.unit } *>
+  private def createTableIfNeed(statement: Statement)(localPath: String): RIO[Blocking, Unit] =
+    effectBlocking(Files.createDirectory(Paths.get(localPath.substring(0, localPath.lastIndexOf("/"))))).catchSome { case _: FileAlreadyExistsException => ZIO.unit } *>
       ZIO.foreach(
         Seq(
           "CREATE TABLE IF NOT EXISTS MESSAGES(ID BIGINT, TOPIC VARCHAR, KEY BINARY, PARTITION INT, MESSAGE BINARY, HEADERS CLOB, STATE VARCHAR, SEQ_NUM BIGINT, SUBMITTED BIGINT)",
           "CREATE INDEX IF NOT EXISTS SEQNUM_INDEX ON MESSAGES(SEQ_NUM)",
           "CREATE INDEX IF NOT EXISTS STATE_INDEX ON MESSAGES(STATE)",
           "CREATE INDEX IF NOT EXISTS ID_INDEX ON MESSAGES(ID)"))(
-        line => Task(statement.execute(line)))
+        line => effectBlocking(statement.execute(line)))
         .unit
 
   private def setLastSequenceNumber(statement: Statement, currentSequenceNumber: Ref[Int]): RIO[Blocking, Unit] =
@@ -212,18 +212,18 @@ object H2StatementSupport {
   def query[K](connection: Connection)(queryStr: String)(f: ResultSet => Task[K]): RIO[Blocking, K] =
     withStatement(connection) { statement =>
       ZManaged.make(
-        acquire = Task(statement.executeQuery(queryStr)))(
-        release = rs => Task(rs.close()).catchAll(e => UIO(e.printStackTrace())))
+        acquire = effectBlocking(statement.executeQuery(queryStr)))(
+        release = rs => effectBlocking(rs.close()).catchAll(e => UIO(e.printStackTrace())))
         .use(f)
     }
 
   def update(connection: Connection)(updateQuery: String): RIO[Blocking, Int] =
-    withStatement(connection)(statement => Task(statement.executeUpdate(updateQuery)))
+    withStatement(connection)(statement => effectBlocking(statement.executeUpdate(updateQuery)))
 
   def withStatement[R, K](connection: Connection)(f: Statement => RIO[R with Blocking, K]): RIO[R with Blocking, K] =
     ZManaged.make(
-      acquire = Task(connection.createStatement()))(
-      release = statement => Task(statement.close()).unit.catchAll(e => UIO(e.printStackTrace())))
+      acquire = effectBlocking(connection.createStatement()))(
+      release = statement => effectBlocking(statement.close()).unit.catchAll(e => UIO(e.printStackTrace())))
       .use(f)
 }
 
