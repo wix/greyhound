@@ -24,9 +24,9 @@ trait LocalBuffer {
 
   def take(upTo: Int): ZIO[Clock with Blocking, LocalBufferError, Seq[PersistedRecord]]
 
-  def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking,LocalBufferError, Boolean]
+  def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 
-  def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking,LocalBufferError, Boolean]
+  def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 }
 
 case class PersistedRecord(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {
@@ -40,7 +40,9 @@ case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
 
 case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Long, giveUpAfter: Duration,
-                                     shutdownFlushTimeout: Duration, retryInterval: Duration, id: Int = Random.nextInt(100000)) {
+                                     shutdownFlushTimeout: Duration, retryInterval: Duration,
+                                     flushingStrategy: LocalBufferProducerFlushingStrategy = LocalBufferProducerFlushingStrategy.Sync,
+                                     id: Int = Random.nextInt(100000)) {
   def withMaxConcurrency(m: Int): LocalBufferProducerConfig = copy(maxConcurrency = m)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
@@ -50,6 +52,18 @@ case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Lon
   def withRetryInterval(d: Duration): LocalBufferProducerConfig = copy(retryInterval = d)
 
   def withShutdownFlushTimeout(d: Duration): LocalBufferProducerConfig = copy(shutdownFlushTimeout = d)
+}
+
+sealed trait LocalBufferProducerFlushingStrategy
+
+object LocalBufferProducerFlushingStrategy {
+
+  case object Sync extends LocalBufferProducerFlushingStrategy
+
+  case class Async(recordsPerBatch: Int) extends LocalBufferProducerFlushingStrategy
+
+//  case object Unordered extends LocalBufferProducerFlushingStrategy
+
 }
 
 case class SerializableTarget(topic: Topic, partition: Option[Partition], key: Option[Chunk[Byte]])

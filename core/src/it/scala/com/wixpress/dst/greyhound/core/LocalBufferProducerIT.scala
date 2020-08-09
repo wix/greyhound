@@ -5,7 +5,7 @@ import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.producer.buffered.buffers.{H2LocalBuffer, LocalBuffer, LocalBufferError, LocalBufferFull, LocalBufferProducerConfig}
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers.{H2LocalBuffer, LocalBuffer, LocalBufferError, LocalBufferFull, LocalBufferProducerConfig, LocalBufferProducerFlushingStrategy}
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducer
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.LocalBufferProduceAttemptFailed
 import com.wixpress.dst.greyhound.core.producer._
@@ -219,7 +219,7 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
     makeH2Buffer.flatMap(buffer =>
       LocalBufferProducer.make[GreyhoundMetrics with Clock with R](producer, buffer, LocalBufferProducerConfig(maxConcurrency = maxConcurrency,
         maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
-        retryInterval = retryInterval)))
+        retryInterval = retryInterval, flushingStrategy = LocalBufferProducerFlushingStrategy.Async(5))))
 
   private def makeH2Buffer: RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-${Math.abs(Random.nextInt(100000))}", keepDeadMessages = 1.day)
 
