@@ -11,8 +11,11 @@ import zio.blocking.{Blocking, effectBlocking}
 import zio.{RIO, RManaged, ZIO, ZManaged}
 
 import scala.collection.JavaConverters._
+import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 
 trait AdminClient {
+  def listTopics(): RIO[Blocking, Set[String]]
+
   def createTopics(configs: Set[TopicConfig]): RIO[Blocking, Map[String, Option[Throwable]]]
 
   def numberOfBrokers: RIO[Blocking, Int]
@@ -57,9 +60,16 @@ object AdminClient {
                 (topic, TopicPropertiesResult(partitions, propertiesMap.getOrElse(topic, Map.empty))) }
           }
 
+
+        override def listTopics(): RIO[Blocking, Set[String]] = for {
+          result <- effectBlocking(client.listTopics())
+          topics <- result.names().asZio
+        } yield topics.asScala.toSet
+
         private def toNewTopic(config: TopicConfig): NewTopic =
           new NewTopic(config.name, config.partitions, config.replicationFactor.toShort)
             .configs(config.propertiesMap.asJava)
+
       }
     }
   }
