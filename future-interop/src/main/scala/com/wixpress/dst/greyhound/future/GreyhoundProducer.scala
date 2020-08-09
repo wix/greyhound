@@ -22,7 +22,7 @@ case class GreyhoundProducerBuilder(config: GreyhoundConfig) {
     for {
       runtime <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers)
-      makeProducer = Producer.make(producerConfig).map(ReportingProducer(_))
+      makeProducer = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
       reservation <- makeProducer.reserve
       producer <- reservation.acquire
     } yield new GreyhoundProducer {
@@ -51,7 +51,7 @@ case class GreyhoundContextAwareProducerBuilder[C](config: GreyhoundConfig,
     for {
       runtime <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers)
-      makeProducer = Producer.make(producerConfig).map(ReportingProducer(_))
+      makeProducer = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
       reservation <- makeProducer.reserve
       producer <- reservation.acquire
     } yield new GreyhoundContextAwareProducer[C] {

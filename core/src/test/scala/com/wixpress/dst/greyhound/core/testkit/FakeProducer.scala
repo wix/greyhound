@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.testkit
 
 import com.wixpress.dst.greyhound.core.Offset
 import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
+import com.wixpress.dst.greyhound.core.producer.Producer.Producer
 import com.wixpress.dst.greyhound.core.producer._
 import zio._
 import zio.blocking.Blocking

@@ -5,15 +5,14 @@ import java.lang.System.currentTimeMillis
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer._
-import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferFlushedRecords, LocalBufferFlushingRecords, LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded, ResilientProducerAppendingMessage}
+import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
 import com.wixpress.dst.greyhound.core.{Serializer, Topic, producer}
 import org.apache.kafka.common.errors._
-import zio.Schedule.{doUntil, spaced}
 import zio._
 import zio.blocking.Blocking
-import zio.clock.Clock
+import zio.clock.{Clock, sleep}
 import zio.duration._
 import zio.random.nextInt
 import zio.stm.{STM, TRef}
@@ -21,16 +20,16 @@ import zio.stm.{STM, TRef}
 import scala.util.Random
 
 @deprecated("still work in progress - do not use this yet")
-trait LocalBufferProducer {
-  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics, LocalBufferError, BufferedProduceResult]
+trait LocalBufferProducer[R] {
+  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V]): ZIO[ZEnv with GreyhoundMetrics, LocalBufferError, BufferedProduceResult]
+                    valueSerializer: Serializer[V]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
 
-  def currentState: URIO[Blocking with Clock, LocalBufferProducerState]
+  def currentState: URIO[Blocking with Clock with R, LocalBufferProducerState]
 
-  def close: URIO[ZEnv with GreyhoundMetrics, Unit]
+  def close: URIO[ZEnv with GreyhoundMetrics with R, Unit]
 }
 
 case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolean, localBufferQueryCount: Int,
@@ -58,7 +57,7 @@ case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult
 
 object LocalBufferProducer {
   @deprecated("still work in progress - do not use this yet")
-  def make(producer: Producer, localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics, LocalBufferProducer] =
+  def make[R](producer: ProducerR[R], localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics with R, LocalBufferProducer[R]] =
     (for {
       state <- TRef.makeCommit(LocalBufferProducerState.empty)
       router <- ProduceFiberRouter.make(producer, config.maxConcurrency, config.giveUpAfter, config.retryInterval)
@@ -78,20 +77,20 @@ object LocalBufferProducer {
           ).as(msgs)
       )
         .tap(r => ZIO.whenCase(r.size) {
-          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running).as(state)).commit.delay(1.millis) // this waits until there are more messages in buffer
-          case x if x <= 10 => zio.clock.sleep(10.millis)
+          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(1.millis) // this waits until there are more messages in buffer
+          case x if x <= 10 => sleep(10.millis)
         })
         .doWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
         .forkDaemon
-    } yield new LocalBufferProducer {
-      override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics, LocalBufferError, BufferedProduceResult] =
+    } yield new LocalBufferProducer[R] {
+      override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
         validate(config, state) *>
           nextInt.flatMap(generatedMsgId =>
             report(ResilientProducerAppendingMessage(record.topic, generatedMsgId, config.id)) *>
               state.update(_.updateEnqueuedCount(1)).commit *>
               enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId))
 
-      override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]): ZIO[ZEnv with GreyhoundMetrics, LocalBufferError, BufferedProduceResult] =
+      override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
         validate(config, state) *>
           (for {
             key <- record.key.map(k => keySerializer.serialize(record.topic, k).map(Option(_))).getOrElse(ZIO.none).mapError(LocalBufferError.apply)
@@ -99,7 +98,7 @@ object LocalBufferProducer {
             response <- produce(record.copy(key = key, value = value))
           } yield response)
 
-      override def currentState: URIO[Blocking with Clock, LocalBufferProducerState] =
+      override def currentState: URIO[Blocking with Clock with R, LocalBufferProducerState] =
         for {
           stateRef <- state.get.commit
           concurrency <- router.recordedConcurrency
@@ -110,7 +109,7 @@ object LocalBufferProducer {
         } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount,
           enqueued = unsent, inflight = inflight, lagMs = lagMs)
 
-      override def close: URIO[ZEnv with GreyhoundMetrics, Unit] =
+      override def close: URIO[ZEnv with GreyhoundMetrics with R, Unit] =
         (state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
           report(LocalBufferFlushingRecords(toFlush, config.id)) *>
             (state.get.map(s => s.enqueued + s.inflight == 0).flatMap(STM.check(_)).commit
@@ -119,7 +118,7 @@ object LocalBufferProducer {
               .timeout(config.shutdownFlushTimeout) *> localBuffer.close)
           .ignore)
     })
-      .toManaged(_.close.ignore)
+      .toManaged((m: LocalBufferProducer[R]) => m.close.ignore)
 
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState],
                                     record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
@@ -160,38 +159,23 @@ object LocalBufferProducer {
     ProducerRecord(msg.topic, msg.encodedMsg.value, msg.target.key, msg.target.partition, msg.encodedMsg.headers)
 }
 
-trait ProduceFiberRouter extends Producer {
+trait ProduceFiberRouter[R] extends ProducerR[R] {
   def recordedConcurrency: UIO[Int]
 }
 
 object ProduceFiberRouter {
-  def make(producer: Producer, maxConcurrency: Int, giveUpAfter: Duration, retryInterval: Duration): URIO[ZEnv with GreyhoundMetrics, ProduceFiberRouter] =
+  def make[R](producer: ProducerR[R], maxConcurrency: Int, giveUpAfter: Duration, retryInterval: Duration): URIO[ZEnv with GreyhoundMetrics with R, ProduceFiberRouter[R]] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
       queues <- ZIO.foreach(0 until maxConcurrency)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
-      _ <- ZIO.foreach(queues.values)(
-        _.take
-          .flatMap((req: ProduceRequest) =>
-            ZIO.whenCase(timeoutPassed(req)) {
-              case true =>
-                ProducerError(new TimeoutException).flip.flatMap(timeout =>
-                  report(LocalBufferProduceTimeoutExceeded(req.giveUpTimestamp, System.currentTimeMillis)) *>
-                    req.fail(timeout))
-              case false =>
-                producer.produce(req.record)
-                  .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-                  .retry(spaced(retryInterval) && doUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
-                  .tapBoth(req.fail, req.succeed)
-            }.ignore
-          )
+      _ <- ZIO.foreach(queues.values)(q =>
+        fetchAndProduce(producer)(retryInterval)(q)
           .forever
           .forkDaemon)
-
-    } yield new ProduceFiberRouter {
-
+    } yield new ProduceFiberRouter[R] {
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
-      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] = {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] = {
         val queueNum = Math.abs(record.key.getOrElse(Random.nextString(10)).hashCode % maxConcurrency)
 
         Promise.make[ProducerError, RecordMetadata].tap(promise =>
@@ -199,6 +183,57 @@ object ProduceFiberRouter {
             usedFibers.update(_ + queueNum))
       }
     }
+
+  private def fetchAndProduce[R](producer: ProducerR[R])(retryInterval: Duration) =
+    (s: Queue[ProduceRequest]) =>
+      s.takeBetween(1, 5)
+        .flatMap(produceUntilResolution(producer)(level = 0)(retryInterval))
+
+  private def produceUntilResolution[R](producer: ProducerR[R])(level: Int)(retryInterval: Duration)(reqs: Seq[ProduceRequest]): ZIO[GreyhoundMetrics with zio.ZEnv with R with Blocking, ProducerError, Unit] =
+    ZIO.when(reqs.nonEmpty)(
+      discardOldRequests(reqs) *>
+        ZIO.foreach(reqs.filterNot(timeoutPassed)) { req =>
+          producer.produceAsync(req.record).map(res => (req, res))
+        }.flatMap(awaitOnPromises)
+          .flatMap(removeFinalFailures)
+          .flatMap(succeedOrRetry(producer, level, retryInterval))
+    )
+
+  private def discardOldRequests(reqs: Seq[ProduceRequest]) =
+    ZIO.foreach(reqs.filter(timeoutPassed))(reportError)
+
+  private def succeedOrRetry[R](producer: ProducerR[R], level: Int, retryInterval: Duration)(results: List[Option[(ProduceRequest, Either[ProducerError, RecordMetadata])]]) = {
+    val failures = results.collect { case Some((req, _@Left(_))) => req }
+    val successes = results.collect { case Some((req, _@Right(value))) => (req, value) }
+
+    ZIO.foreach(successes) {
+      case (req, res) => req.succeed(res)
+    } *>
+      ZIO.when(failures.nonEmpty)(
+        produceUntilResolution(producer)(level + 1)(retryInterval)(failures).delay(retryInterval))
+  }
+
+  private def removeFinalFailures(results: List[(ProduceRequest, Either[ProducerError, RecordMetadata])]) =
+    ZIO.foreach(results) { case (req, res) =>
+      res match {
+        case Left(e) if (timeoutPassed(req) || nonRetriable(e.getCause)) =>
+          req.fail(e).as(None)
+        case l@Left(_) =>
+          UIO(Some(req, l))
+        case r@Right(_) => UIO(Some(req, r))
+      }
+    }
+
+  private def awaitOnPromises(promises: List[(ProduceRequest, Promise[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, List[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
+    ZIO.foreach(promises) { case (req: ProduceRequest, res: Promise[ProducerError, RecordMetadata]) => res.await
+      .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
+      .either.map(e => (req, e))
+    }
+
+  private def reportError(req: ProduceRequest) =
+    ProducerError(new TimeoutException).flip.flatMap(timeout =>
+      report(LocalBufferProduceTimeoutExceeded(req.giveUpTimestamp, System.currentTimeMillis)) *>
+        req.fail(timeout))
 
   private def nonRetriable(e: Throwable): Boolean = e match {
     case _: InvalidTopicException => true
@@ -236,4 +271,3 @@ object LocalBufferProducerMetric {
   case class ResilientProducerAppendingMessage(topic: Topic, persistedMessageId: PersistedMessageId, id: Int) extends LocalBufferProducerMetric
 
 }
-

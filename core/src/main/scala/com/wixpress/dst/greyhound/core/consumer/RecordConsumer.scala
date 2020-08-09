@@ -130,7 +130,7 @@ object RecordConsumer {
                                         nonBlockingRetryHelper: NonBlockingRetryHelper) =
     config.retryConfig match {
       case Some(retryConfig) =>
-        Producer.make(ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
+        Producer.makeR[R](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
           ReportingProducer(producer))
           .map(producer => RetryRecordHandler.withRetries(handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
       case None =>
