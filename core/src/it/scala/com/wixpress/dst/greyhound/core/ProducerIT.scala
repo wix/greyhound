@@ -36,7 +36,7 @@ class ProducerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   "map to failure" in {
     for {
-      _ <- Producer.make(failFastInvalidBrokersConfig).use { producer =>
+      _ <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
         for {
           failure <- producer.produce(record("no_such_topic"), StringSerde, IntSerde).flip
         } yield failure.getClass.getSimpleName === "TimeoutError"

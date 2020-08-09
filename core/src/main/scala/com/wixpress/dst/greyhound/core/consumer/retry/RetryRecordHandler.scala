@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.producer.Producer
+import com.wixpress.dst.greyhound.core.producer.ProducerR
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -20,7 +20,7 @@ object RetryRecordHandler {
     * 3. if both policies are chosen, the blocking policy will be invoked first, and only if it fails the non-blocking policy will be invoked
     */
   def withRetries[R2, R, E, K, V](handler: RecordHandler[R, E, K, V],
-                                  retryConfig: RetryConfig, producer: Producer,
+                                  retryConfig: RetryConfig, producer: ProducerR[R],
                                   subscription: ConsumerSubscription,
                                   blockingState: Ref[Map[BlockingTarget, BlockingState]],
                                   nonBlockingRetryHelper: NonBlockingRetryHelper)

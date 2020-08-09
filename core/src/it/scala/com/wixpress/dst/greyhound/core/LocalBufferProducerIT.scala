@@ -31,12 +31,12 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
     } yield env ++ testMetrics
 
 
-  override def sharedEnv: ZManaged[Blocking with GreyhoundMetrics, Throwable, BufferTestResources] = resources
+  override def sharedEnv: ZManaged[Blocking with GreyhoundMetrics with Clock, Throwable, BufferTestResources] = resources
 
-  val resources: ZManaged[Blocking with GreyhoundMetrics, Throwable, BufferTestResources] =
+  val resources: ZManaged[Blocking with GreyhoundMetrics with Clock, Throwable, BufferTestResources] =
     for {
       kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
-      producer <- Producer.make(ProducerConfig(kafka.bootstrapServers)).map(p => ReportingProducer(p))
+      producer <- Producer.makeR[GreyhoundMetrics with Clock](ProducerConfig(kafka.bootstrapServers)).map(p => ReportingProducer(p))
     } yield BufferTestResources(kafka, producer)
 
   "produce and consume via local buffer" in {
@@ -60,34 +60,37 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
 
   "produce in order of per key" in {
     for {
-      BufferTestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic(prefix = s"buffered-2")
-
-      maxConcurrency = 10
-      test <- makeProducer(producer, maxConcurrency).use { localBufferProducer =>
-        for {
-          consumed <- Ref.make(Map.empty[String, Seq[Int]])
-          handler = RecordHandler(putIn(consumed)).withDeserializers(StringSerde, IntSerde)
-          record = ProducerRecord(topic, 0)
-          (keyCount, recordPerKey) = (100, 20)
-          _ <- RecordConsumer.make(configFor(kafka, "group234", topic), handler).use_ {
-            produceMultiple(keyCount, recordPerKey)(localBufferProducer, record) *>
-              eventuallyTimeout(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(20.seconds)
-          }
-          state <- localBufferProducer.currentState
-
-          queryCountAfterComplete = state.localBufferQueryCount
-          queryCountAfterDelay <- localBufferProducer.currentState.delay(1.second).map(_.localBufferQueryCount)
-        } yield (
-          (state.maxRecordedConcurrency === maxConcurrency) and
-            (queryCountAfterDelay === queryCountAfterComplete) and
-            (queryCountAfterComplete must beGreaterThan(1)))
+      BufferTestResources(kafka, _) <- getShared
+      _ <- Producer.makeR[Any](ProducerConfig(kafka.bootstrapServers, extraProperties = Map("linger.ms" -> "3"))).map(p => ReportingProducer(p)).use {
+        producer =>
+          for {
+            topic <- kafka.createRandomTopic(prefix = s"buffered-2")
+            maxConcurrency = 30
+            test <- makeProducer(producer, maxConcurrency).use { localBufferProducer =>
+              for {
+                consumed <- Ref.make(Map.empty[String, Seq[Int]])
+                handler = RecordHandler(putIn(consumed)).withDeserializers(StringSerde, IntSerde)
+                record = ProducerRecord(topic, 0)
+                (keyCount, recordPerKey) = (500, 50)
+                _ <- RecordConsumer.make(configFor(kafka, "group234", topic), handler).use_ {
+                  produceMultiple(keyCount, recordPerKey)(localBufferProducer, record) *>
+                    eventuallyTimeout(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(30.seconds)
+                }.timed.tap { case (d, _) => console.putStrLn(s"Finished in ${d.toMillis} ms") }
+                state <- localBufferProducer.currentState
+                queryCountAfterComplete = state.localBufferQueryCount
+                queryCountAfterDelay <- localBufferProducer.currentState.delay(1.second).map(_.localBufferQueryCount)
+              } yield (
+                (state.maxRecordedConcurrency === maxConcurrency) and
+                  (queryCountAfterDelay === queryCountAfterComplete) and
+                  (queryCountAfterComplete must beGreaterThan(1)))
+            }
+          } yield test
       }
-    } yield test
+    } yield ok
   }
 
   "allow waiting on kafka record sent" in {
-    def produceIO(topic: Topic, producer: LocalBufferProducer) =
+    def produceIO[R](topic: Topic, producer: LocalBufferProducer[R]) =
       producer.produce(ProducerRecord(topic, 0), StringSerde, IntSerde)
         .tap(res => UIO(println("produced to local id: " + res.localMessageId)))
         .flatMap(_.kafkaResult.await)
@@ -111,7 +114,7 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
 
     for {
       BufferTestResources(kafka, _) <- getShared
-      test <- Producer.make(failFastInvalidBrokersConfig).use { producer =>
+      test <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
         (for {
           topic <- kafka.createRandomTopic(prefix = s"buffered-4", partitions = 1)
           (timeoutCount, state) <- makeProducer(producer, maxConcurrency = 10, flushTimeout = 1.second).use { localBufferProducer =>
@@ -162,7 +165,7 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
   "not try to send messages if their submit time is older than configured timeout" in {
     for {
       BufferTestResources(kafka, _) <- getShared
-      result <- Producer.make(failFastInvalidBrokersConfig).use { producer =>
+      result <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
         for {
           topic <- kafka.createRandomTopic(1)
           record = ProducerRecord(topic, value = "0")
@@ -193,7 +196,7 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
     } yield recordsProduced.size === 1000
   }
 
-  private def produceMultiple(keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer, record: ProducerRecord[String, Int]) =
+  private def produceMultiple[R](keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer[GreyhoundMetrics with Clock with R], record: ProducerRecord[String, Int]) =
     ZIO.foreach(0 until (keyCount * recordPerKey)) { i =>
       localBufferProducer.produce(record.copy(value = i, key = Some((i % keyCount).toString)), StringSerde, IntSerde)
     }
@@ -208,13 +211,13 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
     record =>
       consumed.update(map => map + (record.key.get -> (map.getOrElse(record.key.get, Nil) :+ record.value)))
 
-  private def makeProducer(producer: Producer,
-                           maxConcurrency: Partition, maxMessagesOnDisk: Int = 10000,
-                           giveUpAfter: Duration = 1.day,
-                           flushTimeout: Duration = 1.minute,
-                           retryInterval: Duration = 1.second): ZManaged[ZEnv with GreyhoundMetrics, Throwable, LocalBufferProducer] =
+  private def makeProducer[R](producer: ProducerR[GreyhoundMetrics with Clock with R],
+                              maxConcurrency: Partition, maxMessagesOnDisk: Int = 10000,
+                              giveUpAfter: Duration = 1.day,
+                              flushTimeout: Duration = 1.minute,
+                              retryInterval: Duration = 1.second): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
     makeH2Buffer.flatMap(buffer =>
-      LocalBufferProducer.make(producer, buffer, LocalBufferProducerConfig(maxConcurrency = maxConcurrency,
+      LocalBufferProducer.make[GreyhoundMetrics with Clock with R](producer, buffer, LocalBufferProducerConfig(maxConcurrency = maxConcurrency,
         maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
         retryInterval = retryInterval)))
 
@@ -225,9 +228,8 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
   private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
 
   private def failFastInvalidBrokersConfig = ProducerConfig("localhost:27461", ProducerRetryPolicy(0, 0.millis), Map("max.block.ms" -> "0"))
-
 }
 
-case class BufferTestResources(kafka: ManagedKafka, producer: Producer)
+case class BufferTestResources(kafka: ManagedKafka, producer: ProducerR[GreyhoundMetrics with Clock])
 
 object TimeoutProducingRecord extends RuntimeException

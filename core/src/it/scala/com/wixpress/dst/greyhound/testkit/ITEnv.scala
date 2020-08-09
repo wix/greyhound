@@ -10,7 +10,7 @@ import zio._
 
 object ITEnv {
   type Env = TestMetrics with zio.ZEnv
-  case class TestResources(kafka: ManagedKafka, producer: ReportingProducer)
+  case class TestResources(kafka: ManagedKafka, producer: ReportingProducer[Any])
 
   def ManagedEnv: UManaged[zio.ZEnv with TestMetrics] =
     for {
@@ -21,7 +21,7 @@ object ITEnv {
   def testResources(): ZManaged[zio.ZEnv with TestMetrics, Throwable, TestResources] = {
     for {
       kafka <- ManagedKafka.make(ManagedKafkaConfig.Default)
-      producer <- Producer.make(ProducerConfig(kafka.bootstrapServers))
+      producer <- Producer.makeR[Any](ProducerConfig(kafka.bootstrapServers))
     } yield TestResources(kafka, ReportingProducer(producer))
   }
 

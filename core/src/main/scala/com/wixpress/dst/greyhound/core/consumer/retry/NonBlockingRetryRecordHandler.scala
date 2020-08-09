@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.producer.Producer
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerR}
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration._
@@ -18,7 +18,7 @@ trait NonBlockingRetryRecordHandler[V, K, R] {
 
 private[retry] object NonBlockingRetryRecordHandler {
   def apply[V, K, E, R](handler: RecordHandler[R, E, K, V],
-                        producer: Producer,
+                        producer: ProducerR[R],
                         subscription: ConsumerSubscription,
                         evK: K <:< Chunk[Byte],
                         evV: V <:< Chunk[Byte],
