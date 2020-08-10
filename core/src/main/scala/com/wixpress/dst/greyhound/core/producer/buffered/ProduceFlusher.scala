@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.buffered.Common.{nonRetriable, timeoutPassed}
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded}
-import com.wixpress.dst.greyhound.core.producer.buffered.buffers.LocalBufferProducerFlushingStrategy
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy
 import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerR, ProducerRecord, RecordMetadata}
 import org.apache.kafka.common.errors._
 import zio._
@@ -20,12 +20,12 @@ trait ProduceFlusher[R] extends ProducerR[R] {
 }
 
 object ProduceFlusher {
-  def make[R](producer: ProducerR[R], maxConcurrency: Int,
+  def make[R](producer: ProducerR[R],
               giveUpAfter: Duration, retryInterval: Duration,
-              strategy: LocalBufferProducerFlushingStrategy): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
+              strategy: ProduceStrategy): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
     strategy match {
-      case LocalBufferProducerFlushingStrategy.Sync => ProduceFiberSyncRouter.make(producer, maxConcurrency, giveUpAfter, retryInterval)
-      case LocalBufferProducerFlushingStrategy.Async(batchSize) => ProduceFiberAsyncRouter.make(producer, maxConcurrency, giveUpAfter, retryInterval, batchSize)
+      case ProduceStrategy.Sync(concurrency) => ProduceFiberSyncRouter.make(producer, concurrency, giveUpAfter, retryInterval)
+      case ProduceStrategy.Async(batchSize, concurrency) => ProduceFiberAsyncRouter.make(producer, concurrency, giveUpAfter, retryInterval, batchSize)
     }
 }
 
