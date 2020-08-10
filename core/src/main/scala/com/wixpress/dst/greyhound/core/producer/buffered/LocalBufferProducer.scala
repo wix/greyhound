@@ -16,7 +16,6 @@ import zio.duration._
 import zio.random.nextInt
 import zio.stm.{STM, TRef}
 
-@deprecated("still work in progress - do not use this yet")
 trait LocalBufferProducer[R] {
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
 
@@ -53,7 +52,6 @@ object LocalBufferProducerState {
 case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: Promise[ProducerError, RecordMetadata])
 
 object LocalBufferProducer {
-  @deprecated("still work in progress - do not use this yet")
   def make[R](producer: ProducerR[R], localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics with R, LocalBufferProducer[R]] =
     (for {
       state <- TRef.makeCommit(LocalBufferProducerState.empty)
