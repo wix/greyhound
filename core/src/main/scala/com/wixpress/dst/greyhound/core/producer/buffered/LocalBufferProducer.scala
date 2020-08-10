@@ -9,15 +9,12 @@ import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetr
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
 import com.wixpress.dst.greyhound.core.{Serializer, Topic, producer}
-import org.apache.kafka.common.errors._
 import zio._
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration._
 import zio.random.nextInt
 import zio.stm.{STM, TRef}
-
-import scala.util.Random
 
 @deprecated("still work in progress - do not use this yet")
 trait LocalBufferProducer[R] {
@@ -60,7 +57,7 @@ object LocalBufferProducer {
   def make[R](producer: ProducerR[R], localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics with R, LocalBufferProducer[R]] =
     (for {
       state <- TRef.makeCommit(LocalBufferProducerState.empty)
-      router <- ProduceFlusher.make(producer, config.maxConcurrency, config.giveUpAfter, config.retryInterval, config.flushingStrategy)
+      router <- ProduceFlusher.make(producer, config.giveUpAfter, config.retryInterval, config.strategy)
       fiber <- localBuffer.take(100).flatMap(msgs =>
         state.update(_.incQueryCount).commit *>
           ZIO.foreach(msgs)(record =>

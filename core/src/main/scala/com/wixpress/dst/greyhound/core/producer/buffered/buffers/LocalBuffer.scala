@@ -39,11 +39,11 @@ case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 
 case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
 
-case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Long, giveUpAfter: Duration,
+case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Duration,
                                      shutdownFlushTimeout: Duration, retryInterval: Duration,
-                                     flushingStrategy: LocalBufferProducerFlushingStrategy = LocalBufferProducerFlushingStrategy.Sync,
+                                     strategy: ProduceStrategy = ProduceStrategy.Sync(10),
                                      id: Int = Random.nextInt(100000)) {
-  def withMaxConcurrency(m: Int): LocalBufferProducerConfig = copy(maxConcurrency = m)
+  def withStrategy(f: ProduceStrategy): LocalBufferProducerConfig = copy(strategy = f)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
 
@@ -54,13 +54,13 @@ case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Lon
   def withShutdownFlushTimeout(d: Duration): LocalBufferProducerConfig = copy(shutdownFlushTimeout = d)
 }
 
-sealed trait LocalBufferProducerFlushingStrategy
+sealed trait ProduceStrategy
 
-object LocalBufferProducerFlushingStrategy {
+object ProduceStrategy {
 
-  case object Sync extends LocalBufferProducerFlushingStrategy
+  case class Sync(concurrency: Int) extends ProduceStrategy
 
-  case class Async(recordsPerBatch: Int) extends LocalBufferProducerFlushingStrategy
+  case class Async(recordsPerBatch: Int, concurrency: Int) extends ProduceStrategy
 
 //  case object Unordered extends LocalBufferProducerFlushingStrategy
 
