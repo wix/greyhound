@@ -61,7 +61,7 @@ object ProduceStrategy {
 
   case class Sync(concurrency: Int) extends ProduceStrategy
 
-  case class Async(recordsPerBatch: Int, concurrency: Int) extends ProduceStrategy
+  case class Async(maxProduceBatchSize: Int, concurrency: Int) extends ProduceStrategy
 
 //  case object Unordered extends LocalBufferProducerFlushingStrategy
 
