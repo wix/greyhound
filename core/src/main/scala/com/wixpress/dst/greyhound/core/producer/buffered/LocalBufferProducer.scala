@@ -56,7 +56,7 @@ object LocalBufferProducer {
     (for {
       state <- TRef.makeCommit(LocalBufferProducerState.empty)
       router <- ProduceFlusher.make(producer, config.giveUpAfter, config.retryInterval, config.strategy)
-      fiber <- localBuffer.take(100).flatMap(msgs =>
+      fiber <- localBuffer.take(config.localBufferBatchSize).flatMap(msgs =>
         state.update(_.incQueryCount).commit *>
           ZIO.foreach(msgs)(record =>
             router.produceAsync(producerRecord(record))
@@ -69,7 +69,8 @@ object LocalBufferProducer {
                       localBuffer.delete(record.id))
                 .ignore
                 .fork)
-          ).as(msgs)
+          ).flatMap(promises => ZIO.foreach(promises)(_.await))
+            .as(msgs)
       )
         .tap(r => ZIO.whenCase(r.size) {
           case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(1.millis) // this waits until there are more messages in buffer

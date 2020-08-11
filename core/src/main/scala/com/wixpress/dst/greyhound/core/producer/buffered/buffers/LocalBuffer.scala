@@ -42,6 +42,7 @@ case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local b
 case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Duration,
                                      shutdownFlushTimeout: Duration, retryInterval: Duration,
                                      strategy: ProduceStrategy = ProduceStrategy.Sync(10),
+                                     localBufferBatchSize: Int = 100,
                                      id: Int = Random.nextInt(100000)) {
   def withStrategy(f: ProduceStrategy): LocalBufferProducerConfig = copy(strategy = f)
 

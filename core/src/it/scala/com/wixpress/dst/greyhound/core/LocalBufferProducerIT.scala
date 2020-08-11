@@ -110,23 +110,25 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
   }
 
   "keep retrying on retriable errors" in {
-    def record(topic: Topic) = ProducerRecord(topic, "0")
+    def record(topic: Topic, key: Option[Int] = None) = ProducerRecord(topic, "0", key)
 
     for {
       BufferTestResources(kafka, _) <- getShared
+      localBufferBatchSize = 35
       test <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
-        (for {
+        for {
           topic <- kafka.createRandomTopic(prefix = s"buffered-4", partitions = 1)
-          (timeoutCount, state) <- makeProducer(producer, maxConcurrency = 10, flushTimeout = 1.second).use { localBufferProducer =>
+          (timeoutCount, state) <- makeProducer(producer, maxConcurrency = 1, flushTimeout = 1.second,
+            localBufferBatchSize = localBufferBatchSize).use { localBufferProducer =>
             for {
-              _ <- localBufferProducer.produce(record(topic), IntSerde, StringSerde)
-              _ <- localBufferProducer.produce(record(topic), IntSerde, StringSerde).flatMap(_.kafkaResult.await).timeout(10.second)
+              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).repeat(Schedule.recurs(200))
+              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).flatMap(_.kafkaResult.await).timeout(10.second)
               timeouts <- TestMetrics.reported.map(_.collect { case e@LocalBufferProduceAttemptFailed(TimeoutError(_), false) => e })
               state <- localBufferProducer.currentState
             } yield (timeouts.size, state)
           }
-        } yield ((timeoutCount must beGreaterThan(1))) and
-          (state.inflight + state.enqueued === 2))
+        } yield ((timeoutCount must beGreaterThan(1)) and
+          (state.inflight must beBetween(1,localBufferBatchSize)) and (state.inflight + state.enqueued === 202))
       }
     } yield test
   }
@@ -215,11 +217,12 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
                               maxConcurrency: Partition, maxMessagesOnDisk: Int = 10000,
                               giveUpAfter: Duration = 1.day,
                               flushTimeout: Duration = 1.minute,
-                              retryInterval: Duration = 1.second): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
+                              retryInterval: Duration = 1.second,
+                              localBufferBatchSize: Int = 100): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
     makeH2Buffer.flatMap(buffer =>
       LocalBufferProducer.make[GreyhoundMetrics with Clock with R](producer, buffer, LocalBufferProducerConfig(
         maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
-        retryInterval = retryInterval, strategy = ProduceStrategy.Async(5, maxConcurrency))))
+        retryInterval = retryInterval, strategy = ProduceStrategy.Async(5, maxConcurrency), localBufferBatchSize = localBufferBatchSize)))
 
   private def makeH2Buffer: RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-${Math.abs(Random.nextInt(100000))}", keepDeadMessages = 1.day)
 
