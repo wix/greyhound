@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
-import com.wixpress.dst.greyhound.core.{Serializer, Topic, producer}
+import com.wixpress.dst.greyhound.core.{Offset, Partition, Serializer, Topic, producer}
 import zio._
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
@@ -63,10 +63,12 @@ object LocalBufferProducer {
               .tap(_.await
                 .tapBoth(
                   error => updateReferences(Left(error), state, record) *>
-                    localBuffer.markDead(record.id),
+                    localBuffer.markDead(record.id) *>
+                    report(ResilientProducerFailedNonRetriable(error, config.id, record.topic, record.id, record.submitted)),
                   metadata =>
                     updateReferences(Right(metadata), state, record) *>
-                      localBuffer.delete(record.id))
+                      localBuffer.delete(record.id) *>
+                      report(ResilientProducerSentRecord(record.topic, metadata.partition, metadata.offset, config.id, record.id)))
                 .ignore
                 .fork)
           ).flatMap(promises => ZIO.foreach(promises)(_.await))
@@ -177,4 +179,9 @@ object LocalBufferProducerMetric {
 
   case class ResilientProducerAppendingMessage(topic: Topic, persistedMessageId: PersistedMessageId, id: Int) extends LocalBufferProducerMetric
 
+  case class ResilientProducerFailedNonRetriable(cause: Throwable, producerID: Int, topic: Topic, persistentMessageID: PersistedMessageId, submitted: PersistedMessageId) extends LocalBufferProducerMetric
+
+  case class ResilientProducerSentRecord(topic: Topic, partition: Partition, offset: Offset, producerID: Int, persistentMessageID: PersistedMessageId) extends LocalBufferProducerMetric
+
 }
+
