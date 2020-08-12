@@ -8,7 +8,7 @@ object GreyhoundMetrics {
     self =>
     def report(metric: GreyhoundMetric): UIO[Unit]
 
-    def combine(service: Service): Service =
+    def ++(service: Service): Service =
       (metric: GreyhoundMetric) =>
         self.report(metric) *> service.report(metric)
   }
