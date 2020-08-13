@@ -7,13 +7,13 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHa
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.{H2LocalBuffer, LocalBuffer, LocalBufferError, LocalBufferFull, LocalBufferProducerConfig, ProduceStrategy}
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducer
-import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.LocalBufferProduceAttemptFailed
+import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferFlushTimeout, LocalBufferProduceAttemptFailed}
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeout, eventuallyZ}
 import com.wixpress.dst.greyhound.testkit.ITEnv.ManagedKafkaOps
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka, ManagedKafkaConfig}
 import org.apache.kafka.common.errors.RecordTooLargeException
-import zio.Schedule.recurs
+import zio.Schedule.{once, recurs}
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -126,11 +126,38 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
               timeouts <- TestMetrics.reported.map(_.collect { case e@LocalBufferProduceAttemptFailed(TimeoutError(_), false) => e })
               state <- localBufferProducer.currentState
             } yield (timeouts.size, state)
-          }
+          }.timeoutFail(TimeoutProducingRecord)(20.seconds)
         } yield ((timeoutCount must beGreaterThan(1)) and
-          (state.inflight must beBetween(1,localBufferBatchSize)) and (state.inflight + state.enqueued === 202))
+          (state.inflight must beBetween(1, localBufferBatchSize)) and (state.inflight + state.enqueued === 202))
       }
-    } yield test
+      flushTimeouts <- TestMetrics.reported.map(_.collect { case e: LocalBufferFlushTimeout => e })
+    } yield flushTimeouts.count(_.recordsFlushed == 202) === 1
+  }
+
+  "retry pending records when restarting producer" in {
+    val (key, value) = (0, "value")
+
+    def record(topic: Topic, key: Int) = ProducerRecord(topic, value, Some(key))
+
+    for {
+      BufferTestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = s"restart", partitions = 1)
+      producerPath = 500
+      _ <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
+        makeProducer(producer, pathSuffix = producerPath, flushTimeout = 5.seconds).use { localBufferProducer =>
+          localBufferProducer.produce(record(topic, key), IntSerde, StringSerde).repeat(once)
+        }
+      }.timeout(15.seconds)
+
+      consumed <- Ref.make(Map.empty[Int, Seq[String]])
+      handler = RecordHandler(putIn(consumed)).withDeserializers(IntSerde, StringSerde)
+      _ <- RecordConsumer.make(configFor(kafka, "GROUPYYYY", topic), handler).use_ {
+        consumed.get.map(_.get(key) must beEmpty).delay(2.second) *>
+          makeProducer(producer, pathSuffix = producerPath).use_ { // this time with a good producer it will pick up the pending 2 messages
+            eventuallyZ(consumed.get)(_.get(key).exists(_ == value :: value :: Nil))
+          }
+      }
+    } yield ok
   }
 
   "not retry on unretriable errors" in {
@@ -209,22 +236,24 @@ class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, BufferTestR
   private def expectedListForKey(key: Int, recordPerKey: Int, keyCount: Int): Seq[Int] =
     (0 until recordPerKey).map(i => keyCount * i + key)
 
-  private def putIn(consumed: Ref[Map[String, Seq[Int]]]): ConsumerRecord[String, Int] => UIO[Unit] =
+  private def putIn[A, B](consumed: Ref[Map[A, Seq[B]]]): ConsumerRecord[A, B] => UIO[Unit] =
     record =>
       consumed.update(map => map + (record.key.get -> (map.getOrElse(record.key.get, Nil) :+ record.value)))
 
   private def makeProducer[R](producer: ProducerR[GreyhoundMetrics with Clock with R],
-                              maxConcurrency: Partition, maxMessagesOnDisk: Int = 10000,
+                              maxConcurrency: Int = 10,
+                              maxMessagesOnDisk: Int = 10000,
                               giveUpAfter: Duration = 1.day,
                               flushTimeout: Duration = 1.minute,
                               retryInterval: Duration = 1.second,
-                              localBufferBatchSize: Int = 100): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
-    makeH2Buffer.flatMap(buffer =>
+                              localBufferBatchSize: Int = 100,
+                              pathSuffix: Int = Math.abs(Random.nextInt(100000))): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
+    makeH2Buffer(pathSuffix.toString).flatMap(buffer =>
       LocalBufferProducer.make[GreyhoundMetrics with Clock with R](producer, buffer, LocalBufferProducerConfig(
         maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
         retryInterval = retryInterval, strategy = ProduceStrategy.Async(5, maxConcurrency), localBufferBatchSize = localBufferBatchSize)))
 
-  private def makeH2Buffer: RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-${Math.abs(Random.nextInt(100000))}", keepDeadMessages = 1.day)
+  private def makeH2Buffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-$pathSuffix", keepDeadMessages = 1.day)
 
   private def configFor(kafka: ManagedKafka, group: Group, topic: Topic) = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
 

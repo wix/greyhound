@@ -54,7 +54,8 @@ case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult
 object LocalBufferProducer {
   def make[R](producer: ProducerR[R], localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics with R, LocalBufferProducer[R]] =
     (for {
-      state <- TRef.makeCommit(LocalBufferProducerState.empty)
+      unsent <- localBuffer.unsentRecordsCount
+      state <- TRef.makeCommit(LocalBufferProducerState.empty.copy(enqueued = unsent))
       router <- ProduceFlusher.make(producer, config.giveUpAfter, config.retryInterval, config.strategy)
       fiber <- localBuffer.take(config.localBufferBatchSize).flatMap(msgs =>
         state.update(_.incQueryCount).commit *>
@@ -108,13 +109,20 @@ object LocalBufferProducer {
           enqueued = unsent, inflight = inflight, lagMs = lagMs)
 
       override def close: URIO[ZEnv with GreyhoundMetrics with R, Unit] =
-        (state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
+        state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
           report(LocalBufferFlushingRecords(toFlush, config.id)) *>
-            (state.get.map(s => s.enqueued + s.inflight == 0).flatMap(STM.check(_)).commit
-              .timed.tap(d => report(LocalBufferFlushedRecords(toFlush, d._1.toMillis, config.id))) *>
-              fiber.join)
-              .timeout(config.shutdownFlushTimeout) *> localBuffer.close)
-          .ignore)
+            state.get.map(s => s.enqueued + s.inflight == 0).flatMap(STM.check(_)).commit
+              .timed
+              .tap(d => report(LocalBufferFlushedRecords(toFlush, d._1.toMillis, config.id)))
+              .map { case (d, _) => (d, toFlush) }
+              .tap(_ => fiber.join)
+              .timeout(config.shutdownFlushTimeout)
+              .tap {
+                case None => report(LocalBufferFlushTimeout(toFlush, config.shutdownFlushTimeout.toMillis, config.id))
+                case _ => ZIO.unit
+              } *>
+            localBuffer.close)
+          .ignore
     })
       .toManaged((m: LocalBufferProducer[R]) => m.close.ignore)
 
@@ -174,6 +182,10 @@ object LocalBufferProducerMetric {
   case class LocalBufferProduceTimeoutExceeded(giveUpTimestamp: Long, currentTimestamp: Long) extends LocalBufferProducerMetric
 
   case class LocalBufferFlushedRecords(recordsFlushed: Int, durationMillis: Long, id: Int) extends LocalBufferProducerMetric
+
+  case class LocalBufferFlushTimeout(recordsFlushed: Int, timeoutMillis: Long, id: Int) extends LocalBufferProducerMetric
+
+  case class LocalBufferFlushFinished(recordsFlushed: Int, durationMillis: Long, id: Int) extends LocalBufferProducerMetric
 
   case class LocalBufferFlushingRecords(recordsToFlush: Int, id: Int) extends LocalBufferProducerMetric
 
