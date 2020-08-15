@@ -6,11 +6,12 @@ import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, Ig
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio._
+import zio.blocking.Blocking
 
 object BlockingStateResolver {
   def apply(blockingStateRef: Ref[Map[BlockingTarget, BlockingState]]): BlockingStateResolver = {
     new BlockingStateResolver {
-      override def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics, Boolean] = {
+      override def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics with Blocking, Boolean] = {
         val topicPartition = TopicPartition(record.topic, record.partition)
 
         for {
@@ -42,7 +43,7 @@ object BlockingStateResolver {
         } yield shouldBlock
       }
 
-      override def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics, Unit] = {
+      override def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics with Blocking, Unit] = {
         def handleIgnoreOnceRequest(topicPartition: TopicPartition) = {
           blockingStateRef.modify(prevState => {
             val previouslyBlocked = prevState.get(TopicPartitionTarget(topicPartition)).exists {
@@ -85,8 +86,8 @@ object BlockingStateResolver {
 }
 
 trait BlockingStateResolver {
-  def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics, Boolean]
-  def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics, Unit]
+  def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics with Blocking, Boolean]
+  def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics with Blocking, Unit]
 }
 
 sealed trait BlockingStateCommand
