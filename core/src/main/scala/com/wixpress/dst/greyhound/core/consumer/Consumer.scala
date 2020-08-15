@@ -27,13 +27,13 @@ trait Consumer {
 
   def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean = false): RIO[Blocking with GreyhoundMetrics, Unit]
 
-  def pause(partitions: Set[TopicPartition]): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
+  def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
-  def resume(partitions: Set[TopicPartition]): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
+  def resume(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
-  def seek(partition: TopicPartition, offset: Offset): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
+  def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
-  def pause(record: ConsumerRecord[_, _]): ZIO[GreyhoundMetrics, IllegalStateException, Unit] = {
+  def pause(record: ConsumerRecord[_, _]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] = {
     val partition = TopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }

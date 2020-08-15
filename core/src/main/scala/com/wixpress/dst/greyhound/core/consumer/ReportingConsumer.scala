@@ -2,12 +2,12 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
 
+import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.duration.Duration
 import zio.{RIO, UIO, ZIO}
@@ -19,7 +19,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with GreyhoundMetrics with R1, Unit] =
     for {
-      r <- ZIO.environment[R1 with GreyhoundMetrics]
+      r <- ZIO.environment[R1 with GreyhoundMetrics with Blocking]
       _ <- GreyhoundMetrics.report(SubscribingToTopicWithPattern(clientId, group, pattern.toString))
       _ <- internal.subscribePattern(pattern,
         rebalanceListener = listener(r, rebalanceListener)).tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error)))
@@ -36,7 +36,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
     } yield ()
 
 
-  private def listener[R1](r: R1 with GreyhoundMetrics, rebalanceListener: RebalanceListener[R1]) = {
+  private def listener[R1](r: R1 with GreyhoundMetrics with Blocking, rebalanceListener: RebalanceListener[R1]) = {
     new RebalanceListener[Any] {
       override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
         (GreyhoundMetrics.report(PartitionsRevoked(clientId, group, partitions)) *>
@@ -80,7 +80,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
         }
     }
 
-  override def pause(partitions: Set[TopicPartition]): ZIO[GreyhoundMetrics, IllegalStateException, Unit] =
+  override def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics , IllegalStateException, Unit] =
     ZIO.when(partitions.nonEmpty) {
       GreyhoundMetrics.report(PausingPartitions(clientId, group, partitions)) *>
         internal.pause(partitions).tapError { error =>
@@ -88,7 +88,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
         }
     }
 
-  override def resume(partitions: Set[TopicPartition]): ZIO[GreyhoundMetrics, IllegalStateException, Unit] =
+  override def resume(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] =
     ZIO.when(partitions.nonEmpty) {
       GreyhoundMetrics.report(ResumingPartitions(clientId, group, partitions)) *>
         internal.resume(partitions).tapError { error =>
@@ -96,7 +96,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
         }
     }
 
-  override def seek(partition: TopicPartition, offset: Offset): ZIO[GreyhoundMetrics, IllegalStateException, Unit] =
+  override def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] =
     GreyhoundMetrics.report(SeekingToOffset(clientId, group, partition, offset)) *>
       internal.seek(partition, offset).tapError { error =>
         GreyhoundMetrics.report(SeekToOffsetFailed(clientId, group, error, partition, offset))
