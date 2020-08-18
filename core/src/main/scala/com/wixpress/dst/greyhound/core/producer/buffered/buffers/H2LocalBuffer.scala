@@ -11,6 +11,7 @@ import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.Persist
 import org.h2.jdbcx.JdbcConnectionPool
 import zio.ZIO.{fail, when}
 import zio._
+import zio.blocking.{Blocking, effectBlocking}
 import zio.clock.{Clock, currentTime}
 import zio.duration.{Duration, _}
 import zio.stream.ZStream
@@ -20,20 +21,20 @@ import scala.util.Try
 object H2LocalBuffer {
   private val InsertQuery = "INSERT INTO MESSAGES VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
-  def make(localPath: String, keepDeadMessages: Duration): RManaged[Clock, LocalBuffer] =
+  def make(localPath: String, keepDeadMessages: Duration): RManaged[Clock with Blocking, LocalBuffer] =
     (for {
-      cp <- Task(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
-      connection <- Task(cp.getConnection())
+      cp <- effectBlocking(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
+      connection <- effectBlocking(cp.getConnection())
       currentSequenceNumber <- Ref.make(0)
       _ <- initDatabase(connection, currentSequenceNumber)(localPath, keepDeadMessages)
     } yield new LocalBuffer {
-      override def enqueue(message: PersistedRecord): ZIO[Clock, LocalBufferError, PersistedMessageId] =
+      override def enqueue(message: PersistedRecord): ZIO[Clock with Blocking, LocalBufferError, PersistedMessageId] =
         executeInsert(connection, currentSequenceNumber)(message)
           .flatMap(i => when(i < 1)(fail(H2FailedToAppendMessage(message.topic, message.target, i))))
           .mapError(LocalBufferError.apply)
           .as(message.id)
 
-      override def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedRecord]] = {
+      override def take(upTo: Int): ZIO[Clock with Blocking, LocalBufferError, Seq[PersistedRecord]] = {
         val takeQuery = s"SELECT * FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT $upTo"
 
         (for {
@@ -44,27 +45,36 @@ object H2LocalBuffer {
           .mapError(LocalBufferError.apply)
       }
 
-      override def delete(messageId: PersistedMessageId): IO[LocalBufferError, Boolean] =
+      override def delete(messageId: PersistedMessageId): ZIO[Blocking, LocalBufferError, Boolean] =
         update(connection)(s"DELETE TOP 1 FROM MESSAGES WHERE ID=$messageId").map(_ > 0)
           .mapError(LocalBufferError.apply)
 
-      override def markDead(messageId: PersistedMessageId): IO[LocalBufferError, Boolean] =
+      override def markDead(messageId: PersistedMessageId): ZIO[Blocking, LocalBufferError, Boolean] =
         update(connection)(s"UPDATE MESSAGES SET STATE='$failed' WHERE ID=$messageId").map(_ > 0)
           .mapError(LocalBufferError.apply)
 
-      override def close: IO[LocalBufferError, Unit] =
+      override def close: ZIO[Blocking, LocalBufferError, Unit] =
         ZIO.when(!connection.isClosed)(
-          Task(connection) *> Task(cp.dispose()))
+          effectBlocking(connection.close()) *> effectBlocking(cp.dispose()))
           .mapError(LocalBufferError.apply)
 
-      override def failedRecordsCount: ZIO[Any, LocalBufferError, Int] =
+      override def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
         count(connection)(failed)
 
-      override def inflightRecordsCount: IO[LocalBufferError, Int] =
+      override def inflightRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
         count(connection)(pending)
 
-      override def unsentRecordsCount: IO[LocalBufferError, Int] =
+      override def unsentRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
         count(connection)(notSent)
+
+      override def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Long] =
+        query(connection)(s"SELECT SUBMITTED FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT 1") {
+          rs =>
+            Task(rs.next()).map(found =>
+              if (found) System.currentTimeMillis - rs.getLong("SUBMITTED") else 0L
+            )
+        }
+          .mapError(LocalBufferError.apply)
     })
       .toManaged(m => m.close.ignore)
 
@@ -95,9 +105,9 @@ object H2LocalBuffer {
   }
 
 
-  private def executeInsert(connection: Connection, currentSequenceNumber: Ref[Int])(message: PersistedRecord): RIO[Clock, Int] =
+  private def executeInsert(connection: Connection, currentSequenceNumber: Ref[Int])(message: PersistedRecord): RIO[Clock with Blocking, Int] =
     for {
-      insertStatement <- Task(connection.prepareStatement(InsertQuery))
+      insertStatement <- effectBlocking(connection.prepareStatement(InsertQuery))
       payloadBytes = Option(message.encodedMsg.value).map(_.toArray).orNull
       base64Headers <- encodeHeaderToBase64(message)
       base64Key <- keyBytes(message)
@@ -114,7 +124,7 @@ object H2LocalBuffer {
         insertStatement.setLong(8, lastSeqNum)
         insertStatement.setLong(9, timeMillis)
       }
-      res <- Task(insertStatement.executeUpdate())
+      res <- effectBlocking(insertStatement.executeUpdate())
     } yield res
 
 
@@ -137,36 +147,36 @@ object H2LocalBuffer {
   }
 
 
-  private def initDatabase(connection: Connection, currentSequenceNumber: Ref[Int])(localPath: String, keepDeadMessages: Duration): RIO[Clock, Unit] =
+  private def initDatabase(connection: Connection, currentSequenceNumber: Ref[Int])(localPath: String, keepDeadMessages: Duration): RIO[Clock with Blocking, Unit] =
     withStatement(connection)(statement =>
       createTableIfNeed(statement)(localPath) *>
         restoreUnsentStatusForPendingMessages(statement) *>
         setLastSequenceNumber(statement, currentSequenceNumber) *>
         deleteObsoleteDeadMessages(statement)(keepDeadMessages))
 
-  private def createTableIfNeed(statement: Statement)(localPath: String): Task[Unit] =
-    Task(Files.createDirectory(Paths.get(localPath.substring(0, localPath.lastIndexOf("/"))))).catchSome { case _: FileAlreadyExistsException => ZIO.unit } *>
+  private def createTableIfNeed(statement: Statement)(localPath: String): RIO[Blocking, Unit] =
+    effectBlocking(Files.createDirectory(Paths.get(localPath.substring(0, localPath.lastIndexOf("/"))))).catchSome { case _: FileAlreadyExistsException => ZIO.unit } *>
       ZIO.foreach(
         Seq(
           "CREATE TABLE IF NOT EXISTS MESSAGES(ID BIGINT, TOPIC VARCHAR, KEY BINARY, PARTITION INT, MESSAGE BINARY, HEADERS CLOB, STATE VARCHAR, SEQ_NUM BIGINT, SUBMITTED BIGINT)",
           "CREATE INDEX IF NOT EXISTS SEQNUM_INDEX ON MESSAGES(SEQ_NUM)",
           "CREATE INDEX IF NOT EXISTS STATE_INDEX ON MESSAGES(STATE)",
           "CREATE INDEX IF NOT EXISTS ID_INDEX ON MESSAGES(ID)"))(
-        line => Task(statement.execute(line)))
+        line => effectBlocking(statement.execute(line)))
         .unit
 
-  private def setLastSequenceNumber(statement: Statement, currentSequenceNumber: Ref[Int]): Task[Unit] =
-    Task(statement.executeQuery("SELECT MAX(SEQ_NUM) FROM MESSAGES"))
+  private def setLastSequenceNumber(statement: Statement, currentSequenceNumber: Ref[Int]): RIO[Blocking, Unit] =
+    effectBlocking(statement.executeQuery("SELECT MAX(SEQ_NUM) FROM MESSAGES"))
       .flatMap(rs => when(rs.next())(currentSequenceNumber.set(rs.getInt(1))))
 
-  private def restoreUnsentStatusForPendingMessages(statement: Statement): Task[Boolean] =
-    Task(statement.execute(s"UPDATE MESSAGES SET STATE='$notSent' WHERE STATE != '$failed'"))
+  private def restoreUnsentStatusForPendingMessages(statement: Statement): RIO[Blocking, Boolean] =
+    effectBlocking(statement.execute(s"UPDATE MESSAGES SET STATE='$notSent' WHERE STATE != '$failed'"))
 
-  private def deleteObsoleteDeadMessages(statement: Statement)(keepDeadMessages: Duration): RIO[Clock, Unit] =
+  private def deleteObsoleteDeadMessages(statement: Statement)(keepDeadMessages: Duration): RIO[Clock with Blocking, Unit] =
     currentTime(MILLISECONDS)
       .map(_ - keepDeadMessages.toMillis)
       .flatMap(purgeFrom =>
-        Task(statement.execute(s"DELETE FROM MESSAGES WHERE STATE = '$failed' AND SUBMITTED < $purgeFrom")))
+        effectBlocking(statement.execute(s"DELETE FROM MESSAGES WHERE STATE = '$failed' AND SUBMITTED < $purgeFrom")))
 }
 
 
@@ -199,21 +209,21 @@ object H2StatementSupport {
   val pending = "PENDING"
   val defaultKeepDeadMessages: Duration = 7.days
 
-  def query[K](connection: Connection)(queryStr: String)(f: ResultSet => Task[K]): Task[K] =
+  def query[K](connection: Connection)(queryStr: String)(f: ResultSet => Task[K]): RIO[Blocking, K] =
     withStatement(connection) { statement =>
       ZManaged.make(
-        acquire = Task(statement.executeQuery(queryStr)))(
-        release = rs => Task(rs.close()).catchAll(e => UIO(e.printStackTrace())))
+        acquire = effectBlocking(statement.executeQuery(queryStr)))(
+        release = rs => effectBlocking(rs.close()).catchAll(e => UIO(e.printStackTrace())))
         .use(f)
     }
 
-  def update(connection: Connection)(updateQuery: String): Task[Int] =
-    withStatement(connection)(statement => Task(statement.executeUpdate(updateQuery)))
+  def update(connection: Connection)(updateQuery: String): RIO[Blocking, Int] =
+    withStatement(connection)(statement => effectBlocking(statement.executeUpdate(updateQuery)))
 
-  def withStatement[R, K](connection: Connection)(f: Statement => RIO[R, K]): RIO[R, K] =
+  def withStatement[R, K](connection: Connection)(f: Statement => RIO[R with Blocking, K]): RIO[R with Blocking, K] =
     ZManaged.make(
-      acquire = Task(connection.createStatement()))(
-      release = statement => Task(statement.close()).unit.catchAll(e => UIO(e.printStackTrace())))
+      acquire = effectBlocking(connection.createStatement()))(
+      release = statement => effectBlocking(statement.close()).unit.catchAll(e => UIO(e.printStackTrace())))
       .use(f)
 }
 

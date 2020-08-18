@@ -9,12 +9,13 @@ import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio._
+import zio.blocking.Blocking
 import zio.clock.{Clock, currentTime}
 import zio.duration._
 
 
 trait BlockingRetryRecordHandler[V, K, R] {
-  def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R, Nothing, LastHandleResult]
+  def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R with Blocking, Nothing, LastHandleResult]
 }
 
 private[retry] object BlockingRetryRecordHandler {
@@ -25,10 +26,10 @@ private[retry] object BlockingRetryRecordHandler {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
 
-    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R, Nothing, LastHandleResult] = {
+    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R with Blocking, Nothing, LastHandleResult] = {
       val topicPartition = TopicPartition(record.topic, record.partition)
 
-      def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[Clock with GreyhoundMetrics, PollResult] = {
+      def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[Clock with GreyhoundMetrics with Blocking, PollResult] = {
         for {
           shouldBlock <- blockingStateResolver.resolve(record)
           shouldPollAgain <- if (shouldBlock) {
@@ -54,7 +55,7 @@ private[retry] object BlockingRetryRecordHandler {
         } yield LastHandleResult(lastHandleSucceeded = false, shouldContinue = continueBlocking)
       }
 
-      def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics, Nothing, LastHandleResult] = {
+      def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics with Blocking, Nothing, LastHandleResult] = {
         (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll {
           case ex: NonRetryableException =>
             report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause))

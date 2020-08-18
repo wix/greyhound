@@ -65,10 +65,23 @@ trait RecordHandler[-R, +E, K, V] {
    * }}}
    */
   def withErrorHandler[R1 <: R, E2](f: (E, ConsumerRecord[K, V]) => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
-    new RecordHandler[R1, E2, K, V] {
-      override def handle(record: ConsumerRecord[K, V]): ZIO[R1, E2, Any] =
-        self.handle(record).catchAll(e => f(e, record))
-    }
+    (record: ConsumerRecord[K, V]) => self.handle(record).catchAll(e => f(e, record))
+
+  /**
+    * Return a handler which can handle errors as [[Cause[E]]] (which includes [[Cause.Die]] and fiber traces), potentially eliminating them.
+    *
+    * {{{
+    *   val failingHandler: RecordHandler[Any, Throwable, Int, String] = ???
+    *
+    *   val recoveringHandler: RecordHandler[Console, Nothing, Int, String] =
+    *     failingHandler.withCauseHandler { cause =>
+    *       zio.console.putStrLn(cause.squashTrace)
+    *     }
+    * }}}
+    */
+  def withErrorCauseHandler[R1 <: R, E2](f: (Cause[E], ConsumerRecord[K, V]) => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
+    (record: ConsumerRecord[K, V]) => self.handle(record).catchAllCause(e => f(e, record))
+
 
   /**
    * Recover from all errors by ignoring them.

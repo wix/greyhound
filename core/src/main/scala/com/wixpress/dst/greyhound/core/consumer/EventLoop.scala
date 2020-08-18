@@ -27,7 +27,7 @@ object EventLoop {
               consumer: Consumer,
               handler: Handler[R],
               clientId: ClientId,
-              config: EventLoopConfig = EventLoopConfig.Default): RManaged[R with Env, EventLoop[GreyhoundMetrics]] = {
+              config: EventLoopConfig = EventLoopConfig.Default): RManaged[R with Env, EventLoop[GreyhoundMetrics with Blocking]] = {
     val start = for {
       _ <- report(StartingEventLoop(clientId, group))
       offsets <- Offsets.make
@@ -55,11 +55,11 @@ object EventLoop {
       } yield ()
     }.map {
       case (dispatcher, fiber, _, _) =>
-        new EventLoop[GreyhoundMetrics] {
-          override def pause: URIO[GreyhoundMetrics, Unit] =
+        new EventLoop[GreyhoundMetrics with Blocking] {
+          override def pause: URIO[GreyhoundMetrics with Blocking, Unit] =
             report(PausingEventLoop(clientId, group)) *> dispatcher.pause
 
-          override def resume: URIO[GreyhoundMetrics, Unit] =
+          override def resume: URIO[GreyhoundMetrics with Blocking, Unit] =
             report(ResumingEventLoop(clientId, group)) *> dispatcher.resume
 
           override def isAlive: UIO[Boolean] = fiber.poll.map {

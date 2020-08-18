@@ -1,25 +1,26 @@
 package com.wixpress.dst.greyhound.core.metrics
 
 import org.slf4j.LoggerFactory
-import zio.{Has, UIO, URIO, ZIO, ZLayer}
+import zio.blocking.Blocking
+import zio.{Has, URIO, ZIO, ZLayer}
 
 object GreyhoundMetrics {
   trait Service {
     self =>
-    def report(metric: GreyhoundMetric): UIO[Unit]
+    def report(metric: GreyhoundMetric): URIO[Blocking, Unit]
 
-    def combine(service: Service): Service =
+    def ++(service: Service): Service =
       (metric: GreyhoundMetric) =>
         self.report(metric) *> service.report(metric)
   }
 
-  def report(metric: GreyhoundMetric): URIO[GreyhoundMetrics, Unit] =
+  def report(metric: GreyhoundMetric): URIO[GreyhoundMetrics with Blocking, Unit] =
     ZIO.accessM(_.get.report(metric))
 
   object Service {
     lazy val Live = {
       val logger = LoggerFactory.getLogger("metrics")
-      fromReporter(metric => /*logger.info(metric.toString)*/ZIO.unit)
+      fromReporter(metric => logger.info(metric.toString))
     }
   }
 

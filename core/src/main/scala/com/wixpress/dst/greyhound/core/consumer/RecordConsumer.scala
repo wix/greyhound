@@ -8,15 +8,12 @@ import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitio
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.{patternRetryTopic, retryPattern}
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import zio._
-import zio.blocking.Blocking
-import zio.clock.Clock
 import zio.duration._
 
 import scala.util.Random
@@ -37,7 +34,7 @@ trait RecordConsumer[-R] extends Resource[R] {
 }
 
 object RecordConsumer {
-  type Env = GreyhoundMetrics with ZEnv
+  type Env = ZEnv with GreyhoundMetrics
   type AssignedPartitions = Set[TopicPartition]
 
   /**
@@ -130,7 +127,7 @@ object RecordConsumer {
                                         nonBlockingRetryHelper: NonBlockingRetryHelper) =
     config.retryConfig match {
       case Some(retryConfig) =>
-        Producer.make(ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
+        Producer.makeR[R](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
           ReportingProducer(producer))
           .map(producer => RetryRecordHandler.withRetries(handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
       case None =>

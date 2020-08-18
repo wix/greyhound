@@ -19,7 +19,7 @@ object AcquiredManagedResource {
     r <- resources.reserve
   } yield {
     val releaseWithTimeout = r.release(Exit.unit)
-      .timeoutFail(new TimeoutException("release timed out"))(10.seconds)
+      .timeoutFail(new TimeoutException("release timed out"))(releaseTimeout)
       .provide(clock)
       .orDie.unit
     AcquiredManagedResource(r.acquired, releaseWithTimeout, runtime)

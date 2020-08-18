@@ -2,26 +2,31 @@ package com.wixpress.dst.greyhound.core.producer.buffered.buffers
 
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
 import com.wixpress.dst.greyhound.core.{Headers, Partition, Topic}
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration.Duration
-import zio.{Chunk, IO, ZIO}
+import zio.{Chunk, ZIO}
+
+import scala.util.Random
 
 trait LocalBuffer {
-  def failedRecordsCount: IO[LocalBufferError, Int]
+  def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def inflightRecordsCount: IO[LocalBufferError, Int]
+  def inflightRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def unsentRecordsCount: IO[LocalBufferError, Int]
+  def unsentRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def close: IO[LocalBufferError, Unit]
+  def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Long]
 
-  def enqueue(message: PersistedRecord): ZIO[Clock, LocalBufferError, PersistedMessageId]
+  def close: ZIO[Blocking, LocalBufferError, Unit]
 
-  def take(upTo: Int): ZIO[Clock, LocalBufferError, Seq[PersistedRecord]]
+  def enqueue(message: PersistedRecord): ZIO[Clock with Blocking, LocalBufferError, PersistedMessageId]
 
-  def delete(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
+  def take(upTo: Int): ZIO[Clock with Blocking, LocalBufferError, Seq[PersistedRecord]]
 
-  def markDead(messageId: PersistedMessageId): IO[LocalBufferError, Boolean]
+  def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
+
+  def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 }
 
 case class PersistedRecord(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {
@@ -34,9 +39,12 @@ case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 
 case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
 
-case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Long, giveUpAfter: Duration,
-                                     shutdownFlushTimeout: Duration, retryInterval: Duration) {
-  def withMaxConcurrency(m: Int): LocalBufferProducerConfig = copy(maxConcurrency = m)
+case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Duration,
+                                     shutdownFlushTimeout: Duration, retryInterval: Duration,
+                                     strategy: ProduceStrategy = ProduceStrategy.Sync(10),
+                                     localBufferBatchSize: Int = 100,
+                                     id: Int = Random.nextInt(100000)) {
+  def withStrategy(f: ProduceStrategy): LocalBufferProducerConfig = copy(strategy = f)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
 
@@ -45,6 +53,18 @@ case class LocalBufferProducerConfig(maxConcurrency: Int, maxMessagesOnDisk: Lon
   def withRetryInterval(d: Duration): LocalBufferProducerConfig = copy(retryInterval = d)
 
   def withShutdownFlushTimeout(d: Duration): LocalBufferProducerConfig = copy(shutdownFlushTimeout = d)
+}
+
+sealed trait ProduceStrategy
+
+object ProduceStrategy {
+
+  case class Sync(concurrency: Int) extends ProduceStrategy
+
+  case class Async(maxProduceBatchSize: Int, concurrency: Int) extends ProduceStrategy
+
+//  case object Unordered extends LocalBufferProducerFlushingStrategy
+
 }
 
 case class SerializableTarget(topic: Topic, partition: Option[Partition], key: Option[Chunk[Byte]])
