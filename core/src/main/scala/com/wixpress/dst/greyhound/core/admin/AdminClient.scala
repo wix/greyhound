@@ -3,20 +3,22 @@ package com.wixpress.dst.greyhound.core.admin
 import java.util.Properties
 import java.util.concurrent.TimeUnit.SECONDS
 
+import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
+import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{Topic, TopicConfig}
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
+import org.apache.kafka.common.errors.TopicExistsException
 import zio.blocking.{Blocking, effectBlocking}
 import zio.{RIO, RManaged, ZIO, ZManaged}
 
 import scala.collection.JavaConverters._
-import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 
 trait AdminClient {
   def listTopics(): RIO[Blocking, Set[String]]
 
-  def createTopics(configs: Set[TopicConfig]): RIO[Blocking, Map[String, Option[Throwable]]]
+  def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking, Map[String, Option[Throwable]]]
 
   def numberOfBrokers: RIO[Blocking, Int]
 
@@ -34,15 +36,11 @@ object AdminClient {
     val acquire = effectBlocking(KafkaAdminClient.create(config.properties))
     ZManaged.make(acquire)(client => effectBlocking(client.close()).ignore).map { client =>
       new AdminClient {
-        override def createTopics(configs: Set[TopicConfig]): RIO[Blocking, Map[String, Option[Throwable]]] =
+        override def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking, Map[String, Option[Throwable]]] =
           effectBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
             ZIO.foreach(result.values.asScala) {
               case (topic, topicResult) =>
-                ZIO.effectAsync[Any, Nothing, (String, Option[Throwable])] { cb =>
-                  topicResult.whenComplete { (_: Void, exception: Throwable) =>
-                    cb(ZIO.succeed(topic -> Option(exception)))
-                  }
-                }
+                topicResult.asZio.either.map(topic -> _.left.toOption.filterNot(ignoreErrors))
             }.map(_.toMap)
           }
 
@@ -84,6 +82,8 @@ object AdminClient {
     effectBlocking(client.describeTopics(topics.asJavaCollection)).map(result =>
       result.all().get(30, SECONDS).asScala.mapValues(_.partitions().size()).toMap)
 
+  def isTopicExistsError(e: Throwable): Boolean = e.isInstanceOf[TopicExistsException] ||
+    Option(e.getCause).exists(_.isInstanceOf[TopicExistsException])
 }
 
 case class AdminClientConfig(bootstrapServers: String,
