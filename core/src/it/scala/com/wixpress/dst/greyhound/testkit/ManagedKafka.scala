@@ -19,6 +19,8 @@ trait ManagedKafka {
   def createTopic(config: TopicConfig): RIO[Blocking, Unit]
 
   def createTopics(configs: TopicConfig*): RIO[Blocking, Unit]
+
+  def adminClient: AdminClient
 }
 
 object ManagedKafka {
@@ -27,7 +29,7 @@ object ManagedKafka {
     _ <- embeddedZooKeeper(config.zooKeeperPort)
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
     _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir))
-    adminClient <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
+    admin <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
 
     override val bootstrapServers: String = s"localhost:${config.kafkaPort}"
@@ -37,6 +39,8 @@ object ManagedKafka {
 
     override def createTopics(configs: TopicConfig*): RIO[Blocking, Unit] =
         adminClient.createTopics(configs.toSet).unit
+
+    override def adminClient: AdminClient = admin
   }
 
   private def tempDirectory(path: String) = {
