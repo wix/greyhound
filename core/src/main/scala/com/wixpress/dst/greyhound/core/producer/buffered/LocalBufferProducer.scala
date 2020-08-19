@@ -6,8 +6,10 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric._
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy.Unordered
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId.notPersisted
 import com.wixpress.dst.greyhound.core.{Offset, Partition, Serializer, Topic, producer}
 import zio._
 import zio.blocking.Blocking
@@ -87,7 +89,8 @@ object LocalBufferProducer {
           nextInt.flatMap(generatedMsgId =>
             report(ResilientProducerAppendingMessage(record.topic, generatedMsgId, config.id)) *>
               state.update(_.updateEnqueuedCount(1)).commit *>
-              enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId))
+              enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId)
+                .catchAll(error => directSendToKafkaIfUnordered(router, record, config, state, error)))
 
       override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
         validate(config, state) *>
@@ -126,6 +129,18 @@ object LocalBufferProducer {
     })
       .toManaged((m: LocalBufferProducer[R]) => m.close.ignore)
 
+  private def directSendToKafkaIfUnordered[R](router: ProducerR[R], record: ProducerRecord[Chunk[Byte], Chunk[Byte]], config: LocalBufferProducerConfig, state: TRef[LocalBufferProducerState], error: LocalBufferError): ZIO[Blocking with R, LocalBufferError, BufferedProduceResult] =
+    config.strategy match {
+      case _: Unordered => state.update(_.updateEnqueuedCount(-1)).commit *>
+        Promise.make[ProducerError, RecordMetadata].flatMap { promiseToFulfil =>
+          router.produceAsync(record).flatMap(p =>
+            promiseToFulfil.completeWith(p.await.catchAll(e => promiseToFulfil.fail(e) *> ZIO.fail(e))))
+            .fork
+            .as(BufferedProduceResult(notPersisted, promiseToFulfil))
+        }
+      case _ => ZIO.fail(error)
+    }
+
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState],
                                     record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
     Promise.make[producer.ProducerError, producer.RecordMetadata].flatMap(promise =>
@@ -143,7 +158,7 @@ object LocalBufferProducer {
     validateIsRunning(state) *> validateBufferFull(config, state)
 
   private def validateBufferFull(config: LocalBufferProducerConfig, state: TRef[LocalBufferProducerState]) =
-    ZIO.whenM(state.get.map(_.enqueued > config.maxMessagesOnDisk).commit)(ZIO.fail(LocalBufferError(LocalBufferFull(config.maxMessagesOnDisk))))
+    ZIO.whenM(state.get.map(_.enqueued >= config.maxMessagesOnDisk).commit)(ZIO.fail(LocalBufferError(LocalBufferFull(config.maxMessagesOnDisk))))
 
   private def validateIsRunning(state: TRef[LocalBufferProducerState]) =
     ZIO.whenM(state.get.map(!_.running).commit)(ZIO.fail(LocalBufferError(ProducerClosed())))
