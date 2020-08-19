@@ -408,6 +408,59 @@ RecordConsumer.make(
   ).flatMap(consumer => consumer.setBlockingState(IgnoreOnceFor(TopicPartition("topic-A", 0))))
 ```
 
+#### Producing via local disk
+Greyhound offers a producer which writes records to local disk before it flushes them to Kafka. With this approach
+there will be definitely be some extra latency, but during longer outages records will be safely stored locally before
+they can be flushed.<br>
+
+```scala
+import com.wixpress.dst.greyhound.core.producer._
+import com.wixpress.dst.greyhound.core.producer.buffered._
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
+import zio.duration._
+import zio._
+
+def producer: RManaged[ZEnv with GreyhoundMetrics, LocalBufferProducer[Any]] =
+    for {
+      producer <- Producer.make(ProducerConfig(brokers))
+      h2LocalBuffer <- H2LocalBuffer.make(s"/writable/path/to/db/files", keepDeadMessages = 1.day) 
+      config = LocalBufferProducerConfig(maxMessagesOnDisk = 100000L, giveUpAfter = 1.hour,
+        shutdownFlushTimeout = 2.minutes, retryInterval = 10.seconds, 
+        strategy = ProduceStrategy.Async(batchSize = 100, concurrency = 10))
+      localDiskProducer <- LocalBufferProducer.make[Any](producer, h2LocalBuffer, config)
+    } yield localDiskProducer    
+....
+producer.use { p =>
+  p.produce(record)
+    .flatMap(_.kafkaResult
+      .await
+      .tap(res => zio.console.putStrLn(res.toString))
+      .fork
+    )
+}
+```
+Notice that the effect of producing completes when the record has been persisted to Disk. The effect results with a
+promise that fulfils with the Kafka produce metadata.<br>
+
+The producer will retry flushing failed records to Kafka in an interval defined by `retryInterval` config, until they expire according to
+ `giveUpAfter` config. Upon resource close, it will block until all records are flushed, limited to `shutdownFlushTimeout` config.<br> 
+
+
+Use the `strategy` config to define how the producer flushes records to Kafka:<br>
+
+```scala
+ProduceStrategy.Sync(concurrency: Int)
+ProduceStrategy.Async(batchSize: Int, concurrency: Int)
+ProduceStrategy.Unordered(batchSize: Int, concurrency: Int)
+```
+
+All of the strategies create N fibers (defined by `concurrency: Int`), grouped by keys or partitions, and each fiber is responsible
+for flushing a range of targets (so there's no ordering or synchronization between different fibers).<br>
+* `ProduceStrategy.Sync` is the slowest strategy: it does not produce a record on a given key before the previous record has been acknowledged by Kafka. 
+It will retry each record individually until successful, before continuing to the next record.<br> 
+* `ProduceStrategy.Async` will produce a batch of records and wait for them all to complete. If some failed, it will retry the failures until successful.<br>
+* `ProduceStrategy.Unordered` is the same as Async, only it tries to produce to Kafka directly in the event of a local disk failure to append records.
+
 ### Testing
 Use the embedded Kafka to test your app:
 ```scala

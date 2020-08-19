@@ -227,41 +227,55 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     } yield recordsProduced.size === 1000
   }
 
-  private def produceMultiple[R](keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer[GreyhoundMetrics with Clock with R], record: ProducerRecord[String, Int]) =
+  def produceMultiple[R](keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer[GreyhoundMetrics with Clock with R], record: ProducerRecord[String, Int]) =
     ZIO.foreach(0 until (keyCount * recordPerKey)) { i =>
       localBufferProducer.produce(record.copy(value = i, key = Some((i % keyCount).toString)), StringSerde, IntSerde)
     }
 
-  private def expectedMap(recordPerKey: Int, keyCount: Int): Map[String, Seq[Int]] =
+  def expectedMap(recordPerKey: Int, keyCount: Int): Map[String, Seq[Int]] =
     (0 until keyCount).map(key => key.toString -> expectedListForKey(key, recordPerKey, keyCount)).toMap
 
-  private def expectedListForKey(key: Int, recordPerKey: Int, keyCount: Int): Seq[Int] =
+  def expectedListForKey(key: Int, recordPerKey: Int, keyCount: Int): Seq[Int] =
     (0 until recordPerKey).map(i => keyCount * i + key)
 
-  private def putIn[A, B](consumed: Ref[Map[A, Seq[B]]]): ConsumerRecord[A, B] => UIO[Unit] =
+  def putIn[A, B](consumed: Ref[Map[A, Seq[B]]]): ConsumerRecord[A, B] => UIO[Unit] =
     record =>
       consumed.update(map => map + (record.key.get -> (map.getOrElse(record.key.get, Nil) :+ record.value)))
 
-  private def makeProducer[R](producer: ProducerR[GreyhoundMetrics with Clock with R],
-                              strategy: ProduceStrategy,
-                              maxMessagesOnDisk: Int = 10000,
-                              giveUpAfter: Duration = 1.day,
-                              flushTimeout: Duration = 1.minute,
-                              retryInterval: Duration = 1.second,
-                              localBufferBatchSize: Int = 100,
-                              pathSuffix: Int = Math.abs(Random.nextInt(100000))): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
+  def makeProducer[R](producer: ProducerR[GreyhoundMetrics with Clock with R],
+                      strategy: ProduceStrategy,
+                      maxMessagesOnDisk: Int = 10000,
+                      giveUpAfter: Duration = 1.day,
+                      flushTimeout: Duration = 1.minute,
+                      retryInterval: Duration = 1.second,
+                      localBufferBatchSize: Int = 100,
+                      pathSuffix: Int = Math.abs(Random.nextInt(100000))): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
     makeH2Buffer(pathSuffix.toString).flatMap(buffer =>
-      LocalBufferProducer.make[GreyhoundMetrics with Clock with R](producer, buffer, LocalBufferProducerConfig(
-        maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
-        retryInterval = retryInterval, strategy = strategy, localBufferBatchSize = localBufferBatchSize)))
+      makeProducerWith[R](buffer, producer, strategy, maxMessagesOnDisk, giveUpAfter, flushTimeout, retryInterval, localBufferBatchSize))
 
-  private def makeH2Buffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-$pathSuffix", keepDeadMessages = 1.day)
+  def makeProducerWith[R](buffer: LocalBuffer,
+                          producer: ProducerR[GreyhoundMetrics with Clock with R],
+                          strategy: ProduceStrategy,
+                          maxMessagesOnDisk: Int = 10000,
+                          giveUpAfter: Duration = 1.day,
+                          flushTimeout: Duration = 1.minute,
+                          retryInterval: Duration = 1.second,
+                          localBufferBatchSize: Int = 100,
+                          pathSuffix: Int = Math.abs(Random.nextInt(100000))): RManaged[ZEnv with GreyhoundMetrics with Clock with R, LocalBufferProducer[GreyhoundMetrics with Clock with R]] = {
+    LocalBufferProducer.make[GreyhoundMetrics with Clock with R](producer, buffer, LocalBufferProducerConfig(
+      maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
+      retryInterval = retryInterval, strategy = strategy, localBufferBatchSize = localBufferBatchSize))
+  }
 
-  private def configFor(kafka: ManagedKafka, group: Group, topic: Topic) = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
+  def makeH2Buffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-$pathSuffix", keepDeadMessages = 1.day)
 
-  private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
+  def configFor(kafka: ManagedKafka, group: Group, topic: Topic) = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
 
-  private def failFastInvalidBrokersConfig = ProducerConfig("localhost:27461", ProducerRetryPolicy(0, 0.millis), Map("max.block.ms" -> "0"))
+  def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
+
+  def failFastInvalidBrokersConfig = ProducerConfig("localhost:27461", ProducerRetryPolicy(0, 0.millis), Map("max.block.ms" -> "0"))
+
+  def failSlowInvalidBrokersConfig = ProducerConfig("localhost:27461")
 }
 
 case class BufferTestResources(kafka: ManagedKafka, producer: ProducerR[GreyhoundMetrics with Clock])
@@ -275,3 +289,47 @@ class LocalBufferProducerAsyncIT extends LocalBufferProducerIT {
 class LocalBufferProducerSyncIT extends LocalBufferProducerIT {
   override def strategy(maxConcurrency: Int): ProduceStrategy = ProduceStrategy.Sync(maxConcurrency)
 }
+
+class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
+  override def strategy(maxConcurrency: Int): ProduceStrategy = ProduceStrategy.Unordered(5, maxConcurrency)
+
+  "Fallback to Kafka direct sending when H2 is down" in {
+    for {
+      BufferTestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = s"buffered-1")
+      _ <- makeH2Buffer(Random.nextInt(100000).toString).use { buffer =>
+        makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second, maxMessagesOnDisk = 1).use { localBufferProducer =>
+          for {
+            _ <- buffer.close
+            record = ProducerRecord(topic, "bar", Some("foo"))
+            produceIO = localBufferProducer.produce(record, StringSerde, StringSerde)
+              .flatMap(_.kafkaResult.await).timeoutFail(LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed)(5.seconds)
+            _ <- (produceIO *> produceIO) /*maxMessagesOnDisk=1 ==> second produce will fail if we don't dequeue count from memory */
+              .map(_.topic === topic)
+          } yield ok
+        }
+      }
+    } yield ok
+
+  }
+
+  "not block on kafka direct send when using fallback" in {
+    for {
+      BufferTestResources(kafka, _) <- getShared
+      topic <- kafka.createRandomTopic(prefix = s"buffered-1")
+      _ <- Producer.make(failSlowInvalidBrokersConfig).use { producer =>
+        makeH2Buffer(Random.nextInt(100000).toString).use { buffer =>
+          makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second).use { localBufferProducer =>
+            buffer.close *>
+              localBufferProducer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)
+                .timeoutFail(LocalBufferProducerShouldNotWaitForKafkaSend)(50.millis)
+          }
+        }
+      }
+    } yield ok
+  }
+}
+
+object LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed extends RuntimeException("Expected result even though h2 is closed, by directly sending to Kafka (in unorederd producer)")
+
+object LocalBufferProducerShouldNotWaitForKafkaSend extends RuntimeException("direct send to Kafka should not block the request, this call shouldn't timeout")

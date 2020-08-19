@@ -57,13 +57,24 @@ case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Durat
 
 sealed trait ProduceStrategy
 
+/**
+ * All of the strategies create N fibers (defined by `concurrency: Int`), grouped by keys or partitions, and each fiber is responsible
+ * for flushing a range of targets (so there's no ordering or synchronization between different fibers).
+ *
+ * Sync is the slowest strategy: it does not produce a record on a given key before the previous record has been acknowledged by Kafka.
+ * It will retry each record individually until successful, before continuing to the next record.
+ *
+ * Async will produce a batch of records and wait for them all to complete. If some failed, it will retry the failures until successful.
+ *
+ * Unordered is the same as Async, only it tries to produce to Kafka directly in the event of a local disk failure to append records.
+ */
 object ProduceStrategy {
 
   case class Sync(concurrency: Int) extends ProduceStrategy
 
-  case class Async(maxProduceBatchSize: Int, concurrency: Int) extends ProduceStrategy
+  case class Async(batchSize: Int, concurrency: Int) extends ProduceStrategy
 
-//  case object Unordered extends LocalBufferProducerFlushingStrategy
+  case class Unordered(batchSize: Int, concurrency: Int) extends ProduceStrategy
 
 }
 

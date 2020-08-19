@@ -26,6 +26,7 @@ object ProduceFlusher {
     strategy match {
       case ProduceStrategy.Sync(concurrency) => ProduceFiberSyncRouter.make(producer, concurrency, giveUpAfter, retryInterval)
       case ProduceStrategy.Async(batchSize, concurrency) => ProduceFiberAsyncRouter.make(producer, concurrency, giveUpAfter, retryInterval, batchSize)
+      case ProduceStrategy.Unordered(batchSize, concurrency) => ProduceFiberAsyncRouter.make(producer, concurrency, giveUpAfter, retryInterval, batchSize)
     }
 }
 
