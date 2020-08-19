@@ -317,7 +317,7 @@ class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
     for {
       BufferTestResources(kafka, _) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"buffered-1")
-      _ <- Producer.makeR[Any](failSlowInvalidBrokersConfig).use { producer =>
+      _ <- Producer.make(failSlowInvalidBrokersConfig).use { producer =>
         makeH2Buffer(Random.nextInt(100000).toString).use { buffer =>
           makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second).use { localBufferProducer =>
             buffer.close *>
