@@ -31,6 +31,27 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
     }
 
+    "topic exist" in {
+      val topic1 = aTopicConfig()
+
+      for {
+        TestResources(kafka, _) <- getShared
+        _ <- kafka.adminClient.createTopics(Set(topic1))
+        result <- kafka.adminClient.topicExists(topic1.name)
+      } yield {
+        result === true
+      }
+    }
+
+    "topic does not exist" in {
+      for {
+        TestResources(kafka, _) <- getShared
+        result <- kafka.adminClient.topicExists("missing topic")
+      } yield {
+        result === false
+      }
+    }
+
     "reflect errors" in {
       val topic1 = aTopicConfig()
       val topic2 = aTopicConfig("x" * 250)
