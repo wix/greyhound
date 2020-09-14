@@ -37,7 +37,7 @@ To add a dependency on greyhound-java using **Maven**, use the following:
 <dependency>
   <groupId>com.wix</groupId>
   <artifactId>greyhound-java</artifactId>
-  <version>0.0.2</version>
+  <version>0.1.0</version>
 </dependency>
 ```
 
@@ -45,7 +45,7 @@ To add a dependency using **Gradle**:
 
 ```gradle
 dependencies {
-  implementation("com.wix.guava:greyhound-java:0.0.2")
+  implementation("com.wix:greyhound-java:0.1.0")
   // other dependencies
 }
 ```
