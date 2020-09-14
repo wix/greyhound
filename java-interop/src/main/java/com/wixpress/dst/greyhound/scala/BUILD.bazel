@@ -1,0 +1,22 @@
+package(default_visibility = ["//visibility:public"])
+
+# visibility is extended to allow packaging a jar to deploy to maven central
+sources(["//java-interop:__subpackages__"])
+
+scala_library(
+    name = "scala",
+    srcs = [
+        ":sources",
+    ],
+    tags = [
+        "no-index",
+        "no-tool",
+    ],
+    deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
+        "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)

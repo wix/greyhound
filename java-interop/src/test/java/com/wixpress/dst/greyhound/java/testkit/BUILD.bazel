@@ -13,6 +13,7 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//future-interop/src/it/scala/com/wixpress/dst/greyhound/future",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
+        "//java-interop/src/main/java/com/wixpress/dst/greyhound/scala",
         "@org_scala_lang_scala_library",
     ],
 )
