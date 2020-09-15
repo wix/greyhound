@@ -1,0 +1,16 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+specs2_unit_test(
+    name = "zioutils",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/zioutils",
+        "@dev_zio_zio_2_12",
+        "@dev_zio_zio_test_2_12",
+        "@dev_zio_zio_test_junit_2_12",
+    ],
+)
