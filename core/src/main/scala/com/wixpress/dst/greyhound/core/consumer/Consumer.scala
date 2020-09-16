@@ -56,10 +56,10 @@ object Consumer {
     consumer <- makeConsumer(config)
   } yield new Consumer {
     override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-      listener(rebalanceListener).flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
+      listener(rebalanceListener *> config.additionalListener).flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
     override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-      listener(rebalanceListener).flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
+      listener(rebalanceListener *> config.additionalListener).flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
     override def poll(timeout: Duration): RIO[Blocking, Records] =
       withConsumerBlocking(_.poll(time.Duration.ofMillis(timeout.toMillis)))
@@ -135,7 +135,8 @@ case class ConsumerConfig(bootstrapServers: String,
                           groupId: Group,
                           clientId: ClientId = s"wix-consumer-${Random.alphanumeric.take(5).mkString}",
                           offsetReset: OffsetReset = OffsetReset.Latest,
-                          extraProperties: Map[String, String] = Map.empty) {
+                          extraProperties: Map[String, String] = Map.empty,
+                          additionalListener: RebalanceListener[Any] = RebalanceListener.Empty) {
 
   def properties: Properties = {
     val props = new Properties

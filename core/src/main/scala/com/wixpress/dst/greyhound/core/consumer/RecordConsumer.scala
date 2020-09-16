@@ -47,7 +47,7 @@ object RecordConsumer {
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
       consumer <- Consumer.make(
-        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties))
+        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(config, nonBlockingRetryHelper))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
@@ -161,7 +161,8 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 clientId: String = RecordConsumerConfig.makeClientId,
                                 eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
-                                extraProperties: Map[String, String] = Map.empty)
+                                extraProperties: Map[String, String] = Map.empty,
+                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty )
 
 object RecordConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
