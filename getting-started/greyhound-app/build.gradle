@@ -2,7 +2,7 @@ buildscript {
     repositories {
       maven {
         url "https://plugins.gradle.org/m2/"
-      }
+        }
       mavenCentral()
     }
     dependencies {
@@ -33,6 +33,7 @@ targetCompatibility = 1.8
 dependencies {
     compile("org.springframework.boot:spring-boot-starter-web")
     testCompile("org.springframework.boot:spring-boot-starter-test")
-    implementation("com.wix:greyhound-java:0.1.0")
+    implementation("com.wix:greyhound-java:0.1.1")
+    implementation("com.wix:greyhound-java-core:0.1.1")
 }
 
