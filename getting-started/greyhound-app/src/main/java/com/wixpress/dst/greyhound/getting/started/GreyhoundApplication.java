@@ -33,6 +33,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 	public static final	String BOOT_START_SERVERS = "kafka:29092";
 	public static final	String TOPIC = "greyhound-topic";
 	public static final	String GROUP = "greyhound-group";
+	public static final	int PARTITIONS = 8;
 
 	private final HashMap<String, String> EMPTY_MAP = new HashMap<>();
 
@@ -49,6 +50,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 	public GreyhoundApplication() {
 	}
 
+	/// Rest API ///
 	@RequestMapping("/")
 	public String home() {
 		return "Hello Greyhound Application";
@@ -64,7 +66,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 
 		for (int i=0;i<numOfMessages;i++) {
 			producer.produce(
-					new ProducerRecord<>(TOPIC, i, "message"+i),
+					new ProducerRecord<>(TOPIC, i%8, i, "message"+i),
 					new IntegerSerializer(),
 					new StringSerializer());
 		}
@@ -72,6 +74,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 		return "produced " + numOfMessages + " messages at " + produceStartTime;
 	}
 
+	/// Application Startup ///
 	public static void main(String[] args) {
 		SpringApplication.run(GreyhoundApplication.class, args);
 	}
@@ -84,6 +87,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 		createConsumer(config);
 	}
 
+	/// Greyhound Config ///
 	private void createConsumer(GreyhoundConfig config) {
 		consumers = new GreyhoundConsumersBuilder(config)
 				.withConsumer(
@@ -105,10 +109,10 @@ public class GreyhoundApplication implements CommandLineRunner {
 		adminClient = AdminClient.create(new AdminClientConfig(BOOT_START_SERVERS, EMPTY_MAP));
 		adminClient.createTopic(new TopicConfig(
 				TOPIC,
-				1,
+				PARTITIONS,
 				1,
 				new CleanupPolicy.Delete(Duration.ofHours(1).toMillis()),
-				EMPTY_MAP));
+				EMPTY_MAP)).isCompleted();
 	}
 
 	private Consumer<ConsumerRecord<Integer, String>> getConsumer() {
@@ -116,14 +120,16 @@ public class GreyhoundApplication implements CommandLineRunner {
 			try {
 				semaphore.acquire();
 				int count = counter.decrementAndGet();
-//				System.out.println("Consumed message \"" + record.key() + " : " + record.value() + "\" " + count + " messages remains");
+				Thread.sleep(5);
+				System.out.println("Consumed record \"" + record + "\" " + count + " messages remains");
 				if (count == 0) {
 					lastConsumeTime = System.currentTimeMillis();
 					System.out.println("Consumed all messages in " + (lastConsumeTime - produceStartTime) + " millis");
 				}
-				semaphore.release();
 			} catch (InterruptedException e) {
 				e.printStackTrace();
+			} finally {
+				semaphore.release();
 			}
 		};
 	}

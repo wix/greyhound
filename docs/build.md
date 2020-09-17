@@ -1,4 +1,4 @@
-## Adding greyhound to your build
+# Adding greyhound to your build
 All Greyhound modules can be found in [Maven Central Repository](https://search.maven.org/search?q=greyhound).
 
 ### Greyhound Scala (Future) API
@@ -37,7 +37,12 @@ To add a dependency on greyhound-java using **Maven**, use the following:
 <dependency>
   <groupId>com.wix</groupId>
   <artifactId>greyhound-java</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
+</dependency>
+<dependency>
+  <groupId>com.wix</groupId>
+  <artifactId>greyhound-java-core</artifactId>
+  <version>0.1.1</version>
 </dependency>
 ```
 
@@ -45,7 +50,8 @@ To add a dependency using **Gradle**:
 
 ```gradle
 dependencies {
-  implementation("com.wix:greyhound-java:0.1.0")
+  implementation("com.wix:greyhound-java:0.1.1")
+  implementation("com.wix:greyhound-java-core:0.1.1")
   // other dependencies
 }
 ```
