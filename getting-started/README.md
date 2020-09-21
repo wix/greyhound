@@ -1,6 +1,6 @@
 
 ## Getting started with Greyhound and run it using Docker
-This guild will walk you through the process of launching a simple greyhound application.
+This guide will walk you through the process of launching a simple greyhound application.
 The app will be based on Spring Boot and Greyhound Java API.
 We will create a Docker image from our app and run it together with a live Kafka, using docker compose.
 
