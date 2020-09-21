@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import scala.collection.immutable.HashMap;
 
 import java.time.Duration;
+import java.util.Date;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -30,10 +31,10 @@ import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHand
 @RestController
 public class GreyhoundApplication implements CommandLineRunner {
 
-	public static final	String BOOT_START_SERVERS = "kafka:29092";
+	public static final	String BOOT_START_SERVERS = "kafka:29092"; // This is the broker address in the docker
 	public static final	String TOPIC = "greyhound-topic";
 	public static final	String GROUP = "greyhound-group";
-	public static final	int PARTITIONS = 8;
+	public static final	int PARTITIONS = 8; // The number of partitions is the number of max parallelism
 
 	private final HashMap<String, String> EMPTY_MAP = new HashMap<>();
 
@@ -59,11 +60,13 @@ public class GreyhoundApplication implements CommandLineRunner {
 	@RequestMapping("/produce")
 	public String produce(@RequestParam("numOfMessages") int numOfMessages,
 						  @RequestParam(value = "maxParallelism", defaultValue = "1") int maxParallelism) {
+		// Save some details so we can measure time it toke to consume all messages and reduce the parallelism
 		currentNumOfMessages = numOfMessages;
 		counter = new AtomicInteger(currentNumOfMessages);
 		semaphore = new Semaphore(maxParallelism);
 		produceStartTime = System.currentTimeMillis();
 
+		// Produce the messages
 		for (int i=0;i<numOfMessages;i++) {
 			producer.produce(
 					new ProducerRecord<>(TOPIC, i%8, i, "message"+i),
@@ -71,7 +74,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 					new StringSerializer());
 		}
 
-		return "produced " + numOfMessages + " messages at " + produceStartTime;
+		return "produced " + numOfMessages + " messages at " + new Date(produceStartTime);
 	}
 
 	/// Application Startup ///
@@ -81,13 +84,14 @@ public class GreyhoundApplication implements CommandLineRunner {
 
 	@Override
 	public void run(String... args) {
+		// Configure Greyhound
 		GreyhoundConfig config = new GreyhoundConfig(BOOT_START_SERVERS);
 		createTopic(); //Not necessary for topic with default configurations
 		createProducer(config);
 		createConsumer(config);
 	}
 
-	/// Greyhound Config ///
+	/// Greyhound Configurations ///
 	private void createConsumer(GreyhoundConfig config) {
 		consumers = new GreyhoundConsumersBuilder(config)
 				.withConsumer(
@@ -118,13 +122,14 @@ public class GreyhoundApplication implements CommandLineRunner {
 	private Consumer<ConsumerRecord<Integer, String>> getConsumer() {
 		return record -> {
 			try {
-				semaphore.acquire();
+				semaphore.acquire(); // Greyhound is max parallelism by default. We use a semaphore to decrease the parallelism.
 				int count = counter.decrementAndGet();
-				Thread.sleep(5);
-				System.out.println("Consumed record \"" + record + "\" " + count + " messages remains");
+				Thread.sleep(5); // This is used to simulate work done in the consumer to show the difference between max parallelism & lower
+				System.out.println("Consumed message \"" + record.value() + "\" " + count + " messages remains");
 				if (count == 0) {
 					lastConsumeTime = System.currentTimeMillis();
-					System.out.println("Consumed all messages in " + (lastConsumeTime - produceStartTime) + " millis");
+					System.out.println("----------------------------------------------------------------------");
+					System.out.println("All messages consumed in " + (lastConsumeTime - produceStartTime) + " millis at " + new Date(lastConsumeTime));
 				}
 			} catch (InterruptedException e) {
 				e.printStackTrace();
