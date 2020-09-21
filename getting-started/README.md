@@ -6,12 +6,15 @@ We will create a Docker image from our app and run it together with a live Kafka
 
 ### Prerequisites
   - A favorite text editor or IDE
- - [JDK 1.8](http://www.oracle.com/technetwork/java/javase/downloads/index.html) or later - [Gradle 4+](http://www.gradle.org/downloads) or [Maven 3.2+](https://maven.apache.org/download.cgi) - [Docker Compose](https://docs.docker.com/compose/install/)
+ - [JDK 1.8](http://www.oracle.com/technetwork/java/javase/downloads/index.html) or later
+ - [Gradle 4+](http://www.gradle.org/downloads) or [Maven 3.2+](https://maven.apache.org/download.cgi)
+ - [Docker Compose](https://docs.docker.com/compose/install/)
+
 ### Steps to launch the app
 1. Start Docker
 2. Build greyhound app and the Docker image:
 
-		cd /greyhound-app
+		cd /getting-started/greyhound-app
 
 	  **Gradle**
 
