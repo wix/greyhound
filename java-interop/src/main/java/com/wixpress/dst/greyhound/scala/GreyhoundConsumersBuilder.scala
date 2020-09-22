@@ -11,6 +11,7 @@ import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio._
 import zio.blocking.Blocking.Service.live.blockingExecutor
 import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
+import com.wixpress.dst.greyhound.future.GreyhoundRuntime
 
 import scala.collection.mutable.ListBuffer
 
@@ -27,7 +28,7 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
     for {
       runtime <- ZIO.runtime[Env]
       executor = createExecutor
-      makeConsumer = ZManaged.foreach(handlers(executor)) { case (group, (offsetReset, initialTopics, handler)) =>
+      makeConsumer = ZManaged.foreach(handlers(executor, runtime)) { case (group, (offsetReset, initialTopics, handler)) =>
         RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, Topics(initialTopics), offsetReset = offsetReset), handler)
       }
       reservation <- makeConsumer.reserve
@@ -54,10 +55,10 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
           blockingExecutor.submit(command)
       }
 
-  private def handlers(executor: Executor): Map[Group, (consumer.OffsetReset, NonEmptySet[Topic], Handler[Env])] =
+  private def handlers(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]): Map[Group, (consumer.OffsetReset, NonEmptySet[Topic], Handler[Env])] =
     consumers.foldLeft(Map.empty[Group, (core.consumer.OffsetReset, NonEmptySet[Topic], Handler[Env])]) { (acc, consumer) =>
       val (offsetReset, group) = (convert(consumer.offsetReset), consumer.group)
-      acc + (group -> (offsetReset, Set(consumer.initialTopic), consumer.recordHandler(executor)))
+      acc + (group -> (offsetReset, Set(consumer.initialTopic), consumer.recordHandler(executor, runtime)))
     }
 
   private def convert(offsetReset: OffsetReset): core.consumer.OffsetReset =

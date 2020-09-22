@@ -2,10 +2,12 @@ package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.CompletableFuture
 
+import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.Serializer
 import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
+import com.wixpress.dst.greyhound.java.GreyhoundProducerBuilder.toGreyhoundRecord
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.clients.producer.{ProducerRecord => KafkaProducerRecord}
 import org.apache.kafka.common.serialization.{Serializer => KafkaSerializer}
@@ -25,11 +27,7 @@ class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
                                  valueSerializer: KafkaSerializer[V]): CompletableFuture[OffsetAndMetadata] = {
         val result = for {
           metadata <- producer.produce(
-            ProducerRecord(
-              topic = record.topic,
-              value = record.value,
-              key = Option(record.key),
-              partition = Option(record.partition)), // TODO headers
+            toGreyhoundRecord(record), // TODO headers
             Serializer(keySerializer),
             Serializer(valueSerializer))
         } yield new OffsetAndMetadata(metadata.offset)
@@ -48,4 +46,14 @@ class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
     }
   }
 
+}
+
+object GreyhoundProducerBuilder {
+  def toGreyhoundRecord[K, V] (record: KafkaProducerRecord[K, V]): ProducerRecord[K, V] = {
+    core.producer.ProducerRecord(
+      topic = record.topic,
+      value = record.value,
+      key = Option(record.key),
+      partition = Option(record.partition()).map(_.toInt))
+  }
 }
