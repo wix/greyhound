@@ -137,8 +137,7 @@ val builder = GreyhoundConsumersBuilder(config)
 
 ### Java API
 
-Greyhound also offers a Java API - example usage can be found in the
-[tests](./java-interop/src/test/java/com/wixpress/dst/greyhound/java/GreyhoundBuilderTest.java). 
+Greyhound also offers a Java API - a docker based [quick-start Java App](./getting-started/README.md) that demonstrates using Greyhound is available. 
 
 ### ZIO API
 
