@@ -1,5 +1,5 @@
 
-## Getting started with Greyhound and run it using Docker
+## Quick Start with Greyhound Java API with Docker based app
 This guide will walk you through the process of launching a simple greyhound application.
 The app will be based on Spring Boot and Greyhound Java API.
 We will create a Docker image from our app and run it together with a live Kafka, using docker compose.
@@ -36,25 +36,34 @@ We will create a Docker image from our app and run it together with a live Kafka
 5. After you did the next section and/or you want to change some code and start again, you'll need to shutdown the greyhound-app, kafka and zookeeper. To do so run this command:
 
 		docker-compose down
+		
+6. Once you change the app code, 
+
+        docker-compose down 
+        repeat stages 2-4
+        
 
 ### Produce and Consume messages
+
+The App consists of 1 producer, and 2 consumer groups. 
+
+one consumer with no parallel message handling, and the other with the maximum possible parallelism (for a topic with 8 partitions).
+
+Both message handlers have artificial delay of 1 ms.
 
 1. Navigate in your browser to http://localhost:8080
 2. If you see `Hello Greyhound Application` we're good to go. If not, look for the cause in the logs or add debug logs to identify what's wrong (uncomment `debug: true` in the file `application.yml`)
 3. Use curl
-`curl -X GET 'localhost:8080/produce?numOfMessages=1000&maxParallelism=1'`
+`curl -X GET 'localhost:8080/produce?numOfMessages=1000'`
 or navigate in the your browser to
-http://localhost:8080/produce?numOfMessages=1000&maxParallelism=1
+http://localhost:8080/produce?numOfMessages=1000
 4. Check out the greyhound-app logs and wait for the last message to be consumed and the summery to appear:
-`All messages consumed in 5704 millis at Mon Sep 21 04:58:32 GMT 2020`
-5. Now try to increase the maxParallelism parameter to 8. Please note, the max value for parallelism is the number of partitions. In this example we configured the topic with 8 partitions (You can change that by changing the value of the constant `com.wixpress.dst.greyhound.getting.started.GreyhoundApplication#PARTITIONS` and following the steps above to launch the app
-6. Use curl
-`curl -X GET 'localhost:8080/produce?numOfMessages=1000&maxParallelism=8'`
-or navigate in the your browser to
-http://localhost:8080/produce?numOfMessages=1000&maxParallelism=8
-7. Check out the greyhound-app logs and wait for the last message to be consumed and the summery to appear:
-`All messages consumed in 765 millis at Mon Sep 21 05:07:41 GMT 2020`
-8. **Notice the difference**, it takes 7.4 times less time to consume all the messages using greyhound feature of max parallelism!
+    ```
+     greyhound_app_1  | Consumer with MaxParallelism = 8 - All messages consumed in 848 millis at Wed Sep 23 08:35:30 GMT 2020
+     greyhound_app_1  | ----------------------------------------------------------------------
+     greyhound_app_1  | Consumer with MaxParallelism = 1 - All messages consumed in 2151 millis at Wed Sep 23 08:35:32 GMT 2020
+    ```
+5. **Notice the difference**, it takes more than 2 times less time to consume all the messages using greyhound feature of __max parallelism__!
 
 ### Credits
 - The spring boot application is based on: [https://spring.io/guides/gs/spring-boot-docker/](https://spring.io/guides/gs/spring-boot-docker/)
