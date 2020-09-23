@@ -31,7 +31,7 @@ object GreyhoundConsumer {
   }
 }
 
-private[greyhound] case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
+case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
                                         group: String,
                                         handler: RecordHandler[K, V],
                                         keyDeserializer: Deserializer[K],
@@ -48,7 +48,7 @@ private[greyhound] case class GreyhoundConsumer[K >: AnyRef, V] private(initialT
   def withOffsetReset(offsetReset: OffsetReset) =
     copy(offsetReset = offsetReset)
 
-  def recordHandler(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]): Handler[Env] = {
+  private[greyhound] def recordHandler(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]): Handler[Env] = {
     val baseHandler = runtime.unsafeRun(Semaphore.make(parallelism).map { semaphore =>
       CoreRecordHandler { record: CoreConsumerRecord[K, V] =>
         semaphore.withPermit {
