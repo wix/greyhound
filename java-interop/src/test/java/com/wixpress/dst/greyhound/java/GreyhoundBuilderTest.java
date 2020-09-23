@@ -31,6 +31,7 @@ public class GreyhoundBuilderTest {
     static String maxParTopic = "some-topic2";
 
     static String group = "some-group";
+    static String maxParGroup = "some-group2";
 
     @BeforeClass
     public static void beforeAll() {
@@ -95,14 +96,12 @@ public class GreyhoundBuilderTest {
 
         GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
         GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
-        GreyhoundConsumersBuilder consumersBuilderNoPar = new GreyhoundConsumersBuilder(config)
-                .withConsumer(consumerWith(lock, consumedNoPar, topic, 1));
+        GreyhoundConsumersBuilder consumersBuilder =
+                new GreyhoundConsumersBuilder(config)
+                        .withConsumer(consumerWith(group, lockMaxPar, consumedMaxPar, maxParTopic, 8))
+                        .withConsumer(consumerWith(maxParGroup, lock, consumedNoPar, topic, 1));
 
-        GreyhoundConsumersBuilder consumersBuilderMaxPar = new GreyhoundConsumersBuilder(config)
-                .withConsumer(consumerWith(lockMaxPar, consumedMaxPar, maxParTopic, 8));
-
-        try (GreyhoundConsumers ignored = consumersBuilderNoPar.build();
-             GreyhoundConsumers ignoredMaxPar = consumersBuilderMaxPar.build();
+        try (GreyhoundConsumers ignored = consumersBuilder.build();
              GreyhoundProducer producer = producerBuilder.build()) {
 
             for (int i = 0; i < numOfMessages; i++) {
@@ -123,7 +122,7 @@ public class GreyhoundBuilderTest {
                 new StringSerializer());
     }
 
-    private GreyhoundConsumer<Integer, String> consumerWith(CountDownLatch lockMaxPar,
+    private GreyhoundConsumer<Integer, String> consumerWith(String group, CountDownLatch lockMaxPar,
                                                             Queue<ConsumerRecord<Integer, String>> consumedMaxPar,
                                                             String topic2,
                                                             int parallelism) {
@@ -131,20 +130,11 @@ public class GreyhoundBuilderTest {
                 topic2,
                 group,
                 aBlockingRecordHandler(value -> {
-                    simulateDelay();
                     consumedMaxPar.add(value);
                     lockMaxPar.countDown();
                 }),
                 new IntegerDeserializer(),
                 new StringDeserializer())
                 .withMaxParallelism(parallelism);
-    }
-
-    private void simulateDelay() {
-        try {
-            Thread.sleep(1);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
     }
 }
