@@ -31,7 +31,7 @@ object GreyhoundConsumer {
   }
 }
 
-case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
+private[greyhound] case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
                                         group: String,
                                         handler: RecordHandler[K, V],
                                         keyDeserializer: Deserializer[K],
