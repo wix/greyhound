@@ -4,6 +4,8 @@ This guide will walk you through the process of launching a simple greyhound app
 The app will be based on Spring Boot and Greyhound Java API.
 We will create a Docker image from our app and run it together with a live Kafka, using docker compose.
 
+![quick-start demo](https://github.com/wix/greyhound/blob/master/getting-started/assets/quick-start.gif)
+
 ### Prerequisites
   - A favorite text editor or IDE
  - [JDK 1.8](http://www.oracle.com/technetwork/java/javase/downloads/index.html) or later
