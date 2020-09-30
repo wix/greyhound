@@ -7,6 +7,7 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Offset, Topic}
 import org.apache.kafka.clients.consumer.{ConsumerRecords, ConsumerRecord => KafkaConsumerRecord}
@@ -56,7 +57,7 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
             case _ => ZIO.succeed(ConsumerRecords.empty())
           }
 
-        override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Any, Unit] =
+        override def commit(offsets: Map[TopicPartition, Offset]) =
           commitInvocations.updateAndGet(_ + 1).flatMap {
             case 1 => ZIO.fail(exception)
             case _ => promise.succeed(offsets).unit
@@ -109,8 +110,11 @@ trait EmptyConsumer extends Consumer {
   override def poll(timeout: Duration): Task[Records] =
     ZIO.succeed(ConsumerRecords.empty())
 
-  override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): Task[Unit] =
+  override def commit(offsets: Map[TopicPartition, Offset]): Task[Unit] =
     ZIO.unit
+
+  override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] =
+    DelayedRebalanceEffect.zioUnit
 
   override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
