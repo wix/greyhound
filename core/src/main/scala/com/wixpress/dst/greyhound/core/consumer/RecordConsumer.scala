@@ -91,11 +91,9 @@ object RecordConsumer {
         for {
           assigned <- Ref.make[AssignedPartitions](Set.empty)
           promise <- Promise.make[Nothing, AssignedPartitions]
-          rebalanceListener = listener *> new RebalanceListener[R1] {
-            override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
-              ZIO.unit
-
-            //todo: we need to call EventLoop's listener here! otherwise we don't stop fibers on resubscribe
+          rebalanceListener = eventLoop.rebalanceListener  *>  listener *> new RebalanceListener[R1] {
+            override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
+              DelayedRebalanceEffect.zioUnit
 
             override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] = for {
               allAssigned <- assigned.updateAndGet(_ => partitions)

@@ -9,7 +9,6 @@ import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetric
 import org.apache.kafka.clients.consumer.ConsumerRecords
 import zio._
 import zio.blocking.Blocking
-import zio.clock.Clock
 import zio.duration._
 
 import scala.collection.JavaConverters._
@@ -17,6 +16,7 @@ import scala.collection.JavaConverters._
 trait EventLoop[-R] extends Resource[R] {
   self =>
   def state: UIO[DispatcherExposedState]
+  def rebalanceListener: RebalanceListener[Any]
 }
 
 object EventLoop {
@@ -36,17 +36,17 @@ object EventLoop {
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
-      runtime <- ZIO.runtime[R with Env]
-      rebalanceListener = listener(runtime, pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
+      rebalanceListener = listener(pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
       _ <- subscribe(initialSubscription, rebalanceListener)(consumer)
       running <- Ref.make(true)
       fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group)
         .doWhile(_ == true).forkDaemon
       _ <- partitionsAssigned.await
-    } yield (dispatcher, fiber, offsets, running)
+      env <-  ZIO.environment[R with Env]
+    } yield (dispatcher, fiber, offsets, running, rebalanceListener.provide(env))
 
     start.toManaged {
-      case (dispatcher, fiber, offsets, running) => for {
+      case (dispatcher, fiber, offsets, running, _) => for {
         _ <- report(StoppingEventLoop(clientId, group))
         _ <- running.set(false)
         drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
@@ -54,7 +54,7 @@ object EventLoop {
         _ <- commitOffsets(consumer, offsets)
       } yield ()
     }.map {
-      case (dispatcher, fiber, _, _) =>
+      case (dispatcher, fiber, _, _, listener) =>
         new EventLoop[GreyhoundMetrics with Blocking] {
           override def pause: URIO[GreyhoundMetrics with Blocking, Unit] =
             report(PausingEventLoop(clientId, group)) *> dispatcher.pause
@@ -68,6 +68,8 @@ object EventLoop {
           }
 
           override def state: UIO[DispatcherExposedState] = dispatcher.expose
+
+          override def rebalanceListener: RebalanceListener[Any] = listener
         }
     }
   }
@@ -91,37 +93,24 @@ object EventLoop {
       case false => UIO(false)
     }
 
-  private def listener[R2, R1](runtime: Runtime[R2 with Env],
-                               pausedPartitionsRef: Ref[Set[TopicPartition]],
+  private def listener(pausedPartitionsRef: Ref[Set[TopicPartition]],
                                config: EventLoopConfig,
-                               dispatcher: Dispatcher[R2],
+                               dispatcher: Dispatcher[_],
                                partitionsAssigned: Promise[Nothing, Unit],
                                group: Group, consumer: Consumer, clientId: ClientId, offsets: Offsets) = {
-    new RebalanceListener[Blocking with GreyhoundMetrics with R1] {
-      override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[Blocking with GreyhoundMetrics with R1, Any] =
-        ZIO.effectTotal {
-          //todo: isn't this just boxing and unboxing? can't we eliminate it?
-          /**
-           * The rebalance listener is invoked while calling `poll`. Kafka forces you
-           * to call `commit` from the same thread, otherwise an exception will be thrown.
-           * This is needed in order to stay on the same thread and commit properly.
-           * ZIO might decide to shift, which will make the call to `commit` fail,
-           * however this is not very likely (it shifts every 1024 instructions by default),
-           * and even when that happens we still maintain the guarantee to process at least once.
-           */
-          runtime.unsafeRun {
-            pausedPartitionsRef.set(Set.empty) *>
-              config.rebalanceListener.onPartitionsRevoked(partitions) *>
-              dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
-                ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
-              }
-          }
-        } *> commitOffsets(consumer, offsets, calledOnRebalance = true)
+    config.rebalanceListener *>
+      new RebalanceListener[ZEnv with GreyhoundMetrics] {
+        override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[ZEnv with GreyhoundMetrics, DelayedRebalanceEffect] = {
+          pausedPartitionsRef.set(Set.empty) *>
+           dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
+               ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
+           } *>
+           commitOffsetsOnRebalance(consumer, offsets)
+        }
 
-      override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] =
-        config.rebalanceListener.onPartitionsAssigned(partitions) *>
-          partitionsAssigned.succeed(())
-    }
+        override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
+            partitionsAssigned.succeed(())
+      }
   }
 
 
@@ -164,17 +153,20 @@ object EventLoop {
         }.flatMap(pausedTopics => pausedRef.update(_ => pausedTopics)))
     }
 
-  private def commitOffsets[R](consumer: Consumer,
-                               offsets: Offsets,
-                               calledOnRebalance: Boolean = false) =
+  private def commitOffsets(consumer: Consumer,
+                               offsets: Offsets): URIO[Blocking with GreyhoundMetrics, Unit] =
     offsets.committable.flatMap { committable =>
-      consumer.commit(committable, calledOnRebalance).catchAll { _ =>
-        ZIO.foreach_(committable) {
-          case (partition, offset) =>
-            offsets.update(partition, offset)
-        }
-      }
+      consumer.commit(committable).catchAll { _ => offsets.update(committable) }
     }
+
+  private def commitOffsetsOnRebalance(consumer: Consumer,
+                                       offsets: Offsets): URIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] = {
+    for {
+      committable <- offsets.committable
+      tle <- consumer.commitOnRebalance(committable).catchAll  { _ => offsets.update(committable) *> DelayedRebalanceEffect.zioUnit }
+      runtime <- ZIO.runtime[Any]
+    } yield tle.catchAll { _ => runtime.unsafeRunTask(offsets.update(committable)) }
+  }
 
 }
 
