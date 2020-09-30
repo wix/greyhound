@@ -25,7 +25,9 @@ trait Consumer {
 
   def poll(timeout: Duration): RIO[Blocking with GreyhoundMetrics, Records]
 
-  def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean = false): RIO[Blocking with GreyhoundMetrics, Unit]
+  def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit]
+
+  def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect]
 
   def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
@@ -62,11 +64,21 @@ object Consumer {
       listener(rebalanceListener *> config.additionalListener).flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
     override def poll(timeout: Duration): RIO[Blocking, Records] =
-      withConsumerBlocking(_.poll(time.Duration.ofMillis(timeout.toMillis)))
+      withConsumerBlocking {c =>
+        c.poll(time.Duration.ofMillis(timeout.toMillis))
+      }
 
-    override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Blocking, Unit] =
-      if (calledOnRebalance) Task(consumer.commitSync(kafkaOffsets(offsets)))
-      else withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
+
+    override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
+      withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
+    }
+
+    override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] = {
+      val kOffsets = kafkaOffsets(offsets)
+      // we can't actually call commit here, as it needs to be called from the same
+      // thread, that triggered poll(), so we return the commit action as thunk
+      UIO(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
+    }
 
     override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
       withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie {
@@ -113,8 +125,10 @@ object Consumer {
   private def listener[R1](rebalanceListener: RebalanceListener[R1]) =
     ZIO.runtime[Blocking with R1].map { runtime =>
       new ConsumerRebalanceListener {
-        override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit =
+        override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit = {
           runtime.unsafeRun(rebalanceListener.onPartitionsRevoked(partitionsFor(partitions)))
+            .run() // this needs to be run in the same thread
+        }
 
         override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
           runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(partitionsFor(partitions)))

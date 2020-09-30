@@ -38,7 +38,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   private def listener[R1](r: R1 with GreyhoundMetrics with Blocking, rebalanceListener: RebalanceListener[R1]) = {
     new RebalanceListener[Any] {
-      override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[Any] =
+      override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[DelayedRebalanceEffect] =
         (GreyhoundMetrics.report(PartitionsRevoked(clientId, group, partitions)) *>
           rebalanceListener.onPartitionsRevoked(partitions)).provide(r)
 
@@ -72,13 +72,31 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
     onlyOffsets
   }
 
-  override def commit(offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean): RIO[Blocking with GreyhoundMetrics, Unit] =
-    ZIO.when(offsets.nonEmpty) {
-      GreyhoundMetrics.report(CommittingOffsets(clientId, group, offsets, calledOnRebalance)) *>
-        internal.commit(offsets, calledOnRebalance).tapError { error =>
-          GreyhoundMetrics.report(CommitFailed(clientId, group, error, offsets))
-        }
+  override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] =
+    ZIO.runtime[Blocking with GreyhoundMetrics].flatMap { runtime =>
+      if (offsets.nonEmpty) {
+        GreyhoundMetrics.report(CommittingOffsets(clientId, group, offsets, calledOnRebalance = true)) *>
+          internal.commitOnRebalance(offsets).tapError { error =>
+            GreyhoundMetrics.report(CommitFailed(clientId, group, error, offsets, calledOnRebalance = true))
+          }.map(
+            _.tapError { error => // handle commit errors in ThreadLockedEffect
+              runtime.unsafeRunTask(GreyhoundMetrics.report(CommitFailed(clientId, group, error, offsets, calledOnRebalance = true)))
+            } *> DelayedRebalanceEffect(runtime.unsafeRunTask(
+              GreyhoundMetrics.report(CommittedOffsets(clientId, group, offsets, calledOnRebalance = true)
+            ))))
+      } else DelayedRebalanceEffect.zioUnit
     }
+
+
+  override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
+    ZIO.when(offsets.nonEmpty) {
+      GreyhoundMetrics.report(CommittingOffsets(clientId, group, offsets, calledOnRebalance = false)) *>
+        internal.commit(offsets).tapError { error =>
+          GreyhoundMetrics.report(CommitFailed(clientId, group, error, offsets))
+        }  *>
+        GreyhoundMetrics.report(CommittedOffsets(clientId, group, offsets, calledOnRebalance = false))
+    }
+  }
 
   override def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics , IllegalStateException, Unit] =
     ZIO.when(partitions.nonEmpty) {
@@ -122,6 +140,8 @@ object ConsumerMetric {
 
   case class CommittingOffsets(clientId: ClientId, group: Group, offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean) extends ConsumerMetric
 
+  case class CommittedOffsets(clientId: ClientId, group: Group, offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean) extends ConsumerMetric
+
   case class PausingPartitions(clientId: ClientId, group: Group, partitions: Set[TopicPartition]) extends ConsumerMetric
 
   case class ResumingPartitions(clientId: ClientId, group: Group, partitions: Set[TopicPartition]) extends ConsumerMetric
@@ -136,7 +156,7 @@ object ConsumerMetric {
 
   case class PollingFailed(clientId: ClientId, group: Group, error: Throwable) extends ConsumerMetric
 
-  case class CommitFailed(clientId: ClientId, group: Group, error: Throwable, offsets: Map[TopicPartition, Offset]) extends ConsumerMetric
+  case class CommitFailed(clientId: ClientId, group: Group, error: Throwable, offsets: Map[TopicPartition, Offset], calledOnRebalance: Boolean = false) extends ConsumerMetric
 
   case class PausePartitionsFailed(clientId: ClientId, group: Group, error: IllegalStateException, partitions: Set[TopicPartition]) extends ConsumerMetric
 

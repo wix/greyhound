@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory
 import zio._
 import zio.blocking.Blocking
 
+import scala.reflect.ClassTag
+
 object TestMetrics {
   trait Service extends GreyhoundMetrics.Service {
     def queue: Queue[GreyhoundMetric]
@@ -32,4 +34,9 @@ object TestMetrics {
 
   def reported: URIO[TestMetrics, List[GreyhoundMetric]] =
     ZIO.accessM[TestMetrics](_.get.reported)
+
+  def reportedOf[T <: GreyhoundMetric: ClassTag](filter: T => Boolean = (_:T) => true): URIO[TestMetrics, List[T]] =
+    reported.map(ms => ms.collect {
+      case m if implicitly[ClassTag[T]].runtimeClass.isAssignableFrom(m.getClass) => m.asInstanceOf[T]
+    }.filter(filter))
 }
