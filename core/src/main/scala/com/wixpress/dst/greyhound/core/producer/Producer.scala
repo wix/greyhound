@@ -68,7 +68,7 @@ object Producer {
             record.topic,
             record.partition.fold[Integer](null)(Integer.valueOf),
             record.key.fold[Array[Byte]](null)(_.toArray),
-            record.value.toArray,
+            Option(record.value).map(_.toArray).orNull,
             headersFrom(record.headers).asJava)
 
         private def headersFrom(headers: Headers): Iterable[Header] =
