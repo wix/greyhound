@@ -190,11 +190,12 @@ object Dispatcher {
                             partition: TopicPartition): URIO[R with Env, Boolean] =
       internalState.update(_.cleared) *>
         state.get.flatMap {
-          case State.Running => queue.take.flatMap { record =>
-            report(TookRecordFromQueue(record, group, clientId)) *>
+          case State.Running => queue.poll.flatMap {
+            case Some(record) => report(TookRecordFromQueue(record, group, clientId)) *>
               internalState.update(_.started) *>
               handle(record).uninterruptible
                 .as(true)
+            case None => UIO(true).delay(5.millis)
           }
           case State.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition)) *>
