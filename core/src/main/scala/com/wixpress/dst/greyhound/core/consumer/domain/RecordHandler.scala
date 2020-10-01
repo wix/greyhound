@@ -117,7 +117,7 @@ trait RecordHandler[-R, +E, K, V] {
     mapError(Right(_)).contramapM { record =>
       record.bimapM(
         key => keyDeserializer.deserialize(record.topic, record.headers, key),
-        value => valueDeserializer.deserialize(record.topic, record.headers, value)
+        value => Option(value).fold(Task[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
       ).mapError(e => Left(SerializationError(e)))
     }
 }

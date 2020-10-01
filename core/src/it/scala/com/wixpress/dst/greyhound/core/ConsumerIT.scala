@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
-import com.wixpress.dst.greyhound.core.testkit.{eventuallyZ, eventuallyTimeout}
+import com.wixpress.dst.greyhound.core.testkit.{eventuallyTimeout, eventuallyZ}
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
@@ -13,7 +13,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Consumer
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
-import com.wixpress.dst.greyhound.testkit.ITEnv._
+import com.wixpress.dst.greyhound.testkit.ITEnv.{clientId, _}
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio.clock.{Clock, sleep}
 import zio.console.Console
@@ -59,6 +59,28 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield {
       msgs._1 must (beRecordWithKey("foo") and beRecordWithValue("bar")) and (
         msgs._2 must (beRecordWithKey("foo") and beRecordWithValue("BAR")))
+    }
+  }
+
+  "produce consume bull values" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
+      group <- randomGroup
+
+      queue <- Queue.unbounded[ConsumerRecord[String, String]]
+      handler = RecordHandler((cr: ConsumerRecord[String, String]) => UIO(println(s"***** Consumed: $cr")) *> queue.offer(cr))
+        .withDeserializers(StringSerde, StringSerde)
+        .ignore
+      cId <- clientId
+      config = configFor(kafka, group, topic).copy(clientId = cId)
+      record = ProducerRecord(topic, null, Some("foo"))
+      message <- RecordConsumer.make(config, handler).use_ {
+        producer.produce(record, StringSerde, StringSerde) *>
+        queue.take.timeoutFail(TimedOutWaitingForMessages)(10.seconds)
+      }
+    } yield {
+      message must (beRecordWithKey("foo") and beRecordWithValue(null))
     }
   }
 
