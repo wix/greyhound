@@ -133,8 +133,9 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       restOfMessages = numberOfMessages - someMessages
       handledSomeMessages <- CountDownLatch.make(someMessages)
       handledAllMessages <- CountDownLatch.make(numberOfMessages)
+      handleCounter <- Ref.make[Int](0)
       handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-        handledSomeMessages.countDown zipParRight handledAllMessages.countDown
+        handleCounter.update(_ + 1) *> handledSomeMessages.countDown zipParRight handledAllMessages.countDown
       }
 
       test <- RecordConsumer.make(configFor(kafka, group, topic).copy(offsetReset = OffsetReset.Earliest), handler).use { consumer =>
@@ -145,10 +146,11 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           _ <- consumer.pause
           _ <- ZIO.foreachPar(0 until restOfMessages)(_ => producer.produce(record))
           a <- handledAllMessages.await.timeout(5.seconds)
+          handledAfterPause <- handleCounter.get
           _ <- consumer.resume
           b <- handledAllMessages.await.timeout(5.seconds)
         } yield {
-          (a must beNone) and (b must beSome)
+          (handledAfterPause === someMessages) and (a must beNone) and (b must beSome)
         }
       }
     } yield test

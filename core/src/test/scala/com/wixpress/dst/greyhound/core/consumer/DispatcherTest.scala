@@ -25,7 +25,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     run(for {
       promise <- Promise.make[Nothing, Record]
       dispatcher <- Dispatcher.make("group", "clientId", promise.succeed, lowWatermark, highWatermark)
-      _ <- dispatcher.submit(record)
+      _ <- submit(dispatcher, record)
       handled <- promise.await
     } yield handled must equalTo(record))
   }
@@ -40,7 +40,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
       }
       dispatcher <- Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark)
       _ <- ZIO.foreach(0 until partitions) { partition =>
-        dispatcher.submit(record.copy(partition = partition))
+        submit(dispatcher, record.copy(partition = partition))
       }
       _ <- TestClock.adjust(1.second)
       _ <- latch.await
@@ -50,13 +50,13 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
   "reject records when high watermark is reached" in new ctx() {
     run(for {
       dispatcher <- Dispatcher.make("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark)
-      _ <- dispatcher.submit(record.copy(offset = 0L)) // Will be polled
-      _ <- dispatcher.submit(record.copy(offset = 1L))
-      _ <- dispatcher.submit(record.copy(offset = 2L))
-      _ <- dispatcher.submit(record.copy(offset = 3L))
-      _ <- dispatcher.submit(record.copy(offset = 4L))
-      result1 <- dispatcher.submit(record.copy(offset = 5L)) // maybe will be dropped
-      result2 <- dispatcher.submit(record.copy(offset = 6L)) // maybe will be dropped
+      _ <-  submit(dispatcher, record.copy(offset = 0L)) // Will be polled
+      _ <-  submit(dispatcher, record.copy(offset = 1L))
+      _ <-  submit(dispatcher, record.copy(offset = 2L))
+      _ <-  submit(dispatcher, record.copy(offset = 3L))
+      _ <-  submit(dispatcher, record.copy(offset = 4L))
+      result1 <-  submit(dispatcher, record.copy(offset = 5L)) // maybe will be dropped
+      result2 <-  submit(dispatcher, record.copy(offset = 6L)) // maybe will be dropped
     } yield (result1 must equalTo(SubmitResult.Rejected)) or (result2 must equalTo(SubmitResult.Rejected)))
   }
 
@@ -66,9 +66,9 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
         queue <- Queue.bounded[Record](1)
         dispatcher <- Dispatcher.make("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))), lowWatermark, highWatermark)
         _ <- ZIO.foreach(0 to (highWatermark + 1)) { offset =>
-          dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
+           submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
         }
-        _ <- dispatcher.submit(ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
+        _ <-  submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
         _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
         _ <- ZIO.foreach_(1 to 4 )(_ => queue.take)
         _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
@@ -80,8 +80,8 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     run(for {
       ref <- Ref.make(0)
       dispatcher <- Dispatcher.make("group", "clientId", _ => ref.update(_ + 1), lowWatermark, highWatermark)
-      _ <- dispatcher.pause
-      _ <- dispatcher.submit(record) // Will be queued
+      _ <- pause(dispatcher)
+      _ <- submit(dispatcher, record) // Will be queued
       invocations <- ref.get
     } yield invocations must equalTo(0))
   }
@@ -96,14 +96,18 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
           promise.succeed(())
       }
       dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark)
-      _ <- dispatcher.submit(record) // Will be handled
+      _ <- submit(dispatcher, record) // Will be handled
       _ <- TestMetrics.reported.flatMap(waitUntilRecordHandled(3.seconds))
-      _ <- dispatcher.pause
-      _ <- dispatcher.submit(record) // Will be queued
+      _ <- pause(dispatcher)
+      _ <- submit(dispatcher, record) // Will be queued
       _ <- TestClock.adjust(1.second)
       _ <- promise.await
       invocations <- ref.get
     } yield invocations must equalTo(1))
+  }
+
+  private def submit(dispatcher: Dispatcher[Clock], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]): URIO[TestClock with Env, SubmitResult] = {
+    dispatcher.submit(record).tap(_ => TestClock.adjust(10.millis))
   }
 
   private def waitUntilRecordHandled(timeout: Duration)(metrics: Seq[GreyhoundMetric]) =
@@ -118,12 +122,20 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
         ref.update(_ + 1) *> promise.succeed(())
       }
       dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark)
-      _ <- dispatcher.pause
-      _ <- dispatcher.submit(record)
-      _ <- dispatcher.resume
+      _ <- pause(dispatcher)
+      _ <- submit(dispatcher, record)
+      _ <- resume(dispatcher)
       _ <- promise.await
       invocations <- ref.get
     } yield invocations must equalTo(1))
+  }
+
+  private def resume(dispatcher: Dispatcher[Nothing]) = {
+    dispatcher.resume *> TestClock.adjust(10.millis)
+  }
+
+  private def pause(dispatcher: Dispatcher[Nothing]) = {
+    dispatcher.pause *> TestClock.adjust(10.millis)
   }
 
   abstract class ctx(val lowWatermark: Int = 2, val highWatermark: Int = 4) extends Scope {
