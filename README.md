@@ -11,6 +11,8 @@ Kafka is shipped with a Java SDK which allows developers to interact with a Kafk
 However, this SDK consists of somewhat low-level APIs which are difficult to use correctly.
 Greyhound seeks to provide a higher-level interface to Kafka and to express richer
 semantics such as parallel message handling or retry policies with ease.
+
+You can read more about it on this blog post - “[Building a High-level SDK for Kafka: Greyhound Unleashed](https://www.wix.engineering/post/building-a-high-level-sdk-for-kafka-greyhound-unleashed)”
 <br><br>
 *The Open-sourced version of Greyhound is still in stages of initial rollout, so APIs might not be fully stable yet.*
 
