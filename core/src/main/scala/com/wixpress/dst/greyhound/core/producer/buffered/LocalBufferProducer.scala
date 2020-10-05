@@ -96,7 +96,7 @@ object LocalBufferProducer {
         validate(config, state) *>
           (for {
             key <- record.key.map(k => keySerializer.serialize(record.topic, k).map(Option(_))).getOrElse(ZIO.none).mapError(LocalBufferError.apply)
-            value <- valueSerializer.serialize(record.topic, record.value).mapError(LocalBufferError.apply)
+            value <- valueSerializer.serializeOpt(record.topic, record.value).mapError(LocalBufferError.apply)
             response <- produce(record.copy(key = key, value = value))
           } yield response)
 

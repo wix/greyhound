@@ -90,7 +90,7 @@ object H2LocalBuffer {
         topic = rs.getString(2)
         producePartition <- Task(rs.getInt(4)).map(p => if (p >= 0) Option(p) else None)
         id <- Task(rs.getLong(1))
-        encodedPayload = Try(Chunk.fromArray(rs.getBytes(5))).toOption.orNull
+        encodedPayload = Try(Chunk.fromArray(rs.getBytes(5))).toOption
         header <- decodeHeaders(rs.getString(6))
         submitted <- UIO(rs.getLong(9))
       } yield PersistedRecord(id, SerializableTarget(topic, producePartition, produceKey), EncodedMessage(encodedPayload, header), submitted))
@@ -108,7 +108,7 @@ object H2LocalBuffer {
   private def executeInsert(connection: Connection, currentSequenceNumber: Ref[Int])(message: PersistedRecord): RIO[Clock with Blocking, Int] =
     for {
       insertStatement <- effectBlocking(connection.prepareStatement(InsertQuery))
-      payloadBytes = Option(message.encodedMsg.value).map(_.toArray).orNull
+      payloadBytes = message.encodedMsg.value.map(_.toArray).orNull
       base64Headers <- encodeHeaderToBase64(message)
       base64Key <- keyBytes(message)
       lastSeqNum <- currentSequenceNumber.updateAndGet(_ + 1)

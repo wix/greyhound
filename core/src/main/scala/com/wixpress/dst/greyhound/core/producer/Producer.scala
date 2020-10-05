@@ -37,8 +37,8 @@ trait ProducerR[-R] {
 
   private def serialized[V, K](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]) = {
     for {
-      keyBytes <- ZIO.foreach(record.key)(keySerializer.serialize(record.topic, _))
-      valueBytes <- valueSerializer.serialize(record.topic, record.value)
+      keyBytes <- keySerializer.serializeOpt(record.topic, record.key)
+      valueBytes <- valueSerializer.serializeOpt(record.topic, record.value)
     } yield ProducerRecord(
       topic = record.topic,
       value = valueBytes,
@@ -68,7 +68,7 @@ object Producer {
             record.topic,
             record.partition.fold[Integer](null)(Integer.valueOf),
             record.key.fold[Array[Byte]](null)(_.toArray),
-            Option(record.value).map(_.toArray).orNull,
+            record.value.map(_.toArray).orNull,
             headersFrom(record.headers).asJava)
 
         private def headersFrom(headers: Headers): Iterable[Header] =

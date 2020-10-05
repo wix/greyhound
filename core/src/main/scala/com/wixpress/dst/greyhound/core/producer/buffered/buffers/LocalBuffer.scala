@@ -33,7 +33,7 @@ case class PersistedRecord(id: PersistedMessageId, target: SerializableTarget, e
   def topic: Topic = target.topic
 }
 
-case class EncodedMessage(value: Chunk[Byte], headers: Headers)
+case class EncodedMessage(value: Option[Chunk[Byte]], headers: Headers)
 
 case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 

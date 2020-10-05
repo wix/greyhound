@@ -229,7 +229,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
 
   def produceMultiple[R](keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer[GreyhoundMetrics with Clock with R], record: ProducerRecord[String, Int]) =
     ZIO.foreach(0 until (keyCount * recordPerKey)) { i =>
-      localBufferProducer.produce(record.copy(value = i, key = Some((i % keyCount).toString)), StringSerde, IntSerde)
+      localBufferProducer.produce(record.copy(value = Some(i), key = Some((i % keyCount).toString)), StringSerde, IntSerde)
     }
 
   def expectedMap(recordPerKey: Int, keyCount: Int): Map[String, Seq[Int]] =

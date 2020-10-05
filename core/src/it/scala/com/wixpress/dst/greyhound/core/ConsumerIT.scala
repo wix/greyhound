@@ -50,19 +50,19 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           sleep(3.seconds) *>
           consumer.resubscribe(ConsumerSubscription.topics(topic, topic2)) *>
           sleep(500.millis) *> // give the consumer some time to start polling topic2
-          producer.produce(record.copy(topic = topic2, value = "BAR"), StringSerde, StringSerde) *>
+          producer.produce(record.copy(topic = topic2, value = Some("BAR")), StringSerde, StringSerde) *>
           (queue.take zip queue.take)
             .timeout(20.seconds)
             .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
       }
-      msgs <- ZIO.fromOption(messages).mapError(_ => TimedOutWaitingForMessages)
+      msgs <- ZIO.fromOption(messages).orElseFail(TimedOutWaitingForMessages)
     } yield {
       msgs._1 must (beRecordWithKey("foo") and beRecordWithValue("bar")) and (
         msgs._2 must (beRecordWithKey("foo") and beRecordWithValue("BAR")))
     }
   }
 
-  "produce consume bull values" in {
+  "produce consume null values (tombstones)" in {
     for {
       TestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
@@ -74,7 +74,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         .ignore
       cId <- clientId
       config = configFor(kafka, group, topic).copy(clientId = cId)
-      record = ProducerRecord(topic, null, Some("foo"))
+      record = ProducerRecord.tombstone(topic, Some("foo"))
       message <- RecordConsumer.make(config, handler).use_ {
         producer.produce(record, StringSerde, StringSerde) *>
         queue.take.timeoutFail(TimedOutWaitingForMessages)(10.seconds)
@@ -107,7 +107,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
         val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
         for {
-          _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
+          _ <- ZIO.foreachPar_(0 until messagesPerPartition) { _ =>
             producer.produce(recordPartition0) zipPar producer.produce(recordPartition1)
           }
           handledAllFromPartition0 <- handledPartition0.await.timeout(10.seconds)
@@ -141,10 +141,10 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       test <- RecordConsumer.make(configFor(kafka, group, topic).copy(offsetReset = OffsetReset.Earliest), handler).use { consumer =>
         val record = ProducerRecord(topic, Chunk.empty)
         for {
-          _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
+          _ <- ZIO.foreachPar_(0 until someMessages)(_ => producer.produce(record))
           _ <- handledSomeMessages.await
           _ <- consumer.pause
-          _ <- ZIO.foreachPar(0 until restOfMessages)(_ => producer.produce(record))
+          _ <- ZIO.foreachPar_(0 until restOfMessages)(_ => producer.produce(record))
           a <- handledAllMessages.await.timeout(5.seconds)
           handledAfterPause <- handleCounter.get
           _ <- consumer.resume
@@ -225,8 +225,8 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       test <- createConsumerTask(0).use_ {
         val record = ProducerRecord(topic, Chunk.empty, partition = Some(0))
         for {
-          _ <- ZIO.foreachPar(0 until partitions) { p =>
-            ZIO.foreach(0 until messagesPerPartition)(_ =>
+          _ <- ZIO.foreachPar_(0 until partitions) { p =>
+            ZIO.foreach_(0 until messagesPerPartition)(_ =>
               producer.produceAsync(record.copy(partition = Some(p)))
             )
           }
