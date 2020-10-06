@@ -83,7 +83,7 @@ object RecordConsumer {
       } yield RecordConsumerExposedState(dispatcherState, config.clientId, blockingStateMap)
 
       override def topology: UIO[RecordConsumerTopology] =
-        consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(subscription))
+        consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(config.group, subscription))
 
       override def group: Group = config.group
 
@@ -150,7 +150,7 @@ case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, c
   def topics = dispatcherState.topics
 }
 
-case class RecordConsumerTopology(subscription: ConsumerSubscription)
+case class RecordConsumerTopology(group: Group, subscription: ConsumerSubscription)
 
 case class RecordConsumerConfig(bootstrapServers: String,
                                 group: Group,
