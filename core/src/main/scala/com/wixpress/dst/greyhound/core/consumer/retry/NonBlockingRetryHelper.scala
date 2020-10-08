@@ -13,6 +13,7 @@ import com.wixpress.dst.greyhound.core.{Group, Headers, Topic}
 import zio.clock.Clock
 import zio.duration.Duration
 import zio.{Chunk, UIO, URIO, _}
+import zio.duration._
 
 import scala.util.Try
 

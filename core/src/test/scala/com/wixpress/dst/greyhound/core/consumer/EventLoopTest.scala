@@ -18,6 +18,7 @@ import zio.clock.Clock
 import zio.duration._
 
 import scala.collection.JavaConverters._
+import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 
 class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
 
@@ -77,7 +78,7 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
           ZIO.dieMessage("cough :(")
       }
       died <- EventLoop.make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId").use { eventLoop =>
-        eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.doUntil(alive => !alive)).unit
+        eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(alive => !alive)).unit
       }.catchAllCause(_ => ZIO.unit).timeout(5.second)
     } yield died must beSome
   }

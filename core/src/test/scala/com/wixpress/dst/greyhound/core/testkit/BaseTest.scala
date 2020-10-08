@@ -2,14 +2,15 @@ package com.wixpress.dst.greyhound.core.testkit
 
 import java.util.concurrent.atomic.AtomicReference
 
-import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
+import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import org.specs2.execute.{AsResult, Error, Result}
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.BeforeAfterAll
 import org.specs2.specification.core.{Fragment, Fragments}
 import zio.console.putStrLn
 import zio.internal.Platform
-import zio.{Reservation => _, _}
+import zio._
+import zio.duration._
 
 trait BaseTest[R]
   extends SpecificationWithJUnit
@@ -54,7 +55,7 @@ trait BaseTestWithSharedEnv[R <: Has[_], SHARED] extends SpecificationWithJUnit 
     }
   }
 
-  private val sharedRef = new AtomicReference[Option[Reservation[SHARED]]](None)
+  private val sharedRef = new AtomicReference[Option[(SHARED, Task[Unit])]](None)
 
   def sharedEnv: ZManaged[R, Throwable, SHARED]
 
@@ -64,21 +65,25 @@ trait BaseTestWithSharedEnv[R <: Has[_], SHARED] extends SpecificationWithJUnit 
     sharedRef.set(Some(initShared()))
   }
 
-  private def initShared() = {
-    runtime.unsafeRunTask(env.use(r =>
+  private def initShared(): (SHARED, UIO[Unit]) = {
+    runtime.unsafeRunTask(env.use(e =>
       putStrLn(s"***** Shared environment initializing ****") *>
-        sharedEnv.reserve.provide(r).timed.tapBoth (
-          error => UIO(new Throwable(s"***** shared environment initialization failed - ${error.getClass.getName}: ${error.getMessage}", error).printStackTrace()),
-          { case (elapsed, _) => putStrLn(s"***** Shared environment initialized in ${elapsed.toMillis} ms *****") }
-        ).map(_._2)
+        (for {
+          reservation <- sharedEnv.reserve
+          acquired <- reservation.acquire.provide(e).timed.tapBoth (
+            (error:Throwable) => UIO(new Throwable(s"***** shared environment initialization failed - ${error.getClass.getName}: ${error.getMessage}", error).printStackTrace()),
+            { case (elapsed, _) => putStrLn(s"***** Shared environment initialized in ${elapsed.toMillis} ms *****") }
+          )
+          (_, res)  = acquired
+        } yield res -> reservation.release(Exit.unit).unit.provide(e))
     ))
   }
 
   override def afterAll(): Unit = {
-    sharedRef.get.foreach(
-      reservation =>
-        runtime.unsafeRunTask(reservation.release(Exit.unit))
-    )
+    sharedRef.get.foreach {
+      case (_, release) =>
+        runtime.unsafeRunTask(release)
+    }
   }
 
   def getShared(implicit ev: zio.Tag[SHARED]) :URIO[Has[SHARED], SHARED] = ZIO.access[Has[SHARED]](_.get[SHARED])
@@ -89,8 +94,8 @@ trait BaseTestWithSharedEnv[R <: Has[_], SHARED] extends SpecificationWithJUnit 
       runtime.unsafeRunSync(
         env.use { e: R =>
           val sharedEnv: SHARED = sharedRef.get
+            .map(_._1)
             .getOrElse(throw new RuntimeException("shared environment not initialized"))
-            .acquired
           t.provide(e.++[Has[SHARED]](Has(sharedEnv)))
         }).fold(
         e => Error(e.squashTraceWith{

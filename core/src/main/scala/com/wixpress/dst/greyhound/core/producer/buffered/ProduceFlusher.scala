@@ -8,6 +8,7 @@ import com.wixpress.dst.greyhound.core.producer.buffered.Common.{nonRetriable, t
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded}
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy
 import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerR, ProducerRecord, RecordMetadata}
+import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import org.apache.kafka.common.errors._
 import zio._
 import zio.blocking.Blocking
@@ -36,8 +37,8 @@ object ProduceFiberAsyncRouter {
               batchSize: Int): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
-      queues <- ZIO.foreach(0 until maxConcurrency)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
-      _ <- ZIO.foreach(queues.values)(q =>
+      queues <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
+      _ <- ZIO.foreach_(queues.values)(q =>
         fetchAndProduce(producer)(retryInterval, batchSize)(q)
           .forever
           .forkDaemon)
@@ -71,18 +72,18 @@ object ProduceFiberAsyncRouter {
   private def discardOldRequests(reqs: Seq[ProduceRequest]) =
     ZIO.foreach(reqs.filter(timeoutPassed))(reportError)
 
-  private def succeedOrRetry[R](producer: ProducerR[R], level: Int, retryInterval: Duration)(results: List[Option[(ProduceRequest, Either[ProducerError, RecordMetadata])]]) = {
+  private def succeedOrRetry[R](producer: ProducerR[R], level: Int, retryInterval: Duration)(results: Seq[Option[(ProduceRequest, Either[ProducerError, RecordMetadata])]]) = {
     val failures = results.collect { case Some((req, _@Left(_))) => req }
     val successes = results.collect { case Some((req, _@Right(value))) => (req, value) }
 
-    ZIO.foreach(successes) {
+    ZIO.foreach_(successes) {
       case (req, res) => req.succeed(res)
     } *>
       ZIO.when(failures.nonEmpty)(
         produceUntilResolution(producer)(level + 1)(retryInterval)(failures).delay(retryInterval))
   }
 
-  private def removeFinalFailures(results: List[(ProduceRequest, Either[ProducerError, RecordMetadata])]) =
+  private def removeFinalFailures(results: Seq[(ProduceRequest, Either[ProducerError, RecordMetadata])]) =
     ZIO.foreach(results) { case (req, res) =>
       res match {
         case Left(e) if (timeoutPassed(req) || nonRetriable(e.getCause)) =>
@@ -93,7 +94,7 @@ object ProduceFiberAsyncRouter {
       }
     }
 
-  private def awaitOnPromises(promises: List[(ProduceRequest, Promise[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, List[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
+  private def awaitOnPromises(promises: Seq[(ProduceRequest, Promise[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, Seq[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
     ZIO.foreach(promises) { case (req: ProduceRequest, res: Promise[ProducerError, RecordMetadata]) => res.await
       .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
       .either.map(e => (req, e))
@@ -109,8 +110,8 @@ object ProduceFiberSyncRouter {
   def make[R](producer: ProducerR[R], maxConcurrency: Int, giveUpAfter: Duration, retryInterval: Duration): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
-      queues <- ZIO.foreach(0 until maxConcurrency)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
-      _ <- ZIO.foreach(queues.values)(
+      queues <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
+      _ <- ZIO.foreach_(queues.values)(
         _.take
           .flatMap((req: ProduceRequest) =>
             ZIO.whenCase(timeoutPassed(req)) {
@@ -121,7 +122,7 @@ object ProduceFiberSyncRouter {
               case false =>
                 producer.produce(req.record)
                   .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-                  .retry(Schedule.spaced(retryInterval) && Schedule.doUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
+                  .retry(Schedule.spaced(retryInterval) && Schedule.recurUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
                   .tapBoth(req.fail, req.succeed)
             }.ignore
           )

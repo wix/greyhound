@@ -42,12 +42,12 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       startProducing1 <- Promise.make[Nothing, Unit]
       consumer1 <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
-      _ <- startProducing1.await *> ZIO.foreachPar(0 until someMessages)(_ => produce)
+      _ <- startProducing1.await *> ZIO.foreachPar(0 until someMessages: Seq[Int])(_ => produce)
 
       _ <- handledSome.await
       startProducing2 <- Promise.make[Nothing, Unit]
       consumer2 <- consumer.use_(startProducing2.succeed(()) *> handledAll.await).fork
-      _ <- startProducing2.await *> ZIO.foreachPar(someMessages until allMessages)(_ => produce)
+      _ <- startProducing2.await *> ZIO.foreachPar(someMessages until allMessages: Seq[Int])(_ => produce)
 
       _ <- ZIO.foreach_(Seq(consumer1, consumer2))(_.join.timeoutFail(TimeoutJoiningConsumer())(30.seconds))
       allInvocations <- invocations.get

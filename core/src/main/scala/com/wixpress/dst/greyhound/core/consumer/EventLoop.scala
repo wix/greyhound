@@ -7,6 +7,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Consumer
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import org.apache.kafka.clients.consumer.ConsumerRecords
+import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import zio._
 import zio.blocking.Blocking
 import zio.duration._
@@ -40,7 +41,7 @@ object EventLoop {
       _ <- subscribe(initialSubscription, rebalanceListener)(consumer)
       running <- Ref.make(true)
       fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, offsets, config, clientId, group)
-        .doWhile(_ == true).forkDaemon
+        .repeatWhile(_ == true).forkDaemon
       _ <- partitionsAssigned.await
       env <-  ZIO.environment[R with Env]
     } yield (dispatcher, fiber, offsets, running, rebalanceListener.provide(env))

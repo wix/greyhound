@@ -8,6 +8,7 @@ import zio.duration.{Duration => ZDuration}
 
 import scala.math.{abs, log10, max}
 import scala.util.Try
+import zio.duration._
 
 object ExponentialBackoffCalculator {
   def exponentialBackoffs(initialInterval: ZDuration,
