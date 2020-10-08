@@ -2,7 +2,6 @@ package com.wixpress.dst.greyhound.core.testkit
 
 import java.util.concurrent.atomic.AtomicReference
 
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import org.specs2.execute.{AsResult, Error, Result}
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.BeforeAfterAll

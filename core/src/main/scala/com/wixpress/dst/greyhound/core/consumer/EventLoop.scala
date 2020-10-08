@@ -7,7 +7,6 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Consumer
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import org.apache.kafka.clients.consumer.ConsumerRecords
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import zio._
 import zio.blocking.Blocking
 import zio.duration._

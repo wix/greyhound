@@ -10,7 +10,6 @@ import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetric
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
 import zio.duration.{Duration, _}
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R with Env, SubmitResult]
