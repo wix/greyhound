@@ -13,6 +13,7 @@ import zio.blocking.Blocking
 import zio.clock.{Clock, currentTime}
 import zio.duration._
 
+import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 
 trait BlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R with Blocking, Nothing, LastHandleResult]
@@ -45,7 +46,7 @@ private[retry] object BlockingRetryRecordHandler {
         for {
           start <- currentTime(TimeUnit.MILLISECONDS)
           continueBlocking <- if (interval.toMillis > 100L) {
-            pollBlockingStateWithSuspensions(interval, start).doWhile(result => result.pollAgain).map(_.blockHandling)
+            pollBlockingStateWithSuspensions(interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
           } else {
             for {
               shouldBlock <- blockingStateResolver.resolve(record)

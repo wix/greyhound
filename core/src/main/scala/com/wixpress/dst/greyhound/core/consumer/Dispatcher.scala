@@ -10,6 +10,7 @@ import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetric
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
 import zio.duration.{Duration, _}
+import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R with Env, SubmitResult]
@@ -166,7 +167,7 @@ object Dispatcher {
       internalState <- Ref.make(WorkerInternalState.empty)
       fiber <-
         pollOnce(status, internalState, handle, queue, group, clientId, partition)
-          .interruptible.doWhile(_ == true).forkDaemon
+          .interruptible.repeatWhile(_ == true).forkDaemon
     } yield new Worker {
       override def submit(record: Record): UIO[Boolean] =
         queue.offer(record)

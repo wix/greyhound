@@ -5,6 +5,7 @@ import java.lang.System.currentTimeMillis
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer._
+import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy.Unordered
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
@@ -81,7 +82,7 @@ object LocalBufferProducer {
           case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(1.millis) // this waits until there are more messages in buffer
           case x if x <= 10 => sleep(10.millis)
         })
-        .doWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
+        .repeatWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
         .forkDaemon
     } yield new LocalBufferProducer[R] {
       override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =

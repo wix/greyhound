@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.zioutils
 
-import ZManagedSyntax._
+import ZIOCompatSyntax._
 import zio._
 import zio.clock.Clock
 import zio.duration.{Duration, durationInt}
@@ -15,12 +15,13 @@ object AcquiredManagedResource {
   def acquire[R <: Has[_] : zio.Tag, T](resources: ZManaged[R, Throwable, T],
                                         releaseTimeout: Duration = 10.seconds): ZIO[Clock with R, Throwable, AcquiredManagedResource[T]] = for {
     runtime <- ZIO.runtime[Any]
-    clock <- ZIO.environment[Clock]
+    clock <- ZIO.environment[Clock with R]
     r <- resources.reserve
+    acquired <- r.acquire
   } yield {
     val releaseWithTimeout = r.release(Exit.unit)
       .timeoutFail(new TimeoutException("release timed out"))(releaseTimeout)
       .provide(clock)
       .orDie.unit
-    AcquiredManagedResource(r.acquired, releaseWithTimeout, runtime)
+    AcquiredManagedResource(acquired, releaseWithTimeout, runtime)
   }}

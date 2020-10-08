@@ -50,7 +50,7 @@ object AdminClient {
 
         override def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking, Map[String, Option[Throwable]]] =
           effectBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
-            ZIO.foreach(result.values.asScala) {
+            ZIO.foreach(result.values.asScala.toSeq) {
               case (topic, topicResult) =>
                 topicResult.asZio.either.map(topic -> _.left.toOption.filterNot(ignoreErrors))
             }.map(_.toMap)

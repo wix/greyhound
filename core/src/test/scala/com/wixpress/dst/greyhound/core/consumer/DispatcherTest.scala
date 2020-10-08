@@ -39,7 +39,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
         clock.sleep(1.second) *> latch.countDown
       }
       dispatcher <- Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark)
-      _ <- ZIO.foreach(0 until partitions) { partition =>
+      _ <- ZIO.foreach_(0 until partitions) { partition =>
         submit(dispatcher, record.copy(partition = partition))
       }
       _ <- TestClock.adjust(1.second)
@@ -49,7 +49,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
 
   "reject records when high watermark is reached" in new ctx() {
     run(for {
-      dispatcher <- Dispatcher.make("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make[Clock]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark)
       _ <-  submit(dispatcher, record.copy(offset = 0L)) // Will be polled
       _ <-  submit(dispatcher, record.copy(offset = 1L))
       _ <-  submit(dispatcher, record.copy(offset = 2L))
@@ -64,8 +64,8 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     run(
       for {
         queue <- Queue.bounded[Record](1)
-        dispatcher <- Dispatcher.make("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))), lowWatermark, highWatermark)
-        _ <- ZIO.foreach(0 to (highWatermark + 1)) { offset =>
+        dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))), lowWatermark, highWatermark)
+        _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
            submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
         }
         _ <-  submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
@@ -79,7 +79,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
   "pause handling" in new ctx() {
     run(for {
       ref <- Ref.make(0)
-      dispatcher <- Dispatcher.make("group", "clientId", _ => ref.update(_ + 1), lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make[Clock]("group", "clientId", _ => ref.update(_ + 1), lowWatermark, highWatermark)
       _ <- pause(dispatcher)
       _ <- submit(dispatcher, record) // Will be queued
       invocations <- ref.get
@@ -95,7 +95,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
           ref.update(_ + 1) *>
           promise.succeed(())
       }
-      dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make[Clock]("group", "clientId", handler, lowWatermark, highWatermark)
       _ <- submit(dispatcher, record) // Will be handled
       _ <- TestMetrics.reported.flatMap(waitUntilRecordHandled(3.seconds))
       _ <- pause(dispatcher)
