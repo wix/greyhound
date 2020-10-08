@@ -8,7 +8,6 @@ import com.wixpress.dst.greyhound.core.producer.buffered.Common.{nonRetriable, t
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded}
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy
 import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerR, ProducerRecord, RecordMetadata}
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import org.apache.kafka.common.errors._
 import zio._
 import zio.blocking.Blocking

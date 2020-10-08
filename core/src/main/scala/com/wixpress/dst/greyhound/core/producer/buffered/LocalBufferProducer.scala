@@ -5,7 +5,6 @@ import java.lang.System.currentTimeMillis
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer._
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy.Unordered
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
