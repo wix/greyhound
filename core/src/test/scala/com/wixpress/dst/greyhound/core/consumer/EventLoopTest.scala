@@ -18,7 +18,6 @@ import zio.clock.Clock
 import zio.duration._
 
 import scala.collection.JavaConverters._
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 
 class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
 

@@ -3,7 +3,6 @@ package com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import zio.Schedule._
 import zio.Schedule
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 import zio.clock.Clock
 import zio.duration._
 import zio.{Has, RIO, Ref, UIO, ZIO}

@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.zioutils
 
-import ZIOCompatSyntax._
 import zio._
 import zio.clock.Clock
 import zio.duration.{Duration, durationInt}

@@ -13,7 +13,6 @@ import zio.blocking.Blocking
 import zio.clock.{Clock, currentTime}
 import zio.duration._
 
-import com.wixpress.dst.greyhound.core.zioutils.ZIOCompatSyntax._
 
 trait BlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R with Blocking, Nothing, LastHandleResult]
