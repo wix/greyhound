@@ -11,7 +11,7 @@ jobs:
           command: |-
               cd getting-started/greyhound-app
               gradlew bootBuildImage --imageName=wixpress/greyhound-app
-              cd ../../
+              cd ../..
               
               # Set environment variables
               # Install Bazelisk
