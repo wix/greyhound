@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.producer.buffered.buffers
 
+import java.io.File
 import java.nio.file.{FileAlreadyExistsException, Files, Paths}
 import java.sql.{Connection, ResultSet, Statement}
 import java.util.Base64
@@ -75,6 +76,12 @@ object H2LocalBuffer {
             )
         }
           .mapError(LocalBufferError.apply)
+
+      override def cleanup: ZIO[Blocking, LocalBufferError, Unit] =
+        (effectBlocking(connection.close()) *>
+          effectBlocking(new File(s"$localPath.mv.db").delete()))
+          .catchAll(e => ZIO.fail(LocalBufferError(e)))
+          .unit
     })
       .toManaged(m => m.close.ignore)
 

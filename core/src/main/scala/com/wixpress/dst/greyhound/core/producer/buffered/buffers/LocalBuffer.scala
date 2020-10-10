@@ -27,6 +27,8 @@ trait LocalBuffer {
   def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 
   def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
+
+  def cleanup: ZIO[Blocking, LocalBufferError, Unit]
 }
 
 case class PersistedRecord(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {

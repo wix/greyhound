@@ -122,7 +122,7 @@ object LocalBufferProducer {
               .timeout(config.shutdownFlushTimeout)
               .tap {
                 case None => report(LocalBufferFlushTimeout(toFlush, config.shutdownFlushTimeout.toMillis, config.id))
-                case _ => ZIO.unit
+                case _ => localBuffer.cleanup
               } *>
             localBuffer.close)
           .ignore
