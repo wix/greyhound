@@ -19,3 +19,15 @@ jobs:
 
               # Execute bazel
               bazel --bazelrc=.cirrus.bazelrc test --test_verbose_timeout_warnings --flaky_test_attempts=3 -k //...
+      - run:
+          name: Prepare results
+          when: always
+          command: |-
+              rm -rf /tmp/bazel-testlogs
+              mkdir -p /tmp/bazel-testlogs
+              cp -r /root/project/bazel-testlogs/ /tmp/bazel-testlogs/
+      - store_test_results:
+          path: /tmp/bazel-testlogs
+      - store_artifacts:
+          path: /tmp/bazel-testlogs
+
