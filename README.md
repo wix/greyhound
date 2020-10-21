@@ -139,7 +139,7 @@ val builder = GreyhoundConsumersBuilder(config)
 
 ### Java API
 
-Greyhound also offers a Java API - a docker based [quick-start Java App](getting-started/README.md) that demonstrates using Greyhound is available. 
+Greyhound also offers a Java API - a docker based [quick-start Java App](getting-started/README.md) that demonstrates using Greyhound is available to play with. 
 
 ### ZIO API
 
