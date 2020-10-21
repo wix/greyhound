@@ -3,7 +3,7 @@
 
 Scala/Java High-level SDK for [Apache Kafka](https://kafka.apache.org/).
 
-![Greyhound](./docs/logo.png)
+![Greyhound](../docs/logo.png)
 
 ## Why Greyhound?
 
@@ -55,7 +55,7 @@ You can read more about it on this blog post - “[Building a High-level SDK for
 ### Add greyhound to your build
 All Greyhound modules can be found in [Maven Central Repository](https://search.maven.org/search?q=greyhound).
 
-See [examples](./docs/build.md) of how to add greyhound modules to your build (Maven, Gradle, SBT, etc...).
+See [examples](../docs/build.md) of how to add greyhound modules to your build (Maven, Gradle, SBT, etc...).
 
 ### Basics
 
@@ -139,7 +139,7 @@ val builder = GreyhoundConsumersBuilder(config)
 
 ### Java API
 
-Greyhound also offers a Java API - a docker based [quick-start Java App](./getting-started/README.md) that demonstrates using Greyhound is available. 
+Greyhound also offers a Java API - a docker based [quick-start Java App](../getting-started/README.md) that demonstrates using Greyhound is available. 
 
 ### ZIO API
 
