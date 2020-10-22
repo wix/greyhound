@@ -21,37 +21,30 @@ trait ProducerR[-R] {
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V],
-                    encryptor: Encryptor = NoOpEncryptor): ZIO[R with Blocking, ProducerError, RecordMetadata] =
-    serialized(record, keySerializer, valueSerializer, encryptor)
+                    valueSerializer: Serializer[V]): ZIO[R with Blocking, ProducerError, RecordMetadata] =
+    serialized(record, keySerializer, valueSerializer)
       .mapError(SerializationError)
       .flatMap(produce)
 
   def produceAsync[K, V](record: ProducerRecord[K, V],
                          keySerializer: Serializer[K],
-                         valueSerializer: Serializer[V],
-                         encryptor: Encryptor = NoOpEncryptor): ZIO[R with Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
-    serialized(record, keySerializer, valueSerializer, encryptor)
+                         valueSerializer: Serializer[V]): ZIO[R with Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
+    serialized(record, keySerializer, valueSerializer)
       .mapError(SerializationError)
       .flatMap(produceAsync)
 
   def shutdown: UIO[Unit] = UIO.unit
 
-  private def serialized[V, K](record: ProducerRecord[K, V],
-                               keySerializer: Serializer[K],
-                               valueSerializer: Serializer[V],
-                               encryptor: Encryptor) = {
+  private def serialized[V, K](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]) = {
     for {
       keyBytes <- keySerializer.serializeOpt(record.topic, record.key)
       valueBytes <- valueSerializer.serializeOpt(record.topic, record.value)
-      serializedRecord = ProducerRecord(
-        topic = record.topic,
-        value = valueBytes,
-        key = keyBytes,
-        partition = record.partition,
-        headers = record.headers)
-      encyptedRecord <- encryptor.encrypt(serializedRecord)
-    } yield encyptedRecord
+    } yield ProducerRecord(
+      topic = record.topic,
+      value = valueBytes,
+      key = keyBytes,
+      partition = record.partition,
+      headers = record.headers)
   }
 }
 

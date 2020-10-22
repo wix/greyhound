@@ -8,19 +8,15 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer:sources",
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/retry:sources",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer:sources",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/zioutils:sources",
     ],
-    tags = [
-        "manual",
-        "maven_coordinates=com.wix:greyhound-core_2.12:{pom_version}",
-    ],
+    tags = ["maven_coordinates=com.wix:greyhound-core_2.12:{pom_version}", "manual"],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_clients",
         "@org_slf4j_slf4j_api",
@@ -52,14 +48,14 @@ assemble_maven(
     project_name = "Greyhound Core",
     project_url = "https://github.com/wix/greyhound",
     scm_url = "https://github.com/wix/greyhound.git",
-    tags = ["manual"],
     target = "//core:greyhound-core",
     version_file = "//central-sync:VERSION",
+    tags = ["manual"],
 )
 
 deploy_maven(
     name = "deploy-maven",
     deployment_properties = "//central-sync:deployment.properties",
-    tags = ["manual"],
     target = ":assemble-maven",
+    tags = ["manual"],
 )

@@ -28,8 +28,7 @@ object Headers {
   val Empty: Headers = Headers()
 
   def from(headers: Map[Header, String]): Headers =
-    Headers(headers.mapValues(value =>
-      Chunk.fromArray(value.getBytes(UTF_8))))
+    Headers(headers.mapValues(value => Chunk.fromArray(value.getBytes(UTF_8))))
 
   def from(headers: (Header, String)*): Headers =
     from(headers.toMap)
