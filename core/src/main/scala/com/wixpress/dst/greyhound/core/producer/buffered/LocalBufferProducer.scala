@@ -23,8 +23,7 @@ trait LocalBufferProducer[R] {
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V],
-                    encryptor: Encryptor = NoOpEncryptor): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
+                    valueSerializer: Serializer[V]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
 
   def currentState: URIO[Blocking with Clock with R, LocalBufferProducerState]
 
@@ -93,17 +92,12 @@ object LocalBufferProducer {
               enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId)
                 .catchAll(error => directSendToKafkaIfUnordered(router, record, config, state, error)))
 
-      override def produce[K, V](record: ProducerRecord[K, V],
-                                 keySerializer: Serializer[K],
-                                 valueSerializer: Serializer[V],
-                                 encryptor: Encryptor): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
+      override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
         validate(config, state) *>
           (for {
             key <- record.key.map(k => keySerializer.serialize(record.topic, k).map(Option(_))).getOrElse(ZIO.none).mapError(LocalBufferError.apply)
             value <- valueSerializer.serializeOpt(record.topic, record.value).mapError(LocalBufferError.apply)
-            serializedRecord = record.copy(key = key, value = value)
-            encryptedRecord <- encryptor.encrypt(serializedRecord).mapError(LocalBufferError.apply)
-            response <- produce(encryptedRecord)
+            response <- produce(record.copy(key = key, value = value))
           } yield response)
 
       override def currentState: URIO[Blocking with Clock with R, LocalBufferProducerState] =
