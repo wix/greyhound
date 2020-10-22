@@ -120,6 +120,14 @@ trait RecordHandler[-R, +E, K, V] {
         value => Option(value).fold(Task[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
       ).mapError(e => Left(SerializationError(e)))
     }
+
+  def withDecryptor[E1 >: E](dec: Decryptor[E1, K, V]) = {
+    new RecordHandler[R, E1, K, V] {
+      override def handle(record: ConsumerRecord[K, V]) =
+        dec.decrypt(record).flatMap(self.handle)
+    }
+  }
+
 }
 
 case class SerializationError(cause: Throwable) extends RuntimeException(cause)
