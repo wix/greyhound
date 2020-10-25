@@ -121,8 +121,8 @@ trait RecordHandler[-R, +E, K, V] {
       ).mapError(e => Left(SerializationError(e)))
     }
 
-  def withDecryptor[E1 >: E](dec: Decryptor[E1, K, V]) = {
-    new RecordHandler[R, E1, K, V] {
+  def withDecryptor[E1 >: E, R1 <: R](dec: Decryptor[R1, E1, K, V]) = {
+    new RecordHandler[R1, E1, K, V] {
       override def handle(record: ConsumerRecord[K, V]) =
         dec.decrypt(record).flatMap(self.handle)
     }
