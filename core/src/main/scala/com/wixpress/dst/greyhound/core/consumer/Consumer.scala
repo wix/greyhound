@@ -42,8 +42,8 @@ trait Consumer {
 }
 
 object Consumer {
-  type Record = KafkaConsumerRecord[Chunk[Byte], Chunk[Byte]]
-  type Records = ConsumerRecords[Chunk[Byte], Chunk[Byte]]
+  type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
+  type Records = Iterable[Record]
 
   private val deserializer = new Deserializer[Chunk[Byte]] {
     override def configure(configs: util.Map[Topic, _], isKey: Boolean): Unit = ()
@@ -65,7 +65,7 @@ object Consumer {
 
     override def poll(timeout: Duration): RIO[Blocking, Records] =
       withConsumerBlocking {c =>
-        c.poll(time.Duration.ofMillis(timeout.toMillis))
+        c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
       }
 
 
