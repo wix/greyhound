@@ -129,18 +129,15 @@ object EventLoop {
       _ <- pausedRef.update(_ -- partitionsToResume)
     } yield ()
 
-  private val emptyRecords = ZIO.succeed(ConsumerRecords.empty())
-
   private def pollAndHandle[R1, R2](consumer: Consumer,
                                     dispatcher: Dispatcher[R2],
                                     pausedRef: Ref[Set[TopicPartition]],
                                     config: EventLoopConfig,
                                     clientId: ClientId) =
-    consumer.poll(config.pollTimeout).catchAll(_ => emptyRecords).flatMap { records =>
+    consumer.poll(config.pollTimeout).catchAll(_ => UIO(Nil)).flatMap { records =>
       pausedRef.get.flatMap(paused =>
-        ZIO.foldLeft(records.asScala)(paused) { (acc, kafkaRecord) =>
-          val record = ConsumerRecord(kafkaRecord)
-          val partition = TopicPartition(record)
+        ZIO.foldLeft(records)(paused) { (acc, record) =>
+          val partition = record.topicPartition
           if (acc contains partition)
             report(PartitionThrottled(partition, record.offset)).as(acc)
           else

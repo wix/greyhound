@@ -12,8 +12,6 @@ import zio.blocking.Blocking
 import zio.duration.Duration
 import zio.{RIO, UIO, ZIO}
 
-import scala.collection.JavaConverters._
-
 case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consumer)
   extends Consumer {
 
@@ -57,19 +55,9 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
     } yield records
 
   private def orderedPolledRecords(records: Records): OrderedOffsets = {
-    val recordsPerPartition = records.partitions.asScala.map { tp => (tp, records.records(tp)) }
-    val byTopic = recordsPerPartition.groupBy(_._1.topic)
-    val byPartition = byTopic.map { case (topic, recordsPerPartition) =>
-      (topic, recordsPerPartition.map { case (tp, records) => (tp.partition, records) })
-    }
-
-    val onlyOffsets = byPartition.mapValues(_.map { case (partition, records) => (partition, records.asScala.map(_.offset)) }
-      .toSeq.sortBy(_._1)
-    )
-      .toSeq
-      .sortBy(_._1)
-
-    onlyOffsets
+    records.groupBy(_.topic).map { case (topic, records) =>
+      topic -> records.groupBy(_.partition).mapValues(r => r.map(_.offset).toSeq).toSeq.sortBy(_._1)
+    }.toSeq.sortBy(_._1)
   }
 
   override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] =
