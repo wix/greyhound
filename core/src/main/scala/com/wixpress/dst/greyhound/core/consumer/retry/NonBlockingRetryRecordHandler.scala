@@ -26,7 +26,7 @@ private[retry] object NonBlockingRetryRecordHandler {
     override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {
       nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
         ZIO.foreach_(retryAttempt)(_.sleep) *> handler.handle(record).catchAll {
-          case Right(_: NonRetryableException) => ZIO.unit
+          case Right(_: NonRetriableException) => ZIO.unit
           case error => maybeRetry(retryAttempt, error, record)
         }
       }

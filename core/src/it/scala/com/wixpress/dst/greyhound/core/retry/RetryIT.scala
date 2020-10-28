@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.{IgnoreOnceFor, NonRetryableException, RetryConfig, ZRetryConfig}
+import com.wixpress.dst.greyhound.core.consumer.retry.{IgnoreOnceFor, NonRetriableException, RetryConfig, ZRetryConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
@@ -273,7 +273,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
   private def failingNonRetryableRecordHandler(originalTopicInvocations: Ref[Int]) =
     RecordHandler { _: ConsumerRecord[String, String] =>
       originalTopicInvocations.updateAndGet(_ + 1) *>
-        ZIO.fail(NonRetryableException(new RuntimeException("Oops!")))
+        ZIO.fail(NonRetriableException(new RuntimeException("Oops!")))
     }
 
   private def failingBlockingRecordHandler(consumedValues: Ref[List[String]], originalTopic: String, stopFailingAfter: Int = 5000) =

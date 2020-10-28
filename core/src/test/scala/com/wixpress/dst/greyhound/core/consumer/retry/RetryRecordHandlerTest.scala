@@ -267,7 +267,7 @@ object RetryRecordHandlerTest {
 
   val failingHandler = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](_ => ZIO.fail(RetriableError))
   def failingHandlerWith(counter: Ref[Int]) = RecordHandler[Any, HandlerError, Chunk[Byte], Chunk[Byte]](_ => counter.update(_ + 1) *> ZIO.fail(RetriableError))
-  def nonRetryableHandlerWith(counter: Ref[Int]) = RecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]](_ => counter.update(_ + 1) *> ZIO.fail(NonRetryableException(cause)))
+  def nonRetryableHandlerWith(counter: Ref[Int]) = RecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]](_ => counter.update(_ + 1) *> ZIO.fail(NonRetriableException(cause)))
 
   def randomAlphaChar = {
     val low = 'A'.toInt

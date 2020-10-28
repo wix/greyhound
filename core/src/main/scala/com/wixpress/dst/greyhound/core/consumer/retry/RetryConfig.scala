@@ -83,6 +83,6 @@ case object NonBlocking extends RetryType
 
 case object BlockingFollowedByNonBlocking extends RetryType
 
-case class NonRetryableException(cause: Exception) extends Exception(cause)
+case class NonRetriableException(cause: Exception) extends Exception(cause)
 
 case object BlockingHandlerFailed extends RuntimeException

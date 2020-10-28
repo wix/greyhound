@@ -57,7 +57,7 @@ private[retry] object BlockingRetryRecordHandler {
 
       def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics with Blocking, Nothing, LastHandleResult] = {
         (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll {
-          case ex: NonRetryableException =>
+          case ex: NonRetriableException =>
             report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause))
               .as(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
           case error => interval.map { interval =>
