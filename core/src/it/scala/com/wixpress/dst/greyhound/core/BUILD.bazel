@@ -15,6 +15,7 @@ specs2_ite2e_test(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered",
