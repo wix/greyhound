@@ -1,5 +1,6 @@
 load("@rules_jvm_external//:defs.bzl", "maven_install")
 load("@rules_jvm_external//:specs.bzl", "maven","parse")
+load("//:import_external_alias.bzl", "import_external_alias")
 
 
 def dependency(coordinates,exclusions=None):
@@ -60,6 +61,7 @@ deps = [
     dependency("org.specs2:specs2-junit_2.12:4.8.3"),
     dependency("org.specs2:specs2-matcher_2.12:4.8.3"),
     dependency("org.xerial.snappy:snappy-java:1.1.7.1"),
+    dependency("com.kubukoz:better-tostring_" + scala_version +":0.2.4"),
 ]
 
 def dependencies():
@@ -73,3 +75,10 @@ def dependencies():
         generate_compat_repositories = True,
 #        maven_install_json = "//:maven_install.json",
     )
+    # this is a compiler plugin with full scala version in its maven artifact name
+    # so we create an alias without the minor scala version
+    import_external_alias(
+       name = "com_kubukoz_better_tostring_2_12",
+       actual = "@maven//:com_kubukoz_better_tostring_" + scala_version.replace(".", "_"),
+    )
+
