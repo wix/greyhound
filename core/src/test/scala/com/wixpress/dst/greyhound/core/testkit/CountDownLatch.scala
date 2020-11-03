@@ -3,7 +3,8 @@ package com.wixpress.dst.greyhound.core.testkit
 import zio.{Promise, Ref, UIO, ZIO}
 
 trait CountDownLatch {
-  def countDown: UIO[Unit]
+  def countDown: UIO[Unit] = countDown(1)
+  def countDown(n: Int): UIO[Unit]
   def await: UIO[Unit]
   def count: UIO[Int]
 }
@@ -13,8 +14,12 @@ object CountDownLatch {
     ready <- Promise.make[Nothing, Unit]
     ref <- Ref.make(count)
   } yield new CountDownLatch {
-    override def countDown: UIO[Unit] =
-      ref.updateAndGet(_ - 1).flatMap {
+    override def countDown(n: Int): UIO[Unit] =
+      ref.updateAndGet{ v =>
+        val res = v - n
+        if(res < 0) 0
+        else res
+      }.flatMap {
         case 0 => ready.succeed(()).unit
         case _ => ZIO.unit
       }

@@ -39,6 +39,8 @@ trait Consumer {
     val partition = TopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }
+
+  def assignment: Task[Set[TopicPartition]]
 }
 
 object Consumer {
@@ -98,6 +100,10 @@ object Consumer {
         case e: IllegalStateException => e
       }
 
+    override def assignment: Task[Set[TopicPartition]] = {
+      withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
+    }
+
     private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): Task[A] =
       semaphore.withPermit(Task(f(consumer)))
 
@@ -142,6 +148,7 @@ object Consumer {
     val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     ZManaged.make(acquire)(consumer => effectBlocking(consumer.close()).ignore)
   }
+
 
 }
 

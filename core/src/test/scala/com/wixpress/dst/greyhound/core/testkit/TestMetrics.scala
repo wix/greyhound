@@ -29,6 +29,8 @@ object TestMetrics {
     }
   }
 
+  def makeLayer = ZLayer.fromManagedMany(make)
+
   def queue: URIO[TestMetrics, Queue[GreyhoundMetric]] =
     ZIO.access[TestMetrics](_.get.queue)
 

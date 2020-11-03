@@ -118,4 +118,6 @@ trait EmptyConsumer extends Consumer {
 
   override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
+
+  override def assignment: Task[Set[TopicPartition]] = UIO(Set.empty)
 }
