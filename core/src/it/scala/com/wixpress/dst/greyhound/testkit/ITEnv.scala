@@ -26,6 +26,7 @@ object ITEnv {
   }
 
   def clientId = randomId.map(id => s"greyhound-consumers-$id")
+  def clientId(tag: String) = randomId.map(id => s"client-$tag-$id")
 
   val partitions = 4
   val delete = CleanupPolicy.Delete(1.hour.toMillis)

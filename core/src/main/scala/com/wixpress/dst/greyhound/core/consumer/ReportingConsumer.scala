@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.duration.Duration
-import zio.{RIO, UIO, ZIO}
+import zio.{RIO, Task, UIO, ZIO}
 
 case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consumer)
   extends Consumer {
@@ -108,6 +108,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
         GreyhoundMetrics.report(SeekToOffsetFailed(clientId, group, error, partition, offset))
       }
 
+  override def assignment: Task[Set[TopicPartition]] = internal.assignment
 }
 
 object ReportingConsumer {

@@ -18,19 +18,20 @@ import zio.duration._
 
 import scala.util.Random
 
-trait RecordConsumer[-R] extends Resource[R] {
+trait RecordConsumerProperties[+STATE] {
   def group: Group
 
   def clientId: ClientId
 
-  def state: UIO[RecordConsumerExposedState]
+  def state: Task[STATE]
 
   def topology: UIO[RecordConsumerTopology]
+}
 
+trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[RecordConsumerExposedState] {
   def resubscribe[R1](subscription: ConsumerSubscription, listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
 
   def setBlockingState(command: BlockingStateCommand): RIO[Env, Unit]
-
 }
 
 object RecordConsumer {
