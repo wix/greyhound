@@ -2,11 +2,11 @@ package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.CompletableFuture
 
-import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.Serializer
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import com.wixpress.dst.greyhound.java.GreyhoundProducerBuilder.toGreyhoundRecord
+import com.wixpress.dst.greyhound.core
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.clients.producer.{ProducerRecord => KafkaProducerRecord}
 import org.apache.kafka.common.serialization.{Serializer => KafkaSerializer}

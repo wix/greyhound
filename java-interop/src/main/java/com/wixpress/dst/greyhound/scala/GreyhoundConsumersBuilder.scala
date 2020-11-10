@@ -2,7 +2,6 @@ package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.Executor
 
-import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
@@ -11,6 +10,7 @@ import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio._
 import zio.blocking.Blocking.Service.live.blockingExecutor
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
+import com.wixpress.dst.greyhound.core
 
 import scala.collection.mutable.ListBuffer
 
