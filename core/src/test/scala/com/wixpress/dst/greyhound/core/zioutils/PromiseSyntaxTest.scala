@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.zioutils
 
 import com.wixpress.dst.greyhound.core.zioutils.PromiseSyntax._
-import zio.Promise
+import zio.{Promise, ZIO}
 import zio.duration._
 import zio.test.Assertion._
 import zio.test._
@@ -44,7 +44,6 @@ class PromiseSyntaxTest extends JUnitRunnableSpec {
         }
       },
       testM("map interrupted promise") {
-        val e = new RuntimeException("kaboom")
         for {
           promise <- Promise.make[Throwable, String]
           _ <- (Live.live(zio.clock.sleep(1000000.millis)) *> promise.succeed("foo")).fork
@@ -53,6 +52,21 @@ class PromiseSyntaxTest extends JUnitRunnableSpec {
           res <- mapped.await.cause
         } yield {
           assert(res.interrupted)(isTrue)
+        }
+      },
+      testM("mapped promise works across `unsafeRun`s") {
+        for {
+          rt <- ZIO.runtime[Any]
+          (promise, mapped) = rt.unsafeRunTask {
+            for {
+              promise <- Promise.make[Throwable, String]
+              mapped <- promise.map(_ + "bar")
+            } yield (promise, mapped)
+          }
+          _ <- (Live.live(zio.clock.sleep(10.millis)) *> promise.succeed("foo")).fork
+          result <- mapped.await
+        } yield {
+          assert(result)(equalTo("foobar"))
         }
       }
     )
