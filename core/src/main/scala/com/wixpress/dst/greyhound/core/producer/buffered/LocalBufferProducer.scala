@@ -52,7 +52,7 @@ object LocalBufferProducerState {
     localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, lagMs = 0L, promises = Map.empty)
 }
 
-case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: Promise[ProducerError, RecordMetadata])
+case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: IO[ProducerError, RecordMetadata])
 
 object LocalBufferProducer {
   def make[R](producer: ProducerR[R], localBuffer: LocalBuffer, config: LocalBufferProducerConfig): RManaged[ZEnv with GreyhoundMetrics with R, LocalBufferProducer[R]] =
@@ -64,7 +64,7 @@ object LocalBufferProducer {
         state.update(_.incQueryCount).commit *>
           ZIO.foreach(msgs)(record =>
             router.produceAsync(producerRecord(record))
-              .tap(_.await
+              .tap(_
                 .tapBoth(
                   error => updateReferences(Left(error), state, record) *>
                     localBuffer.markDead(record.id) *>
@@ -75,7 +75,7 @@ object LocalBufferProducer {
                       report(ResilientProducerSentRecord(record.topic, metadata.partition, metadata.offset, config.id, record.id)))
                 .ignore
                 .fork)
-          ).flatMap(promises => ZIO.foreach(promises)(_.await))
+          ).flatMap(ZIO.collectAll(_))
             .as(msgs)
       )
         .tap(r => ZIO.whenCase(r.size) {
@@ -138,12 +138,9 @@ object LocalBufferProducer {
   private def directSendToKafkaIfUnordered[R](router: ProducerR[R], record: ProducerRecord[Chunk[Byte], Chunk[Byte]], config: LocalBufferProducerConfig, state: TRef[LocalBufferProducerState], error: LocalBufferError): ZIO[Blocking with R, LocalBufferError, BufferedProduceResult] =
     config.strategy match {
       case _: Unordered => state.update(_.updateEnqueuedCount(-1)).commit *>
-        Promise.make[ProducerError, RecordMetadata].flatMap { promiseToFulfil =>
-          router.produceAsync(record).flatMap(p =>
-            promiseToFulfil.completeWith(p.await.catchAll(e => promiseToFulfil.fail(e) *> ZIO.fail(e))))
-            .fork
-            .as(BufferedProduceResult(notPersisted, promiseToFulfil))
-        }
+        router.produceAsync(record)
+          .map(willComplete => BufferedProduceResult(notPersisted, willComplete))
+          .catchAll(produceError =>  UIO(BufferedProduceResult(notPersisted, ZIO.fail(produceError))))
       case _ => ZIO.fail(error)
     }
 
@@ -152,7 +149,7 @@ object LocalBufferProducer {
     Promise.make[producer.ProducerError, producer.RecordMetadata].flatMap(promise =>
       localBuffer.enqueue(persistedRecord(record, generatedMessageId))
         .tap(id => state.update(_.withPromise(id, promise)).commit)
-        .map { id => BufferedProduceResult(id, promise) })
+        .map { id => BufferedProduceResult(id, promise.await) })
 
   private def persistedRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int) = {
     PersistedRecord(generatedMessageId,

@@ -22,7 +22,7 @@ class ProducerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       TestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(2)
       kafkaIO <- producer.produceAsync(record(topic), StringSerde, IntSerde)
-      result <- kafkaIO.await
+      result <- kafkaIO
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }
 

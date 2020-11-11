@@ -44,12 +44,12 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       promise <- Promise.make[Nothing, Unit]
       metadata = RecordMetadata(topic, partition, 0)
       internal = new Producer {
-        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
-          Promise.make[ProducerError, RecordMetadata].tap(_.succeed(metadata))
+        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
+          UIO(UIO(metadata))
       }
       producer = producerFrom(internal)
       _ <- promise.succeed(())
-      _ <- producer.produceAsync(record).tap(_.await.tap(_ => adjustTestClock(1.second)))
+      _ <- producer.produceAsync(record).tap(_.tap(_ => adjustTestClock(1.second)))
       metrics <- reportedMetrics
     } yield metrics must contain(RecordProduced(metadata, FiniteDuration(0, TimeUnit.SECONDS)))
   }

@@ -13,7 +13,7 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
 
   def failing: FakeProducer = copy(config = ProducerConfig.Failing)
 
-  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
+  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
     config match {
       case ProducerConfig.Standard =>
         for {
@@ -26,12 +26,12 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
             (offset, offsets + (topicPartition -> offset))
           }
           promise <- Promise.make[ProducerError, RecordMetadata].tap(_.succeed(RecordMetadata(topic, partition, offset)))
-        } yield promise
+        } yield promise.await
 
       case ProducerConfig.Failing =>
         ProducerError(new IllegalStateException("Oops")).flip.flatMap(error =>
           Promise.make[ProducerError, RecordMetadata]
-            .tap(_.fail(error)))
+            .tap(_.fail(error)).map(_.await))
     }
 }
 
