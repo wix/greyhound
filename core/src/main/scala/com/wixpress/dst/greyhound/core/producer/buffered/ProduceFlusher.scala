@@ -44,12 +44,12 @@ object ProduceFiberAsyncRouter {
     } yield new ProduceFlusher[R] {
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
-      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] = {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
         val queueNum = Math.abs(record.key.getOrElse(Random.nextString(10)).hashCode % maxConcurrency)
 
         Promise.make[ProducerError, RecordMetadata].tap(promise =>
           queues(queueNum).offer(ProduceRequest(record, promise, currentTimeMillis + giveUpAfter.toMillis)) *>
-            usedFibers.update(_ + queueNum))
+            usedFibers.update(_ + queueNum)).map(_.await)
       }
     }
 
@@ -93,10 +93,10 @@ object ProduceFiberAsyncRouter {
       }
     }
 
-  private def awaitOnPromises(promises: Seq[(ProduceRequest, Promise[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, Seq[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
-    ZIO.foreach(promises) { case (req: ProduceRequest, res: Promise[ProducerError, RecordMetadata]) => res.await
-      .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-      .either.map(e => (req, e))
+  private def awaitOnPromises(promises: Seq[(ProduceRequest, IO[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, Seq[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
+    ZIO.foreach(promises) { case (req: ProduceRequest, res: IO[ProducerError, RecordMetadata]) =>
+      res.tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
+          .either.map(e => (req, e))
     }
 
   private def reportError(req: ProduceRequest) =
@@ -132,12 +132,13 @@ object ProduceFiberSyncRouter {
 
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
-      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] = {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
         val queueNum = Math.abs(record.key.getOrElse(Random.nextString(10)).hashCode % maxConcurrency)
 
         Promise.make[ProducerError, RecordMetadata].tap(promise =>
           queues(queueNum).offer(ProduceRequest(record, promise, currentTimeMillis + giveUpAfter.toMillis)) *>
-            usedFibers.update(_ + queueNum))
+            usedFibers.update(_ + queueNum)
+        ).map(_.await)
       }
     }
 }

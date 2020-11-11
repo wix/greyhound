@@ -95,7 +95,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     def produceIO[R](topic: Topic, producer: LocalBufferProducer[R]) =
       producer.produce(ProducerRecord(topic, 0), StringSerde, IntSerde)
         .tap(res => UIO(println("produced to local id: " + res.localMessageId)))
-        .flatMap(_.kafkaResult.await)
+        .flatMap(_.kafkaResult)
         .timeoutFail(LocalBufferError(TimeoutProducingRecord))(10.seconds)
 
     for {
@@ -124,7 +124,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
             localBufferBatchSize = localBufferBatchSize).use { localBufferProducer =>
             for {
               _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).repeat(Schedule.recurs(200))
-              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).flatMap(_.kafkaResult.await).timeout(10.second)
+              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).flatMap(_.kafkaResult).timeout(10.second)
               timeouts <- TestMetrics.reported.map(_.collect { case e@LocalBufferProduceAttemptFailed(TimeoutError(_), false) => e })
               state <- localBufferProducer.currentState
             } yield (timeouts.size, state)
@@ -169,7 +169,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       record = ProducerRecord(topic, value = Random.alphanumeric.take(300).mkString)
       test <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
         for {
-          producerError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.await.flip)
+          producerError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
           metrics <- TestMetrics.reported
           reportedNonRetriableErrors = metrics.collect { case s@LocalBufferProduceAttemptFailed(KafkaError(_), true) => s }
           state <- localBufferProducer.currentState
@@ -202,7 +202,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
           record = ProducerRecord(topic, value = "0")
           test <- makeProducer(producer, strategy(maxConcurrency = 1), giveUpAfter = 10.millis).use { localBufferProducer =>
             for {
-              produceError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.await).repeat(recurs(1000)).either
+              produceError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult).repeat(recurs(1000)).either
               _ <- localBufferProducer.close
               produceAfterShutdown <- localBufferProducer.produce(record, IntSerde, StringSerde).flip
             } yield (produceError.left.get.getClass === classOf[TimeoutError]) and (produceAfterShutdown.cause.getClass === classOf[ProducerClosed])
@@ -223,7 +223,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
         )
       }
       // producer is shutdown out of managed scope - checking that the promises are still fulfilled eventually
-      recordsProduced <- ZIO.foreach(results)(_.kafkaResult.await).timeoutFail(new RuntimeException("TIMEOUT!"))(15.seconds)
+      recordsProduced <- ZIO.foreach(results)(_.kafkaResult).timeoutFail(new RuntimeException("TIMEOUT!"))(15.seconds)
     } yield recordsProduced.size === 1000
   }
 
@@ -303,7 +303,7 @@ class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
             _ <- buffer.close
             record = ProducerRecord(topic, "bar", Some("foo"))
             produceIO = localBufferProducer.produce(record, StringSerde, StringSerde)
-              .flatMap(_.kafkaResult.await).timeoutFail(LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed)(5.seconds)
+              .flatMap(_.kafkaResult).timeoutFail(LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed)(5.seconds)
             _ <- (produceIO *> produceIO) /*maxMessagesOnDisk=1 ==> second produce will fail if we don't dequeue count from memory */
               .map(_.topic === topic)
           } yield ok

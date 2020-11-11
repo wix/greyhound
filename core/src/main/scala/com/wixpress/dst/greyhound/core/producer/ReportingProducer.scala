@@ -6,17 +6,17 @@ import _root_.zio.blocking.Blocking
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import zio.clock.Clock
-import zio.{Chunk, Promise, ULayer, ZIO}
+import zio.{Chunk, IO, Promise, ULayer, ZIO}
 
 import scala.concurrent.duration.FiniteDuration
 
 case class ReportingProducer[-R](internal: ProducerR[R])
   extends ProducerR[GreyhoundMetrics with Clock with R] {
 
-  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking with Clock with GreyhoundMetrics with R, ProducerError, Promise[ProducerError, RecordMetadata]] =
+  override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking with Clock with GreyhoundMetrics with R, ProducerError, IO[ProducerError, RecordMetadata]] =
     (GreyhoundMetrics.report(ProducingRecord(record)) *>
       internal.produceAsync(record)
-        .tap(_.await.timed.flatMap {
+        .tap(_.timed.flatMap {
           case (duration, metadata) =>
             GreyhoundMetrics.report(RecordProduced(metadata, FiniteDuration(duration.toMillis, MILLISECONDS))).as(metadata)
         }.tapError { error =>

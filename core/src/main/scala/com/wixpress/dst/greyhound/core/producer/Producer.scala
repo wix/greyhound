@@ -14,10 +14,13 @@ import zio.duration._
 import scala.collection.JavaConverters._
 
 trait ProducerR[-R] {
-  def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, Promise[ProducerError, RecordMetadata]]
+  def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]]
 
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, RecordMetadata] =
-    produceAsync(record).flatMap(_.await)
+    for {
+      promise <- produceAsync(record)
+      res <- promise // promise is ZIO itself (the result of from Proimse.await)
+    } yield res
 
   def produce[K, V](record: ProducerRecord[K, V],
                     keySerializer: Serializer[K],
@@ -30,7 +33,7 @@ trait ProducerR[-R] {
   def produceAsync[K, V](record: ProducerRecord[K, V],
                          keySerializer: Serializer[K],
                          valueSerializer: Serializer[V],
-                         encryptor: Encryptor = NoOpEncryptor): ZIO[R with Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] =
+                         encryptor: Encryptor = NoOpEncryptor): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
     serialized(record, keySerializer, valueSerializer, encryptor)
       .mapError(SerializationError)
       .flatMap(produceAsync)
@@ -67,9 +70,6 @@ object Producer {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
       new ProducerR[R] {
-        override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking with R, ProducerError, RecordMetadata] =
-          produceAsync(record).flatMap(_.await)
-
         private def recordFrom(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) =
           new KafkaProducerRecord(
             record.topic,
@@ -84,7 +84,7 @@ object Producer {
               new RecordHeader(key, value.toArray)
           }
 
-        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking with R, ProducerError, Promise[ProducerError, RecordMetadata]] =
+        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking with R, ProducerError, IO[ProducerError, RecordMetadata]] =
           for {
             produceCompletePromise <- Promise.make[ProducerError, RecordMetadata]
             runtime <- ZIO.runtime[Any]
@@ -96,7 +96,7 @@ object Producer {
             }))
               .tapError(e => produceCompletePromise.complete(ProducerError(e)))
               .mapError(e => runtime.unsafeRun(ProducerError(e).flip))
-          } yield produceCompletePromise
+          } yield produceCompletePromise.await
       }
     }
   }
