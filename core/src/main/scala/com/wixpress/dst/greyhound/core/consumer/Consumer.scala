@@ -176,6 +176,9 @@ case class ConsumerConfig(bootstrapServers: String,
     props
   }
 
+  def withExtraProperties(props: (String, String)*) =
+    copy(extraProperties = extraProperties ++ props)
+
 }
 
 sealed trait OffsetReset
