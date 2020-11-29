@@ -140,7 +140,7 @@ public class GreyhoundBuilderTest {
         int timesToFail = 3;
         GreyhoundProducer producer = producerFor(group,
                 failingRecordHandler(invocations, timesToFail, future),
-                RetryConfig.nonBlockingRetry(Arrays.asList(
+                RetryConfigBuilder.nonBlockingRetry(Arrays.asList(
                         Duration.of(1, ChronoUnit.SECONDS),
                         Duration.of(1, ChronoUnit.SECONDS),
                         Duration.of(1, ChronoUnit.SECONDS)
@@ -167,7 +167,7 @@ public class GreyhoundBuilderTest {
         int timesToFail = 4;
         GreyhoundProducer producer = producerFor(group,
                 failingRecordHandler(invocations, timesToFail, future),
-                RetryConfig.finiteBlockingRetry(Arrays.asList(
+                RetryConfigBuilder.finiteBlockingRetry(Arrays.asList(
                         Duration.of(1, ChronoUnit.SECONDS),
                         Duration.of(1, ChronoUnit.SECONDS),
                         Duration.of(1, ChronoUnit.SECONDS)
@@ -196,7 +196,7 @@ public class GreyhoundBuilderTest {
         int timesToFail = 2;
         GreyhoundProducer producer = producerFor(group,
                 failingRecordHandler(invocations, timesToFail, future),
-                RetryConfig.blockingFollowedByNonBlockingRetry(
+                RetryConfigBuilder.blockingFollowedByNonBlockingRetry(
                         Collections.singletonList(Duration.of(1, ChronoUnit.SECONDS)),
                         Collections.singletonList(Duration.of(1, ChronoUnit.SECONDS))
                 ));
@@ -220,7 +220,7 @@ public class GreyhoundBuilderTest {
         int timesToFail = 3;
         GreyhoundProducer producer = producerFor(group,
                 failingRecordHandler(invocations, timesToFail, future),
-                RetryConfig.exponentialBackoffBlockingRetry(Duration.of(100, ChronoUnit.MILLIS), 2, 1, false));
+                RetryConfigBuilder.exponentialBackoffBlockingRetry(Duration.of(100, ChronoUnit.MILLIS), 2, 1, false));
 
         producer.produce(new ProducerRecord<>(topic, 123, "foo"),
                 new IntegerSerializer(),
@@ -245,7 +245,7 @@ public class GreyhoundBuilderTest {
         int timesToFail = 3;
         GreyhoundProducer producer = producerFor(group,
                 failingRecordHandler(invocations, timesToFail, future),
-                RetryConfig.exponentialBackoffBlockingRetry(Duration.of(100, ChronoUnit.MILLIS), Duration.of(350, ChronoUnit.MILLIS), 1, false));
+                RetryConfigBuilder.exponentialBackoffBlockingRetry(Duration.of(100, ChronoUnit.MILLIS), Duration.of(350, ChronoUnit.MILLIS), 1, false));
 
         producer.produce(new ProducerRecord<>(topic, 123, "foo"),
                 new IntegerSerializer(),
