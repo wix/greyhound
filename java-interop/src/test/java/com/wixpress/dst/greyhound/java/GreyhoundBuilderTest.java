@@ -19,6 +19,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Collections;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -100,17 +101,10 @@ public class GreyhoundBuilderTest {
         }
     }
 
-    private CompletableFuture<OffsetAndMetadata> produce(GreyhoundProducer producer, Integer key, String value) {
-        return producer.produce(
-                new ProducerRecord<>(topic, key, value),
-                new IntegerSerializer(),
-                new StringSerializer());
-    }
-
     @Test
-    public void consume_faster_with_max_parallelism() throws Exception {
+    public void consume_with_max_parallelism() throws Exception {
         int numOfMessages = 500;
-        int waitInMillis = numOfMessages * 8;
+        int waitInMillis = numOfMessages * 15;
         CountDownLatch lock = new CountDownLatch(numOfMessages);
         CountDownLatch lockMaxPar = new CountDownLatch(numOfMessages);
 
@@ -121,8 +115,8 @@ public class GreyhoundBuilderTest {
         GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
         GreyhoundConsumersBuilder consumersBuilder =
                 new GreyhoundConsumersBuilder(config)
-                        .withConsumer(consumerWith(group, lockMaxPar, consumedMaxPar, maxParTopic, 8))
-                        .withConsumer(consumerWith(maxParGroup, lock, consumedNoPar, topic, 1));
+                        .withConsumer(consumerWith(maxParGroup, lockMaxPar, consumedMaxPar, maxParTopic, 8))
+                        .withConsumer(consumerWith(group, lock, consumedNoPar, topic, 1));
 
         try (GreyhoundConsumers ignored = consumersBuilder.build();
              GreyhoundProducer producer = producerBuilder.build()) {
@@ -144,38 +138,128 @@ public class GreyhoundBuilderTest {
         ConcurrentLinkedQueue<ConsumerRecord<Integer, String>> invocations = new ConcurrentLinkedQueue<>();
         String group = "non-blocking-retry";
         int timesToFail = 3;
+        GreyhoundProducer producer = producerFor(group,
+                failingRecordHandler(invocations, timesToFail, future),
+                RetryConfig.nonBlockingRetry(Arrays.asList(
+                        Duration.of(1, ChronoUnit.SECONDS),
+                        Duration.of(1, ChronoUnit.SECONDS),
+                        Duration.of(1, ChronoUnit.SECONDS)
+                )));
 
-        GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
-        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
-        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
-                .withConsumer(
-                        GreyhoundConsumer.with(
-                                topic,
-                                group,
-                                failingRecordHandler(invocations, timesToFail, future),
-                                new IntegerDeserializer(),
-                                new StringDeserializer())
-                                .withRetryConfig(RetryConfig.nonBlockingRetry(Arrays.asList(
-                                        Duration.of(1, ChronoUnit.SECONDS),
-                                        Duration.of(1, ChronoUnit.SECONDS),
-                                        Duration.of(1, ChronoUnit.SECONDS)
-                                ))));
+        producer.produce(
+                new ProducerRecord<>(topic, 123, "foo"),
+                new IntegerSerializer(),
+                new StringSerializer());
 
-        try (GreyhoundConsumers ignored = consumersBuilder.build();
-             GreyhoundProducer producer = producerBuilder.build()) {
+        future.get(30, TimeUnit.SECONDS);
+        assertEquals(invocations.size(), timesToFail + 1);
+        assertConsumerRecord(invocations.remove(), 123, "foo", topic);
+        assertConsumerRecord(invocations.remove(), 123, "foo", topic + "-" + group + "-retry-0");
+        assertConsumerRecord(invocations.remove(), 123, "foo", topic + "-" + group + "-retry-1");
+        assertConsumerRecord(invocations.remove(), 123, "foo", topic + "-" + group + "-retry-2");
+    }
 
-            producer.produce(
-                    new ProducerRecord<>(topic, 123, "foo"),
-                    new IntegerSerializer(),
-                    new StringSerializer());
+    @Test
+    public void configure_consumer_with_finite_blocking_retry_policy() throws Exception {
+        CompletableFuture<ConsumerRecord<Integer, String>> future = new CompletableFuture<>();
+        ConcurrentLinkedQueue<ConsumerRecord<Integer, String>> invocations = new ConcurrentLinkedQueue<>();
+        String group = "finite-blocking-retry";
+        int timesToFail = 4;
+        GreyhoundProducer producer = producerFor(group,
+                failingRecordHandler(invocations, timesToFail, future),
+                RetryConfig.finiteBlockingRetry(Arrays.asList(
+                        Duration.of(1, ChronoUnit.SECONDS),
+                        Duration.of(1, ChronoUnit.SECONDS),
+                        Duration.of(1, ChronoUnit.SECONDS)
+                )));
 
-            future.get(30, TimeUnit.SECONDS);
-            assertEquals(invocations.size(), timesToFail + 1);
+        producer.produce(new ProducerRecord<>(topic, 123, "foo"),
+                new IntegerSerializer(),
+                new StringSerializer()).whenComplete((val, err) ->
+                producer.produce(new ProducerRecord<>(topic, 123, "bar"),
+                        new IntegerSerializer(),
+                        new StringSerializer())
+        );
+
+        future.get(30, TimeUnit.SECONDS);
+        assertEquals(invocations.size(), timesToFail + 1);
+        for (int i = 0; i < timesToFail; i++)
             assertConsumerRecord(invocations.remove(), 123, "foo", topic);
-            assertConsumerRecord(invocations.remove(), 123, "foo", topic + "-" + group + "-retry-0");
-            assertConsumerRecord(invocations.remove(), 123, "foo", topic + "-" + group + "-retry-1");
-            assertConsumerRecord(invocations.remove(), 123, "foo", topic + "-" + group + "-retry-2");
-        }
+        assertConsumerRecord(invocations.remove(), 123, "bar", topic);
+    }
+
+    @Test
+    public void configure_consumer_with_blocking_followed_by_nonblocking_retry_policy() throws Exception {
+        CompletableFuture<ConsumerRecord<Integer, String>> future = new CompletableFuture<>();
+        ConcurrentLinkedQueue<ConsumerRecord<Integer, String>> invocations = new ConcurrentLinkedQueue<>();
+        String group = "blocking-nonblocking-retry";
+        int timesToFail = 2;
+        GreyhoundProducer producer = producerFor(group,
+                failingRecordHandler(invocations, timesToFail, future),
+                RetryConfig.blockingFollowedByNonBlockingRetry(
+                        Collections.singletonList(Duration.of(1, ChronoUnit.SECONDS)),
+                        Collections.singletonList(Duration.of(1, ChronoUnit.SECONDS))
+                ));
+
+        producer.produce(new ProducerRecord<>(topic, 123, "foo"),
+                new IntegerSerializer(),
+                new StringSerializer());
+
+        future.get(30, TimeUnit.SECONDS);
+        assertEquals(invocations.size(), timesToFail + 1);
+        assertConsumerRecord(invocations.remove(), 123, "foo", topic);
+        assertConsumerRecord(invocations.remove(), 123, "foo", topic);
+        assertConsumerRecord(invocations.remove(), 123, "foo", topic + "-" + group + "-retry-0");
+    }
+
+    @Test
+    public void configure_consumer_with_exponential_blocking_retry_policy_max_multiplications() throws Exception {
+        CompletableFuture<ConsumerRecord<Integer, String>> future = new CompletableFuture<>();
+        ConcurrentLinkedQueue<ConsumerRecord<Integer, String>> invocations = new ConcurrentLinkedQueue<>();
+        String group = "exponential1-blocking-retry";
+        int timesToFail = 3;
+        GreyhoundProducer producer = producerFor(group,
+                failingRecordHandler(invocations, timesToFail, future),
+                RetryConfig.exponentialBackoffBlockingRetry(Duration.of(100, ChronoUnit.MILLIS), 2, 1, false));
+
+        producer.produce(new ProducerRecord<>(topic, 123, "foo"),
+                new IntegerSerializer(),
+                new StringSerializer()).whenComplete((val, err) ->
+                producer.produce(new ProducerRecord<>(topic, 123, "bar"),
+                        new IntegerSerializer(),
+                        new StringSerializer())
+        );
+
+        future.get(30, TimeUnit.SECONDS);
+        assertEquals(invocations.size(), timesToFail + 1);
+        for (int i = 0; i < timesToFail; i++)
+            assertConsumerRecord(invocations.remove(), 123, "foo", topic);
+        assertConsumerRecord(invocations.remove(), 123, "bar", topic);
+    }
+
+    @Test
+    public void configure_consumer_with_exponential_blocking_retry_policy_max_interval() throws Exception {
+        CompletableFuture<ConsumerRecord<Integer, String>> future = new CompletableFuture<>();
+        ConcurrentLinkedQueue<ConsumerRecord<Integer, String>> invocations = new ConcurrentLinkedQueue<>();
+        String group = "exponential2-blocking-retry";
+        int timesToFail = 3;
+        GreyhoundProducer producer = producerFor(group,
+                failingRecordHandler(invocations, timesToFail, future),
+                RetryConfig.exponentialBackoffBlockingRetry(Duration.of(100, ChronoUnit.MILLIS), Duration.of(350, ChronoUnit.MILLIS), 1, false));
+
+        producer.produce(new ProducerRecord<>(topic, 123, "foo"),
+                new IntegerSerializer(),
+                new StringSerializer()).whenComplete((val, err) ->
+                producer.produce(new ProducerRecord<>(topic, 123, "bar"),
+                        new IntegerSerializer(),
+                        new StringSerializer())
+        );
+
+        future.get(30, TimeUnit.SECONDS);
+        assertEquals(invocations.size(), timesToFail + 1);
+        for (int i = 0; i < timesToFail; i++)
+            assertConsumerRecord(invocations.remove(), 123, "foo", topic);
+        assertConsumerRecord(invocations.remove(), 123, "bar", topic);
     }
 
     private void produceTo(GreyhoundProducer producer, String topic) {
@@ -185,20 +269,43 @@ public class GreyhoundBuilderTest {
                 new StringSerializer());
     }
 
+    private CompletableFuture<OffsetAndMetadata> produce(GreyhoundProducer producer, Integer key, String value) {
+        return producer.produce(
+                new ProducerRecord<>(topic, key, value),
+                new IntegerSerializer(),
+                new StringSerializer());
+    }
+
     private GreyhoundConsumer<Integer, String> consumerWith(String group, CountDownLatch lockMaxPar,
-                                                            Queue<ConsumerRecord<Integer, String>> consumedMaxPar,
+                                                            Queue<ConsumerRecord<Integer, String>> consumed,
                                                             String topic2,
                                                             int parallelism) {
         return GreyhoundConsumer.with(
                 topic2,
                 group,
                 aBlockingRecordHandler(value -> {
-                    consumedMaxPar.add(value);
+                    consumed.add(value);
                     lockMaxPar.countDown();
                 }),
                 new IntegerDeserializer(),
                 new StringDeserializer())
                 .withMaxParallelism(parallelism);
+    }
+
+    private GreyhoundProducer producerFor(String group, RecordHandler<Integer, String> handler, RetryConfig retryConfig) {
+        GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
+        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
+        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
+                .withConsumer(GreyhoundConsumer.with(
+                        topic,
+                        group,
+                        handler,
+                        new IntegerDeserializer(),
+                        new StringDeserializer())
+                        .withRetryConfig(retryConfig));
+
+        consumersBuilder.build();
+        return producerBuilder.build();
     }
 
     private <K, V> RecordHandler<K, V> failingRecordHandler(ConcurrentLinkedQueue<ConsumerRecord<K, V>> invocations,
@@ -215,8 +322,8 @@ public class GreyhoundBuilderTest {
     }
 
     private <K, V> void assertConsumerRecord(ConsumerRecord<K, V> record, K key, V value, String topic) {
-        assertEquals(record.key(), key);
-        assertEquals(record.value(), value);
-        assertEquals(record.topic(), topic);
+        assertEquals(key, record.key());
+        assertEquals(value, record.value());
+        assertEquals(topic, record.topic());
     }
 }
