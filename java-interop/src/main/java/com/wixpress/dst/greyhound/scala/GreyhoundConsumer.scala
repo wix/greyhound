@@ -2,11 +2,9 @@ package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.{CompletableFuture, Executor}
 
-import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.domain.{SerializationError, ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler}
-import com.wixpress.dst.greyhound.core.{Deserializer => CoreDeserializer}
+import com.wixpress.dst.greyhound.core.consumer.domain.{SerializationError, ConsumerRecord ⇒ CoreConsumerRecord, RecordHandler ⇒ CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.{Deserializer ⇒ CoreDeserializer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
-import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import com.wixpress.dst.greyhound.java.Convert.toScala
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.common.serialization.Deserializer
@@ -27,7 +25,8 @@ object GreyhoundConsumer {
       valueDeserializer,
       offsetReset = OffsetReset.Latest,
       errorHandler = ErrorHandler.NoOp,
-      parallelism = 1)
+      parallelism = 1,
+      retryConfig = None)
   }
 }
 
@@ -38,7 +37,8 @@ case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
                                         valueDeserializer: Deserializer[V],
                                         offsetReset: OffsetReset,
                                         errorHandler: ErrorHandler[K, V],
-                                        parallelism: Int) {
+                                        parallelism: Int,
+                                        retryConfig: Option[RetryConfig]) {
   def withMaxParallelism(parallelism: Int) =
     copy(parallelism = parallelism)
 
@@ -48,7 +48,10 @@ case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
   def withOffsetReset(offsetReset: OffsetReset) =
     copy(offsetReset = offsetReset)
 
-  private[greyhound] def recordHandler(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]): Handler[Env] = {
+  def withRetryConfig(retryConfig: RetryConfig) =
+    copy(retryConfig = Option(retryConfig))
+
+  private[greyhound] def recordHandler(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]) = {
     val baseHandler = runtime.unsafeRun(Semaphore.make(parallelism).map { semaphore =>
       CoreRecordHandler { record: CoreConsumerRecord[K, V] =>
         semaphore.withPermit {
@@ -73,7 +76,7 @@ case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
 
     baseHandler
       .withErrorHandler { case (t, record) =>
-        ZIO.fromFuture(_ => toScala(errorHandler.onUserException(t, record))).catchAll(_ => ZIO.unit)
+        ZIO.fromFuture(_ => toScala(errorHandler.onUserException(t, record))).catchAll(_ => ZIO.unit) *> ZIO.fail(t)
       }
 
       .withDeserializers(CoreDeserializer(keyDeserializer), CoreDeserializer(valueDeserializer))
@@ -82,8 +85,8 @@ case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
           case Left(serializationError) =>
             ZIO.fromFuture(_ => toScala(
               errorHandler.onSerializationError(serializationError, record.bimap(_.toArray, _.toArray))))
-              .catchAll(_ => ZIO.unit)
-          case _ => ZIO.unit
+              .catchAll(_ => ZIO.unit) *> ZIO.fail(serializationError)
+          case _ => ZIO.fail(error)
         }
       }
   }
