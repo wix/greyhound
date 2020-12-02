@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerR}
+import com.wixpress.dst.greyhound.core.producer.ProducerR
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration._
