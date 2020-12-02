@@ -9,7 +9,6 @@ import org.specs2.specification.core.{Fragment, Fragments}
 import zio.console.putStrLn
 import zio.internal.Platform
 import zio._
-import zio.duration._
 
 trait BaseTest[R]
   extends SpecificationWithJUnit
