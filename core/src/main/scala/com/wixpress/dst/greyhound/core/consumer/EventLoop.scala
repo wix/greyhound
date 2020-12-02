@@ -3,15 +3,13 @@ package com.wixpress.dst.greyhound.core.consumer
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import org.apache.kafka.clients.consumer.ConsumerRecords
 import zio._
 import zio.blocking.Blocking
 import zio.duration._
 
-import scala.collection.JavaConverters._
 
 trait EventLoop[-R] extends Resource[R] {
   self =>
