@@ -1,9 +1,9 @@
 package com.wixpress.dst.greyhound.core.rabalance
 
-import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommitFailed, CommittedOffsets, CommittingOffsets, PartitionsAssigned, PartitionsRevoked, PolledRecords}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommitFailed, CommittedOffsets, PartitionsRevoked, PolledRecords}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{Topics, topics}
 import com.wixpress.dst.greyhound.core.consumer._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Group, Topic}
