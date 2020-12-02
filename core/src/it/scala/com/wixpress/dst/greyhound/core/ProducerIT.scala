@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.Serdes.{IntSerde, StringSerde}
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerError, ProducerRecord, ProducerRetryPolicy, RecordMetadata}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord, ProducerRetryPolicy, RecordMetadata}
 import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv._

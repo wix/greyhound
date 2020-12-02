@@ -5,7 +5,6 @@ import java.util
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig => CoreTopicConfig}
 import com.wixpress.dst.greyhound.future.{GreyhoundRuntime, Environment => ZEnvironment}
 import com.wixpress.dst.greyhound.java.TopicConfig
-import zio.duration._
 
 import scala.collection.JavaConverters._
 
