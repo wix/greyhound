@@ -9,6 +9,10 @@ jobs:
       - run:
           name: Execute bazel
           command: |-
+              cd getting-started/greyhound-app
+              sh gradlew bootBuildImage --imageName=wixpress/greyhound-app
+              cd ../..
+              
               # Set environment variables
               # Install Bazelisk
               rm /usr/local/bin/bazel
