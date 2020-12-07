@@ -90,13 +90,13 @@ object Producer {
             runtime <- ZIO.runtime[Any]
             _ <- effectBlocking(producer.send(recordFrom(record), new Callback {
               override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit =
-                runtime.unsafeRun {
+                runtime.unsafeRun(
                   if (exception != null) produceCompletePromise.complete(ProducerError(exception))
-                  else produceCompletePromise.succeed(RecordMetadata(metadata))
-                }
+                  else produceCompletePromise.succeed(RecordMetadata(metadata)))
             }))
-              .catchAll(e => produceCompletePromise.complete(ProducerError(e)))
-          } yield (produceCompletePromise.await)
+              .tapError(e => produceCompletePromise.complete(ProducerError(e)))
+              .mapError(e => runtime.unsafeRun(ProducerError(e).flip))
+          } yield produceCompletePromise.await
       }
     }
   }

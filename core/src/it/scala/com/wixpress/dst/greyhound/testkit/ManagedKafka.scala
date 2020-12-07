@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{RIO, RManaged, Task, UIO}
+import zio.{RIO, RManaged, Task}
 
 import scala.reflect.io.Directory
 
@@ -35,10 +35,10 @@ object ManagedKafka {
     override val bootstrapServers: String = s"localhost:${config.kafkaPort}"
 
     override def createTopic(config: TopicConfig): RIO[Blocking, Unit] =
-      adminClient.createTopics(Set(config)).unit
+        adminClient.createTopics(Set(config)).unit
 
     override def createTopics(configs: TopicConfig*): RIO[Blocking, Unit] =
-      adminClient.createTopics(configs.toSet).unit
+        adminClient.createTopics(configs.toSet).unit
 
     override def adminClient: AdminClient = admin
   }
