@@ -15,6 +15,8 @@ case class TimeoutError(cause: TimeoutException) extends ProducerError(cause)
 case class KafkaError(cause: KafkaException) extends ProducerError(cause)
 case class GrpcProxyError(cause: GrpcError) extends ProducerError(cause)
 case class ProducerClosedError() extends ProducerError(ProducerClosed())
+case class IllegalArgumentError(e: IllegalArgumentException) extends ProducerError(e)
+case class UnknownError(cause: Throwable) extends ProducerError(cause)
 
 object ProducerError {
   def apply(exception: Throwable): IO[ProducerError, Nothing] = exception match {
@@ -26,7 +28,9 @@ object ProducerError {
     case e: TimeoutException => IO.fail(TimeoutError(e))
     case e: KafkaException => IO.fail(KafkaError(e))
     case e: GrpcError => IO.fail(GrpcProxyError(e))
+    case e: IllegalArgumentException => IO.fail(IllegalArgumentError(e))
     case _: ProducerClosed => IO.fail(ProducerClosedError())
+    case e: Throwable => IO.fail(UnknownError(e))
     case e => IO.die(e)
   }
 }
