@@ -96,7 +96,7 @@ object ProduceFiberAsyncRouter {
   private def awaitOnPromises(promises: Seq[(ProduceRequest, IO[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, Seq[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
     ZIO.foreach(promises) { case (req: ProduceRequest, res: IO[ProducerError, RecordMetadata]) =>
       res.tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-          .either.map(e => (req, e))
+        .either.map(e => (req, e))
     }
 
   private def reportError(req: ProduceRequest) =
@@ -144,15 +144,16 @@ object ProduceFiberSyncRouter {
 }
 
 object Common {
-  private [producer] def nonRetriable(e: Throwable): Boolean = e match {
+  private[producer] def nonRetriable(e: Throwable): Boolean = e match {
     case _: InvalidTopicException => true
     case _: RecordBatchTooLargeException => true
     case _: UnknownServerException => true
     case _: OffsetMetadataTooLarge => true
     case _: RecordTooLargeException => true
+    case _: IllegalArgumentException => true
     case _ => false
   }
 
-  private [producer] def timeoutPassed(req: ProduceRequest): Boolean =
+  private[producer] def timeoutPassed(req: ProduceRequest): Boolean =
     currentTimeMillis > req.giveUpTimestamp
 }
