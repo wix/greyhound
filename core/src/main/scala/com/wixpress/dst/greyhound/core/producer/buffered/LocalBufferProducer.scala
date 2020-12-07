@@ -18,8 +18,6 @@ import zio.duration._
 import zio.random.nextInt
 import zio.stm.{STM, TRef}
 
-import scala.util.{Success, Try}
-
 trait LocalBufferProducer[R] {
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
 
@@ -62,7 +60,7 @@ object LocalBufferProducer {
       unsent <- localBuffer.unsentRecordsCount
       state <- TRef.makeCommit(LocalBufferProducerState.empty.copy(enqueued = unsent))
       router <- ProduceFlusher.make(producer, config.giveUpAfter, config.retryInterval, config.strategy)
-      fiber <- ZIO.whenM(localBuffer.isOpen)(localBuffer.take(config.localBufferBatchSize).flatMap(msgs =>
+      fiber <- localBuffer.take(config.localBufferBatchSize).flatMap(msgs =>
         state.update(_.incQueryCount).commit *>
           ZIO.foreach(msgs)(record =>
             router.produceAsync(producerRecord(record))
@@ -84,10 +82,7 @@ object LocalBufferProducer {
           case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(1.millis) // this waits until there are more messages in buffer
           case x if x <= 10 => sleep(10.millis)
         })
-        .catchAll { e: Throwable =>
-          GreyhoundMetrics.report(LocalBufferProducerCaughtError(e))
-        })
-        .repeatWhileM(_ => state.get.commit.map(s => s.running || s.enqueued > 0))
+        .repeatWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
         .forkDaemon
     } yield new LocalBufferProducer[R] {
       override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
@@ -145,7 +140,7 @@ object LocalBufferProducer {
       case _: Unordered => state.update(_.updateEnqueuedCount(-1)).commit *>
         router.produceAsync(record)
           .map(willComplete => BufferedProduceResult(notPersisted, willComplete))
-          .catchAll(produceError => UIO(BufferedProduceResult(notPersisted, ZIO.fail(produceError))))
+          .catchAll(produceError =>  UIO(BufferedProduceResult(notPersisted, ZIO.fail(produceError))))
       case _ => ZIO.fail(error)
     }
 
@@ -157,9 +152,8 @@ object LocalBufferProducer {
         .map { id => BufferedProduceResult(id, promise.await) })
 
   private def persistedRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int) = {
-    val target = SerializableTarget(record.topic, record.partition, record.key)
     PersistedRecord(generatedMessageId,
-      target,
+      SerializableTarget(record.topic, record.partition, record.key),
       EncodedMessage(record.value, record.headers), currentTimeMillis)
   }
 
@@ -219,8 +213,5 @@ object LocalBufferProducerMetric {
 
   case class ResilientProducerSentRecord(topic: Topic, partition: Partition, offset: Offset, producerID: Int, persistentMessageID: PersistedMessageId) extends LocalBufferProducerMetric
 
-  case class LocalBufferProducerCaughtError(e: Throwable) extends LocalBufferProducerMetric
-
 }
-
 

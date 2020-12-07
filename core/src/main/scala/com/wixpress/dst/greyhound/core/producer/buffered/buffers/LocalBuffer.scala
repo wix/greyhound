@@ -5,12 +5,11 @@ import com.wixpress.dst.greyhound.core.{Headers, Partition, Topic}
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration.Duration
-import zio.{Chunk, UIO, ZIO}
+import zio.{Chunk, ZIO}
 
 import scala.util.Random
 
 trait LocalBuffer {
-
   def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
   def inflightRecordsCount: ZIO[Blocking, LocalBufferError, Int]
@@ -30,8 +29,6 @@ trait LocalBuffer {
   def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 
   def cleanup: ZIO[Blocking, LocalBufferError, Unit]
-
-  def isOpen: UIO[Boolean]
 }
 
 case class PersistedRecord(id: PersistedMessageId, target: SerializableTarget, encodedMsg: EncodedMessage, submitted: Long = 0L) {

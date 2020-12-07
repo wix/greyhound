@@ -27,7 +27,6 @@ object H2LocalBuffer {
       cp <- effectBlocking(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
       connection <- effectBlocking(cp.getConnection())
       currentSequenceNumber <- Ref.make(0)
-      closedRef <- Ref.make(false)
       _ <- initDatabase(connection, currentSequenceNumber)(localPath, keepDeadMessages)
     } yield new LocalBuffer {
       override def enqueue(message: PersistedRecord): ZIO[Clock with Blocking, LocalBufferError, PersistedMessageId] =
@@ -56,7 +55,7 @@ object H2LocalBuffer {
           .mapError(LocalBufferError.apply)
 
       override def close: ZIO[Blocking, LocalBufferError, Unit] =
-        closedRef.set(true) *> ZIO.when(!connection.isClosed)(
+        ZIO.when(!connection.isClosed)(
           effectBlocking(connection.close()) *> effectBlocking(cp.dispose()))
           .mapError(LocalBufferError.apply)
 
@@ -83,8 +82,6 @@ object H2LocalBuffer {
           effectBlocking(new File(s"$localPath.mv.db").delete()))
           .catchAll(e => ZIO.fail(LocalBufferError(e)))
           .unit
-
-      override def isOpen: UIO[Boolean] = closedRef.get.map(!_)
     })
       .toManaged(m => m.close.ignore)
 
@@ -98,7 +95,7 @@ object H2LocalBuffer {
         _ <- ZIO.when(!rs.next)(ZIO.fail(null))
         produceKey <- Task(Try(Chunk.fromArray(rs.getBytes(3))).toOption)
         topic = rs.getString(2)
-        producePartition <- Task(rs.getInt(4)).map(p => if (p != -1) Option(p) else None)
+        producePartition <- Task(rs.getInt(4)).map(p => if (p >= 0) Option(p) else None)
         id <- Task(rs.getLong(1))
         encodedPayload = Try(Chunk.fromArray(rs.getBytes(5))).toOption
         header <- decodeHeaders(rs.getString(6))
