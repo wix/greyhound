@@ -167,19 +167,16 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       BufferTestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(1, params = Map("max.message.bytes" -> "100"))
       record = ProducerRecord(topic, value = Random.alphanumeric.take(300).mkString)
-      record2 = ProducerRecord(topic, value = Random.alphanumeric.take(10).mkString, partition = Some(-100))
       test <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
         for {
-          producerError1 <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
-          producerError2 <- localBufferProducer.produce(record2, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
+          producerError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
           metrics <- TestMetrics.reported
-          reportedNonRetriableErrors = metrics.collect { case s@LocalBufferProduceAttemptFailed(_, true) => s }
+          reportedNonRetriableErrors = metrics.collect { case s@LocalBufferProduceAttemptFailed(KafkaError(_), true) => s }
           state <- localBufferProducer.currentState
         } yield
-          (reportedNonRetriableErrors.size === 2) and
-            (state.failedRecords === 2) and
-            (producerError1.getCause.getClass === classOf[RecordTooLargeException]) and
-            (producerError2.getCause.getClass === classOf[IllegalArgumentException])
+          (reportedNonRetriableErrors.size === 1) and
+            (state.failedRecords === 1) and
+            (producerError.getCause.getClass === classOf[RecordTooLargeException])
       }
     } yield test
   }
