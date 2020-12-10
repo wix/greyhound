@@ -10,6 +10,7 @@ import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
 import zio.{RIO, RManaged, Task, UIO}
+import scala.collection.JavaConverters._
 
 import scala.reflect.io.Directory
 

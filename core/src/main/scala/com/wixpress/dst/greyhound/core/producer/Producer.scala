@@ -104,26 +104,20 @@ object Producer {
 
 case class ProducerConfig(bootstrapServers: String,
                           retryPolicy: ProducerRetryPolicy = ProducerRetryPolicy.Default,
-                          extraProperties: Map[String, String] = Map.empty) {
+                          extraProperties: Map[String, String] = Map.empty)  extends CommonGreyhoundConfig {
   def withBootstrapServers(servers: String) = copy(bootstrapServers = servers)
 
   def withRetryPolicy(retryPolicy: ProducerRetryPolicy) = copy(retryPolicy = retryPolicy)
 
   def withProperties(extraProperties: Map[String, String]) = copy(extraProperties = extraProperties)
 
-  def properties: Properties = {
-    val props = new Properties
-    props.setProperty(KafkaProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
-    props.setProperty(KafkaProducerConfig.RETRIES_CONFIG, retryPolicy.retries.toString)
-    props.setProperty(KafkaProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryPolicy.backoff.toMillis.toString)
-    props.setProperty(KafkaProducerConfig.ACKS_CONFIG, "all")
-    extraProperties.foreach {
-      case (key, value) =>
-        props.setProperty(key, value)
-    }
-    props
-  }
 
+  override def kafkaProps: Map[String, String] = Map(
+    (KafkaProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers),
+    (KafkaProducerConfig.RETRIES_CONFIG, retryPolicy.retries.toString),
+    (KafkaProducerConfig.RETRY_BACKOFF_MS_CONFIG, retryPolicy.backoff.toMillis.toString),
+    (KafkaProducerConfig.ACKS_CONFIG, "all")
+  ) ++ extraProperties
 }
 
 case class ProducerRetryPolicy(retries: Int, backoff: Duration)
