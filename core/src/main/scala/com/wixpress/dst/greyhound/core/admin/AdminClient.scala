@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit.SECONDS
 
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{Topic, TopicConfig}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Topic, TopicConfig}
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
@@ -99,16 +99,9 @@ object AdminClient {
 }
 
 case class AdminClientConfig(bootstrapServers: String,
-                             extraProperties: Map[String, String] = Map.empty) {
+                             extraProperties: Map[String, String] = Map.empty) extends CommonGreyhoundConfig {
 
-  def properties: Properties = {
-    val props = new Properties
-    props.setProperty(KafkaAdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
-    extraProperties.foreach {
-      case (key, value) =>
-        props.setProperty(key, value)
-    }
-    props
-  }
 
+  override def kafkaProps: Map[String, String] =
+    Map(KafkaAdminClientConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers) ++ extraProperties
 }

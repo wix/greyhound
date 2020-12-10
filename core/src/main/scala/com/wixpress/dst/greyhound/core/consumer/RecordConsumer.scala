@@ -1,9 +1,11 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.util.Properties
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CreatingConsumer
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
@@ -43,15 +45,16 @@ object RecordConsumer {
    * from Kafka and invoke the appropriate handlers. Handling is concurrent between
    * partitions; order is guaranteed to be maintained within the same partition.
    */
-  def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env, Throwable, RecordConsumer[R with Env]] =
+  def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     for {
+      _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers)).toManaged_
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
       consumer <- Consumer.make(
         ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(config, nonBlockingRetryHelper))
-      _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
+      _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
@@ -126,8 +129,9 @@ object RecordConsumer {
                                         nonBlockingRetryHelper: NonBlockingRetryHelper) =
     config.retryConfig match {
       case Some(retryConfig) =>
-        Producer.makeR[R](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
-          ReportingProducer(producer))
+        UIO(println(s"creating retry producer for ${config.bootstrapServers}, auth: ${config.kafkaAuthProperties} ")).toManaged_ *>
+        Producer.makeR[R](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties))
+          .map(producer => ReportingProducer(producer))
           .map(producer => RetryRecordHandler.withRetries(handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
@@ -161,7 +165,10 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
                                 extraProperties: Map[String, String] = Map.empty,
-                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty )
+                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty ) extends CommonGreyhoundConfig {
+
+  override def kafkaProps: Map[String, String] = extraProperties
+}
 
 object RecordConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"

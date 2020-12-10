@@ -157,24 +157,19 @@ case class ConsumerConfig(bootstrapServers: String,
                           clientId: ClientId = s"wix-consumer-${Random.alphanumeric.take(5).mkString}",
                           offsetReset: OffsetReset = OffsetReset.Latest,
                           extraProperties: Map[String, String] = Map.empty,
-                          additionalListener: RebalanceListener[Any] = RebalanceListener.Empty) {
+                          additionalListener: RebalanceListener[Any] = RebalanceListener.Empty) extends CommonGreyhoundConfig {
 
-  def properties: Properties = {
-    val props = new Properties
-    props.setProperty(KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
-    props.setProperty(KafkaConsumerConfig.GROUP_ID_CONFIG, groupId)
-    props.setProperty(KafkaConsumerConfig.CLIENT_ID_CONFIG, clientId)
-    props.setProperty(KafkaConsumerConfig.AUTO_OFFSET_RESET_CONFIG, offsetReset match {
+
+  override def kafkaProps: Map[String, String] = Map(
+    KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers,
+    KafkaConsumerConfig.GROUP_ID_CONFIG -> groupId,
+    KafkaConsumerConfig.CLIENT_ID_CONFIG -> clientId,
+    (KafkaConsumerConfig.AUTO_OFFSET_RESET_CONFIG, offsetReset match {
       case OffsetReset.Earliest => "earliest"
       case OffsetReset.Latest => "latest"
-    })
-    props.setProperty(KafkaConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
-    extraProperties.foreach {
-      case (key, value) =>
-        props.setProperty(key, value)
-    }
-    props
-  }
+    }),
+    KafkaConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG -> "false"
+  ) ++ extraProperties
 
   def withExtraProperties(props: (String, String)*) =
     copy(extraProperties = extraProperties ++ props)

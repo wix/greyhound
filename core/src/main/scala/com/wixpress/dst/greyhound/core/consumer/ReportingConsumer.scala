@@ -123,6 +123,8 @@ sealed trait ConsumerMetric extends GreyhoundMetric {
 
 object ConsumerMetric {
 
+  case class CreatingConsumer(clientId: ClientId, group: Group, connectUrl: String) extends ConsumerMetric
+
   case class SubscribingToTopics(clientId: ClientId, group: Group, topics: Set[Topic]) extends ConsumerMetric
 
   case class SubscribingToTopicWithPattern(clientId: ClientId, group: Group, pattern: String) extends ConsumerMetric
