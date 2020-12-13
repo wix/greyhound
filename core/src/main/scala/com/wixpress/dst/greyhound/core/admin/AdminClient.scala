@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.admin
 
-import java.util.Properties
 import java.util.concurrent.TimeUnit.SECONDS
 
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError

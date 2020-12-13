@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.util.Properties
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._

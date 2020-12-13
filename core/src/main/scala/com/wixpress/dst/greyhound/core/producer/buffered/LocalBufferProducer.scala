@@ -18,7 +18,6 @@ import zio.duration._
 import zio.random.nextInt
 import zio.stm.{STM, TRef}
 
-import scala.util.{Success, Try}
 
 trait LocalBufferProducer[R] {
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
