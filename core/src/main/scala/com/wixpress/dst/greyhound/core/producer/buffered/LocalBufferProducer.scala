@@ -83,8 +83,8 @@ object LocalBufferProducer {
           case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(1.millis) // this waits until there are more messages in buffer
           case x if x <= 10 => sleep(10.millis)
         })
-        .catchAll { e: Throwable =>
-          GreyhoundMetrics.report(LocalBufferProducerCaughtError(e))
+        .catchAllCause { e: Cause[Throwable] =>
+          GreyhoundMetrics.report(LocalBufferProducerCaughtError(e.squashTrace))
         })
         .repeatWhileM(_ => state.get.commit.map(s => s.running || s.enqueued > 0))
         .forkDaemon
