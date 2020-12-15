@@ -148,10 +148,13 @@ object H2LocalBuffer {
   }
 
   private def decodeHeaders(headersString: String): ZIO[Any, Throwable, Headers] = {
-    ZIO.foreach(headersString.split(';').filter(_.nonEmpty).map(part => {
-      val key :: value :: Nil = part.split(":").toList
-      (key, value)
-    }).toSeq) { case (base64Key, base64Value) =>
+    ZIO.foreach(headersString.split(';')
+      .filter(_.nonEmpty)
+      .filter(_.split(":").length == 2)
+      .map(part => {
+        val key :: value :: Nil = part.split(":").toList
+        (key, value)
+      }).toSeq) { case (base64Key, base64Value) =>
       Base64Adapter.decode(base64Key).map(b => new String(b.toArray, "UTF-8")) zip Base64Adapter.decode(base64Value)
     }.map(headers => Headers(headers.toMap))
   }
