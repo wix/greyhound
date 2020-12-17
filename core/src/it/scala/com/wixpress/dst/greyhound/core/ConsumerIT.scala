@@ -62,6 +62,37 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
+  "be able to resubscribe to same topics" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
+      group <- randomGroup
+
+      queue <- Queue.unbounded[ConsumerRecord[String, String]]
+      handler = RecordHandler((cr: ConsumerRecord[String, String]) => UIO(println(s"***** Consumed: $cr")) *> queue.offer(cr))
+        .withDeserializers(StringSerde, StringSerde)
+        .ignore
+      cId <- clientId
+      config = configFor(kafka, group, topic, mutateEventLoop = _.copy(drainTimeout = 1.second)).copy(clientId = cId)
+      record = ProducerRecord(topic, "bar", Some("foo"))
+
+      messages <- RecordConsumer.make(config, handler).use { consumer =>
+        producer.produce(record, StringSerde, StringSerde) *>
+          sleep(3.seconds) *>
+          consumer.resubscribe(ConsumerSubscription.topics(topic)) *>
+          consumer.resubscribe(ConsumerSubscription.topics(topic)) *>
+          producer.produce(record.copy(topic = topic, value = Some("BAR")), StringSerde, StringSerde) *>
+          (queue.take zip queue.take)
+            .timeout(20.seconds)
+            .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
+      }
+      msgs <- ZIO.fromOption(messages).orElseFail(TimedOutWaitingForMessages)
+    } yield {
+      msgs._1 must (beRecordWithKey("foo") and beRecordWithValue("bar")) and (
+        msgs._2 must (beRecordWithKey("foo") and beRecordWithValue("BAR")))
+    }
+  }
+
   "produce consume null values (tombstones)" in {
     for {
       TestResources(kafka, producer) <- getShared
