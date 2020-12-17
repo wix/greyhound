@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CreatingConsumer
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
-import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.{ResubscribeError, UncaughtHandlerError}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.{patternRetryTopic, retryPattern}
@@ -106,7 +106,10 @@ object RecordConsumer {
           }
 
           _ <- subscribe[R1](subscription, rebalanceListener)(consumer)
-          result <- promise.await
+          resubscribeTimeout = config.eventLoopConfig.drainTimeout
+          result <- promise.await.disconnect.timeoutFail(
+            ResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
+              .catchAll(ex => report(ResubscribeError(ex, group, clientId)) *> UIO(Set.empty[TopicPartition]))
         } yield result
 
       override def clientId: ClientId = config.clientId
@@ -147,7 +150,7 @@ sealed trait RecordConsumerMetric extends GreyhoundMetric {
 object RecordConsumerMetric {
 
   case class UncaughtHandlerError[E](error: E, topic: Topic, partition: Partition, offset: Offset, group: Group, clientId: ClientId) extends RecordConsumerMetric
-
+  case class ResubscribeError[E](error: E, group: Group, clientId: ClientId) extends RecordConsumerMetric
 }
 
 case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, consumerId: String, blockingState: Map[BlockingTarget, BlockingState]) {
@@ -172,3 +175,5 @@ case class RecordConsumerConfig(bootstrapServers: String,
 object RecordConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
 }
+
+case class ResubscribeTimeout(resubscribeTimeout: duration.Duration, subscription: ConsumerSubscription) extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")
