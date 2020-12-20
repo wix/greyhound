@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core
 
+import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
@@ -146,6 +147,39 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           handledAllFromPartition1 <- handledPartition1.await.timeout(10.seconds)
         } yield {
           (handledAllFromPartition0 must beSome) and (handledAllFromPartition1 must beSome)
+        }
+      }
+    } yield test
+  }
+
+  "delay resuming a paused partition" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      _ <- console.putStrLn(">>>> starting test: delay resuming a paused partition")
+
+      topic <- kafka.createRandomTopic(partitions = 1, prefix = "core-not-lose")
+      group <- randomGroup
+
+      messagesPerPartition = 500 // Exceeds the queue capacity
+      delayPartition <- Promise.make[Nothing, Unit]
+      handledPartition <- CountDownLatch.make(messagesPerPartition)
+      handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        delayPartition.await *> handledPartition.countDown
+      }
+      start <- clock.currentTime(TimeUnit.MILLISECONDS)
+      test <- RecordConsumer.make(configFor(kafka, group, topic, mutateEventLoop = _.copy(
+        delayResumeOfPausedPartition = 3000)), handler).use_ {
+        val recordPartition = ProducerRecord(topic, Chunk.empty, partition = Some(0))
+        for {
+          _ <- ZIO.foreachPar_(0 until messagesPerPartition) { _ =>
+            producer.produce(recordPartition)
+          }
+          _ <- delayPartition.succeed(()).delay(1.seconds).fork
+          handledAllFromPartition <- handledPartition.await.timeout(10.seconds)
+          end <- clock.currentTime(TimeUnit.MILLISECONDS)
+
+        } yield {
+          (handledAllFromPartition aka "handledAllFromPartition" must beSome) and (end-start aka "complete handling duration" must beGreaterThan(3000L))
         }
       }
     } yield test
