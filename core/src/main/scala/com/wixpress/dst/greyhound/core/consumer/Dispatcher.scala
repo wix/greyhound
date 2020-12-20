@@ -37,7 +37,7 @@ object Dispatcher {
               lowWatermark: Int,
               highWatermark: Int): UIO[Dispatcher[R]] =
     for {
-      state <- Ref.make[State](State.Running)
+      state <- Ref.make[DispatcherState](DispatcherState.Running)
       workers <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
@@ -85,19 +85,19 @@ object Dispatcher {
       override def pause: URIO[GreyhoundMetrics, Unit] = for {
         resume <- Promise.make[Nothing, Unit]
         _ <- state.updateSome {
-          case State.Running =>
-            State.Paused(resume)
+          case DispatcherState.Running =>
+            DispatcherState.Paused(resume)
         }
       } yield ()
 
       override def resume: URIO[GreyhoundMetrics, Unit] = state.modify {
-        case State.Paused(resume) => (resume.succeed(()).unit, State.Running)
+        case DispatcherState.Paused(resume) => (resume.succeed(()).unit, DispatcherState.Running)
         case state => (ZIO.unit, state)
       }.flatten
 
       override def shutdown: URIO[GreyhoundMetrics with ZEnv, Unit] =
-        state.modify(state => (state, State.ShuttingDown)).flatMap {
-          case State.Paused(resume) => resume.succeed(()).unit
+        state.modify(state => (state, DispatcherState.ShuttingDown)).flatMap {
+          case DispatcherState.Paused(resume) => resume.succeed(()).unit
           case _ => ZIO.unit
         } *> workers.get.flatMap(shutdownWorkers)
 
@@ -133,15 +133,15 @@ object Dispatcher {
         }
     }
 
-  sealed trait State
+  sealed trait DispatcherState
 
-  object State {
+  object DispatcherState {
 
-    case object Running extends State
+    case object Running extends DispatcherState
 
-    case class Paused(resume: Promise[Nothing, Unit]) extends State
+    case class Paused(resume: Promise[Nothing, Unit]) extends DispatcherState
 
-    case object ShuttingDown extends State
+    case object ShuttingDown extends DispatcherState
 
   }
 
@@ -156,7 +156,7 @@ object Dispatcher {
   }
 
   object Worker {
-    def make[R](status: Ref[State],
+    def make[R](status: Ref[DispatcherState],
                 handle: Record => URIO[R, Any],
                 capacity: Int,
                 group: Group,
@@ -181,7 +181,7 @@ object Dispatcher {
         fiber.interrupt.unit
     }
 
-    private def pollOnce[R](state: Ref[State],
+    private def pollOnce[R](state: Ref[DispatcherState],
                             internalState: Ref[WorkerInternalState],
                             handle: Record => URIO[R, Any],
                             queue: Queue[Record],
@@ -190,18 +190,18 @@ object Dispatcher {
                             partition: TopicPartition): URIO[R with Env, Boolean] =
       internalState.update(_.cleared) *>
         state.get.flatMap {
-          case State.Running => queue.poll.flatMap {
+          case DispatcherState.Running => queue.poll.flatMap {
             case Some(record) => report(TookRecordFromQueue(record, group, clientId)) *>
               internalState.update(_.started) *>
               handle(record).uninterruptible
                 .as(true)
             case None => UIO(true).delay(5.millis)
           }
-          case State.Paused(resume) =>
+          case DispatcherState.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition)) *>
               resume.await.timeout(30.seconds)
                 .as(true)
-          case State.ShuttingDown =>
+          case DispatcherState.ShuttingDown =>
             UIO(false)
         }
   }
@@ -250,7 +250,7 @@ object DispatcherMetric {
 
 }
 
-case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState], state: Dispatcher.State) {
+case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState], state: Dispatcher.DispatcherState) {
   def totalQueuedTasksPerTopic: Map[Topic, Int] = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.queuedTasks).sum) }
 
   def maxTaskDuration = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.currentExecutionDuration.getOrElse(0L)).max) }
@@ -261,5 +261,5 @@ case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExpose
 case class WorkerExposedState(queuedTasks: Int, currentExecutionDuration: Option[Long])
 
 object DispatcherExposedState {
-  def empty(state: Dispatcher.State) = DispatcherExposedState(Map.empty, state)
+  def empty(state: Dispatcher.DispatcherState) = DispatcherExposedState(Map.empty, state)
 }
