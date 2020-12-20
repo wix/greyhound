@@ -11,9 +11,16 @@ package object testkit {
   type TestMetrics = Has[TestMetrics.Service] with GreyhoundMetrics
 
   def eventuallyZ[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean): ZIO[R, Throwable, Unit] =
-    eventuallyTimeout(f)(predicate)(4.seconds)
+    eventuallyTimeoutFail(f)(predicate)(4.seconds)
 
-  def eventuallyTimeout[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Unit] =
+  def eventuallyTimeoutFail[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Unit] =
+    for {
+      timeoutRes <- eventuallyTimeout(f)(predicate)(timeout)
+      result = timeoutRes.map(_._2)
+      _ <- ZIO.when(timeoutRes.isEmpty)(ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result")))
+    } yield ()
+
+  def eventuallyTimeout[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Option[(Long, T)]] =
     for {
       resultRef <- Ref.make[Option[T]](None)
       timeoutRes <- f.flatMap(r =>
@@ -21,8 +28,6 @@ package object testkit {
         .repeat(spaced(100.millis) && Schedule.recurUntil(predicate))
         .timeout(timeout)
         .provideSomeLayer[R](Clock.live)
-      result <- resultRef.get
-      _ <- ZIO.when(timeoutRes.isEmpty)(ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result")))
-    } yield ()
+    } yield timeoutRes
 
 }

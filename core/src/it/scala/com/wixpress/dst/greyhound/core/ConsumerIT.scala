@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
-import com.wixpress.dst.greyhound.core.testkit.{eventuallyTimeout, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
@@ -264,7 +264,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           _ <- createConsumerTask(1).useForever.fork // rebalance
           _ <- createConsumerTask(2).useForever.fork // rebalance
           expected = (0 until partitions).map(p => (p, 0L until messagesPerPartition)).toMap
-          _ <- eventuallyTimeout(probe.get)(m => m.mapValues(_.lastOption).values.toSet == Set(Option(messagesPerPartition - 1L)) && m.size == partitions)(120.seconds)
+          _ <- eventuallyTimeoutFail(probe.get)(m => m.mapValues(_.lastOption).values.toSet == Set(Option(messagesPerPartition - 1L)) && m.size == partitions)(120.seconds)
           finalResult <- probe.get
           _ <- console.putStrLn(finalResult.mapValues(_.size).mkString(","))
         } yield finalResult === expected
