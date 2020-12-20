@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.core.producer.buffered.buffers.{H2LocalBuffer,
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducer
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferFlushTimeout, LocalBufferProduceAttemptFailed}
 import com.wixpress.dst.greyhound.core.producer._
-import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeout, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.testkit.ITEnv.ManagedKafkaOps
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka, ManagedKafkaConfig}
 import org.apache.kafka.common.errors.RecordTooLargeException
@@ -76,7 +76,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
                 record = ProducerRecord(topic, 0)
                 _ <- RecordConsumer.make(configFor(kafka, "group234", topic), handler).use_ {
                   produceMultiple(keyCount, recordPerKey)(localBufferProducer, record) *>
-                    eventuallyTimeout(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(40.seconds)
+                    eventuallyTimeoutFail(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(40.seconds)
                 }.timed.tap { case (d, _) => console.putStrLn(s"Finished in ${d.toMillis} ms") }
                 state <- localBufferProducer.currentState
                 queryCountAfterComplete = state.localBufferQueryCount
