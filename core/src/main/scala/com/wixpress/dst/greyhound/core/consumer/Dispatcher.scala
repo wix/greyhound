@@ -35,7 +35,8 @@ object Dispatcher {
               clientId: ClientId,
               handle: Record => URIO[R, Any],
               lowWatermark: Int,
-              highWatermark: Int): UIO[Dispatcher[R]] =
+              highWatermark: Int,
+              delayResumeOfPausedPartition: Long = 0): UIO[Dispatcher[R]] =
     for {
       state <- Ref.make[DispatcherState](DispatcherState.Running)
       workers <- Ref.make(Map.empty[TopicPartition, Worker])
@@ -55,9 +56,9 @@ object Dispatcher {
               case Some(worker) =>
                 worker.expose
                   .map { state =>
-                    if (state.queuedTasks <= lowWatermark) acc + partition
+                    if (state.queuedTasks <= lowWatermark && state.pausedPartitionTime > delayResumeOfPausedPartition) acc + partition
                     else acc
-                  }
+                  }.tap(tps => ZIO.when(tps.contains(partition))(worker.clearPausedPartitionDuration))
 
               case None => ZIO.succeed(acc + partition)
             }
@@ -153,6 +154,8 @@ object Dispatcher {
     def expose: UIO[WorkerExposedState]
 
     def shutdown: UIO[Unit]
+
+    def clearPausedPartitionDuration: UIO[Unit]
   }
 
   object Worker {
@@ -170,15 +173,23 @@ object Dispatcher {
     } yield new Worker {
       override def submit(record: Record): UIO[Boolean] =
         queue.offer(record)
+          .tap(submitted => ZIO.when(!submitted) {
+            internalState.update(s => if (s.reachedHighWatermarkSince.isEmpty) s.reachedHighWatermark else s)
+          })
 
       override def expose: UIO[WorkerExposedState] =
         (queue.size zip internalState.get)
-          .map { case (queued, state) => WorkerExposedState(
-            Math.max(0, queued), state.currentExecutionStarted.map(System.currentTimeMillis - _))
+          .map { case (queued, state) =>
+            WorkerExposedState(
+              Math.max(0, queued),
+              state.currentExecutionStarted.map(System.currentTimeMillis - _),
+              state.reachedHighWatermarkSince.map(System.currentTimeMillis - _))
           }
 
       override def shutdown: UIO[Unit] =
         fiber.interrupt.unit
+
+      override def clearPausedPartitionDuration: UIO[Unit] = internalState.update(_.clearReachedHighWatermark)
     }
 
     private def pollOnce[R](state: Ref[DispatcherState],
@@ -208,14 +219,17 @@ object Dispatcher {
 
 }
 
-case class WorkerInternalState(currentExecutionStarted: Option[Long]) {
+case class WorkerInternalState(currentExecutionStarted: Option[Long], reachedHighWatermarkSince: Option[Long]) {
   def cleared = copy(currentExecutionStarted = None)
 
   def started = copy(currentExecutionStarted = Some(System.currentTimeMillis()))
+
+  def reachedHighWatermark = copy(reachedHighWatermarkSince = Some(System.currentTimeMillis()))
+  def clearReachedHighWatermark = copy(reachedHighWatermarkSince = None)
 }
 
 object WorkerInternalState {
-  def empty = WorkerInternalState(None)
+  def empty = WorkerInternalState(None, None)
 }
 
 sealed trait SubmitResult
@@ -258,7 +272,10 @@ case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExpose
   def topics = workersState.groupBy(_._1.topic).keys
 }
 
-case class WorkerExposedState(queuedTasks: Int, currentExecutionDuration: Option[Long])
+case class WorkerExposedState(queuedTasks: Int, currentExecutionDuration: Option[Long], pausedPartitionDuration: Option[Long] = None) {
+  def pausedPartitionTime =
+    pausedPartitionDuration.getOrElse(Long.MaxValue)
+}
 
 object DispatcherExposedState {
   def empty(state: Dispatcher.DispatcherState) = DispatcherExposedState(Map.empty, state)
