@@ -29,8 +29,14 @@ jobs:
       - name: run bazel
         run: |
             mkdir -p /github/home/.bazel_caches
-            pwd
             bazel --bazelrc=.bazelrc.remote test --repository_cache=/github/home/.bazel_caches --test_verbose_timeout_warnings --flaky_test_attempts=3 -k //...
+      - name: debug actions
+        if: ${{ always() }}
+        run: |
+            pwd
+            ls -la .
+            ls -la /github/home/
+            ls -la /__w/
       - name: archive test logs
         uses: actions/upload-artifact@v2
         if: ${{ always() }}
