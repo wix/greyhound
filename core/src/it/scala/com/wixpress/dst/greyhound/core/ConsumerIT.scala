@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core
 
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{TimeUnit, TimeoutException}
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
@@ -20,7 +20,7 @@ import zio.console.Console
 import zio.duration._
 import zio.{console, _}
 
-class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
+class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources]  {
 
   sequential
 
@@ -30,7 +30,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   val resources = testResources()
 
-  "produce, consume and rebalance" in {
+  "produce, consume and rebalance - " in {
     for {
       TestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
@@ -343,10 +343,12 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
       record <- aProducerRecord(topic)
       recordValue =  record.value.get
-      _ <- makeConsumer(kafka, topic, group, hangingHandler, 0, _.copy(drainTimeout = 200.millis)).use { _ =>
+      _ <- makeConsumer(kafka, topic, group, hangingHandler, 0, _.copy(drainTimeout = 200.millis)).use { consumer =>
         producer.produce(record, StringSerde, StringSerde) *>
-          handlingStarted.await
-      }
+          handlingStarted.await *>
+            //unsubscribe to make sure partitions are released
+            consumer.resubscribe(ConsumerSubscription.topics())
+      }.disconnect.timeoutFail(new TimeoutException("timed out waiting for consumer 0"))(10.seconds)
       consumed <- AwaitableRef.make(Seq.empty[String])
       handler = RecordHandler { record: ConsumerRecord[String, String] =>
         consumed.update(_ :+ record.value)
@@ -354,7 +356,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       consumedValues <- makeConsumer(kafka, topic, group, handler, 1, modifyConfig = _.copy(offsetReset = Latest)).use { _ =>
          consumed.await(_.nonEmpty, 5.seconds)
-      }
+      }.disconnect.timeoutFail(new TimeoutException("timed out waiting for consumer 1"))(10.seconds)
     } yield {
       consumedValues must contain(recordValue)
     }
