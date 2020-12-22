@@ -12,7 +12,7 @@ import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
-import zio.duration.Duration
+import zio.duration._
 
 import scala.collection.JavaConverters._
 import scala.util.Random
@@ -54,80 +54,70 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(config: ConsumerConfig): RManaged[Blocking, Consumer] = for {
+  def make(config: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
     semaphore <- Semaphore.make(1).toManaged_
     consumer <- makeConsumer(config)
-  } yield new Consumer {
-    override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-      listener(rebalanceListener *> config.additionalListener).flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
+    // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
+    // if a partition with no committed offset is revoked during processing
+    missingOffsetsCommitter <- MissingOffsetsCommitter.make(config.clientId, config.groupId, UnsafeOffsetOperations.make(consumer), 500.millis).toManaged_
+  } yield {
+    new Consumer {
+      override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
+        listener(missingOffsetsCommitter.commitMissingOffsets, rebalanceListener *> config.additionalListener)
+          .flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
-    override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-      listener(rebalanceListener *> config.additionalListener).flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
+      override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
+        listener(missingOffsetsCommitter.commitMissingOffsets, rebalanceListener *> config.additionalListener)
+          .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
-    override def poll(timeout: Duration): RIO[Blocking, Records] =
-      withConsumerBlocking {c =>
-        c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
+      override def poll(timeout: Duration): RIO[Blocking, Records] =
+        withConsumerBlocking {c =>
+          c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
+        }
+
+
+      override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
+        withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
       }
 
+      override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] = {
+        val kOffsets = kafkaOffsets(offsets)
+        // we can't actually call commit here, as it needs to be called from the same
+        // thread, that triggered poll(), so we return the commit action as thunk
+        UIO(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
+      }
 
-    override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
-      withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
+      override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
+        withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie {
+          case e: IllegalStateException => e
+        }
+
+      override def resume(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
+        withConsumer(consumer => {
+          val onlySubscribed = consumer.assignment().asScala.toSet intersect kafkaPartitions(partitions).asScala.toSet
+          consumer.resume(onlySubscribed.asJavaCollection)
+        }).refineOrDie {
+          case e: IllegalStateException => e
+        }
+
+      override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
+        withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset)).refineOrDie {
+          case e: IllegalStateException => e
+        }
+
+      override def assignment: Task[Set[TopicPartition]] = {
+        withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
+      }
+
+      private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): Task[A] =
+        semaphore.withPermit(Task(f(consumer)))
+
+      private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
+        semaphore.withPermit(effectBlocking(f(consumer)))
     }
-
-    override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] = {
-      val kOffsets = kafkaOffsets(offsets)
-      // we can't actually call commit here, as it needs to be called from the same
-      // thread, that triggered poll(), so we return the commit action as thunk
-      UIO(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
-    }
-
-    override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
-      withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie {
-        case e: IllegalStateException => e
-      }
-
-    override def resume(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
-      withConsumer(consumer => {
-        val onlySubscribed = consumer.assignment().asScala.toSet intersect kafkaPartitions(partitions).asScala.toSet
-        consumer.resume(onlySubscribed.asJavaCollection)
-      }).refineOrDie {
-        case e: IllegalStateException => e
-      }
-
-    override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
-      withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset)).refineOrDie {
-        case e: IllegalStateException => e
-      }
-
-    override def assignment: Task[Set[TopicPartition]] = {
-      withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
-    }
-
-    private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): Task[A] =
-      semaphore.withPermit(Task(f(consumer)))
-
-    private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
-      semaphore.withPermit(effectBlocking(f(consumer)))
-
-    private def kafkaOffsets(offsets: Map[TopicPartition, Offset]): util.Map[KafkaTopicPartition, OffsetAndMetadata] =
-      offsets.foldLeft(new util.HashMap[KafkaTopicPartition, OffsetAndMetadata](offsets.size)) {
-        case (acc, (TopicPartition(topic, partition), offset)) =>
-          val key = new KafkaTopicPartition(topic, partition)
-          val value = new OffsetAndMetadata(offset)
-          acc.put(key, value)
-          acc
-      }
-
-    private def kafkaPartitions(partitions: Set[TopicPartition]): util.Collection[KafkaTopicPartition] =
-      partitions.foldLeft(new util.ArrayList[KafkaTopicPartition](partitions.size)) {
-        case (acc, TopicPartition(topic, partition)) =>
-          acc.add(new KafkaTopicPartition(topic, partition))
-          acc
-      }
-
   }
 
-  private def listener[R1](rebalanceListener: RebalanceListener[R1]) =
+  private def listener[R1](onAssignFirstDo: Set[TopicPartition] => Unit, rebalanceListener: RebalanceListener[R1]) =
     ZIO.runtime[Blocking with R1].map { runtime =>
       new ConsumerRebalanceListener {
         override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit = {
@@ -135,8 +125,11 @@ object Consumer {
             .run() // this needs to be run in the same thread
         }
 
-        override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit =
-          runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(partitionsFor(partitions)))
+        override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit = {
+          val assigned = partitionsFor(partitions)
+          onAssignFirstDo(assigned)
+          runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(assigned))
+        }
 
         private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
           partitions.asScala.map(TopicPartition(_)).toSet
@@ -183,4 +176,34 @@ object OffsetReset {
 
   case object Latest extends OffsetReset
 
+}
+
+trait UnsafeOffsetOperations {
+  def committed(partitions: Set[TopicPartition], timeout: zio.duration.Duration): Map[TopicPartition, Offset]
+  def position(partition: TopicPartition, timeout: zio.duration.Duration): Offset
+  def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
+}
+
+object UnsafeOffsetOperations {
+  def make(consumer: KafkaConsumer[_, _]) = new UnsafeOffsetOperations {
+    override def committed(partitions: Set[TopicPartition],
+                           timeout: Duration): Map[TopicPartition, Offset] = {
+      consumer.committed(partitions.map(_.asKafka).asJava, timeout)
+        .asScala
+        .toMap
+        .collect {
+          case (tp, ofm) if ofm != null =>
+            TopicPartition(tp) -> ofm.offset()
+        }
+    }
+
+    override def position(partition: TopicPartition,
+                          timeout: Duration): Offset = {
+      consumer.position(partition.asKafka, timeout)
+    }
+
+    override def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit = {
+      consumer.commitSync(kafkaOffsets(offsets), timeout)
+    }
+  }
 }
