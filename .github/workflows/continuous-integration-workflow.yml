@@ -31,9 +31,9 @@ jobs:
             mkdir -p /github/home/.bazel_caches
             bazel --bazelrc=.bazelrc.remote test --repository_cache=/github/home/.bazel_caches --test_verbose_timeout_warnings --flaky_test_attempts=3 -k //...
       - name: archive test logs
-          if: ${{ always() }}
-          uses: actions/upload-artifact@v2
-          with:
-            name: test-logs
-            path: bazel-testlogs
+        uses: actions/upload-artifact@v2
+        if: ${{ always() }}
+        with:
+          name: test-logs
+          path: bazel-testlogs
   
