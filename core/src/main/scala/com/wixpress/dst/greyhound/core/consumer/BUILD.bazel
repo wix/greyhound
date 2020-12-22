@@ -19,6 +19,5 @@ scala_library(
         "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_2_12",
         "@org_apache_kafka_kafka_clients",
-        "@org_scalaz_scalaz_zio_2_12",
     ],
 )
