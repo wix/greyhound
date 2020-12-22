@@ -42,5 +42,5 @@ jobs:
         if: ${{ always() }}
         with:
           name: test-logs
-          path: /github/home/bazel-testlogs
+          path: /__w/greyhound/greyhound/bazel-testlogs/
   
