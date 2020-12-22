@@ -4,16 +4,15 @@ import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
-import com.wixpress.dst.greyhound.core.testkit.{eventuallyTimeoutFail, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, CountDownLatch, eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.OffsetReset.Earliest
+import com.wixpress.dst.greyhound.core.consumer.OffsetReset.{Earliest, Latest}
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
-import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
 import com.wixpress.dst.greyhound.testkit.ITEnv.{clientId, _}
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio.clock.{Clock, sleep}
@@ -331,11 +330,42 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield ok
   }
 
+  "consumer from a new partition is interrupted before commit (offsetReset = Latest)" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(1)
+      group <- randomGroup
+      handlingStarted <- Promise.make[Nothing, Unit]
+      hangForever <- Promise.make[Nothing, Unit]
+      hangingHandler = RecordHandler { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handlingStarted.complete(ZIO.unit) *>
+          hangForever.await
+      }
+      record <- aProducerRecord(topic)
+      recordValue =  record.value.get
+      _ <- makeConsumer(kafka, topic, group, hangingHandler, 0, _.copy(drainTimeout = 200.millis)).use { _ =>
+        producer.produce(record, StringSerde, StringSerde) *>
+          handlingStarted.await
+      }
+      consumed <- AwaitableRef.make(Seq.empty[String])
+      handler = RecordHandler { record: ConsumerRecord[String, String] =>
+        consumed.update(_ :+ record.value)
+      }.withDeserializers(StringSerde, StringSerde)
 
-  private def makeConsumer(kafka: ManagedKafka, topic: String, group: String,
-                           handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int,
-                           mutateEventLoop: EventLoopConfig => EventLoopConfig = identity): ZManaged[RecordConsumer.Env, Throwable, RecordConsumer[Console with Clock with RecordConsumer.Env]] =
-    RecordConsumer.make(configFor(kafka, group, topic, mutateEventLoop).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
+      consumedValues <- makeConsumer(kafka, topic, group, handler, 1, modifyConfig = _.copy(offsetReset = Latest)).use { _ =>
+         consumed.await(_.nonEmpty, 5.seconds)
+      }
+    } yield {
+      consumedValues must contain(recordValue)
+    }
+  }
+
+  private def makeConsumer[E](kafka: ManagedKafka, topic: String, group: String,
+                           handler: RecordHandler[Console with Clock, E, Chunk[Byte], Chunk[Byte]], i: Int,
+                           mutateEventLoop: EventLoopConfig => EventLoopConfig = identity,
+                           modifyConfig: RecordConsumerConfig => RecordConsumerConfig = identity
+                          ): ZManaged[RecordConsumer.Env, Throwable, RecordConsumer[Console with Clock with RecordConsumer.Env]] =
+    RecordConsumer.make(modifyConfig(configFor(kafka, group, topic, mutateEventLoop).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest)), handler)
 
   private def makeConsumer(kafka: ManagedKafka, pattern: Pattern, group: String,
                            handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
@@ -353,6 +383,11 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   private def fastConsumerMetadataFetching =
     Map("metadata.max.age.ms" -> "0")
+
+  private def aProducerRecord(topic: String) = for {
+    key <- randomId
+    payload <- randomId
+  } yield ProducerRecord(topic, payload, Some(key))
 
 }
 

@@ -157,4 +157,11 @@ object ConsumerMetric {
 
   case class PolledRecords(clientId: ClientId, group: Group, records: OrderedOffsets) extends ConsumerMetric
 
+  case class CommittedMissingOffsets(clientId: ClientId,
+                                     group: Group,
+                                     partitions: Set[TopicPartition],
+                                     offsets: Map[TopicPartition, Offset],
+                                     elapsed: Duration,
+                                     error: Option[Throwable] = None) extends ConsumerMetric
+
 }
