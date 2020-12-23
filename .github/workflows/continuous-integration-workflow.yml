@@ -5,7 +5,7 @@ on: [push]
 jobs:
   
   build:
-    name: test //...
+    name: test //core/src/test/scala/com/wixpress/dst/greyhound/core/consumer:consumer_test_runner
     # This job runs on Linux
     runs-on: ubuntu-18.04
     container:
@@ -29,7 +29,7 @@ jobs:
       - name: run bazel
         run: |
             mkdir -p /github/home/.bazel_caches
-            bazel --bazelrc=.bazelrc.remote test --repository_cache=/github/home/.bazel_caches --test_verbose_timeout_warnings --flaky_test_attempts=3 -k //...
+            bazel --bazelrc=.bazelrc.remote test --repository_cache=/github/home/.bazel_caches --test_verbose_timeout_warnings --test_output=streamed --flaky_test_attempts=3 -k //core/src/test/scala/com/wixpress/dst/greyhound/core/consumer:consumer_test_runner
       - name: copy test logs
         if: ${{ always() }}
         run: |
