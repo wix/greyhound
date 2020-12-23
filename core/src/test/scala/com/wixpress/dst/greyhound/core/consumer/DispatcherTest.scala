@@ -77,24 +77,33 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     )
   }
 
- "block resume paused partitions" in new ctx(lowWatermark = 3, highWatermark = 7) {
-   run(
-     for {
-       queue <- Queue.bounded[Record](1)
-       dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))),
-         lowWatermark, highWatermark, 1)
-       _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
-         submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
-       }
-       overCapacitySubmitResult <-  submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
-       _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
-       _ <- ZIO.foreach_(1 to 4 )(_ => queue.take)
-       resumablePartitionDuringBlockPeriod <- eventuallyTimeout(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))(4500.millis)
-       _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
-     } yield (resumablePartitionDuringBlockPeriod aka "resumablePartitionDuringBlockPeriod" must beNone) and
-       (overCapacitySubmitResult aka "overCapacitySubmitResult" mustEqual Rejected) 
-   )
- }
+  "block resume paused partitions" in new ctx(lowWatermark = 3, highWatermark = 7) {
+    run(
+      for {
+        queue <- Queue.bounded[Record](1)
+        dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))),
+          lowWatermark, highWatermark, 1500)
+        _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
+          submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
+        }
+        overCapacitySubmitResult <-  submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
+        _ = println(">>>> before 1st resumeablePartitions")
+        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
+        _ = println(">>>> after 1st resumeablePartitions")
+
+        _ <- ZIO.foreach_(1 to 4 )(_ => queue.take)
+        _ = println(">>>> before 2nd resumeablePartitions")
+
+        resumablePartitionDuringBlockPeriod <- eventuallyTimeout(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))(500.millis)
+        _ = println(">>>> after 2nd resumeablePartitions")
+        _ = println(">>>> before 3rd resumeablePartitions")
+        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
+        _ = println(">>>> after 3rd resumeablePartitions")
+
+      } yield (resumablePartitionDuringBlockPeriod aka "resumablePartitionDuringBlockPeriod" must beNone) and
+        (overCapacitySubmitResult aka "overCapacitySubmitResult" mustEqual Rejected)
+    )
+  }
 
   "pause handling" in new ctx() {
     run(for {
