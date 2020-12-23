@@ -82,7 +82,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
      for {
        queue <- Queue.bounded[Record](1)
        dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))),
-         lowWatermark, highWatermark, 6500)
+         lowWatermark, highWatermark, 1)
        _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
          submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
        }
