@@ -29,7 +29,7 @@ trait LocalBufferProducer[R] {
 
   def currentState: URIO[Blocking with Clock with R, LocalBufferProducerState]
 
-  def close: URIO[ZEnv with GreyhoundMetrics with R, Unit]
+  def close: URIO[ZEnv with GreyhoundMetrics with R, LocalBufferProducerState]
 }
 
 case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolean, localBufferQueryCount: Int,
@@ -51,6 +51,9 @@ case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolea
 object LocalBufferProducerState {
   val empty = LocalBufferProducerState(maxRecordedConcurrency = 0, running = true,
     localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, lagMs = 0L, promises = Map.empty)
+
+  val invalid = LocalBufferProducerState(maxRecordedConcurrency = -1, running = false,
+    localBufferQueryCount = -1, failedRecords = -1, enqueued = -1, inflight = -1, lagMs = -1L, promises = Map.empty)
 }
 
 case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: IO[ProducerError, RecordMetadata])
@@ -121,7 +124,7 @@ object LocalBufferProducer {
         } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount,
           enqueued = unsent, inflight = inflight, lagMs = lagMs)
 
-      override def close: URIO[ZEnv with GreyhoundMetrics with R, Unit] =
+      override def close: URIO[ZEnv with GreyhoundMetrics with R, LocalBufferProducerState] =
         state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
           report(LocalBufferFlushingRecords(toFlush, config.id)) *>
             state.get.map(s => s.enqueued + s.inflight == 0).flatMap(STM.check(_)).commit
@@ -129,13 +132,13 @@ object LocalBufferProducer {
               .tap(d => report(LocalBufferFlushedRecords(toFlush, d._1.toMillis, config.id)))
               .map { case (d, _) => (d, toFlush) }
               .tap(_ => fiber.join)
+              .disconnect
               .timeout(config.shutdownFlushTimeout)
               .tap {
                 case None => report(LocalBufferFlushTimeout(toFlush, config.shutdownFlushTimeout.toMillis, config.id))
                 case _ => localBuffer.cleanup
               } *>
-            localBuffer.close)
-          .ignore
+            (state.get.commit <* localBuffer.close)).catchAll(_ => ZIO.succeed(LocalBufferProducerState.invalid))
     })
       .toManaged((m: LocalBufferProducer[R]) => m.close.ignore)
 
