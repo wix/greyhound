@@ -16,11 +16,7 @@ import scala.Option;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Collections;
-import java.util.Queue;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
@@ -28,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 
 public class GreyhoundBuilderTest {
@@ -60,7 +57,7 @@ public class GreyhoundBuilderTest {
 
     @Test
     public void produce_and_consume_messages_from_a_single_partition() throws Exception {
-        Integer numOfMessages = 2;
+        int numOfMessages = 2;
         List<ConsumerRecord<Integer, String>> consumedRecords = new LinkedList<>();
         CountDownLatch lock = new CountDownLatch(numOfMessages);
 
@@ -91,7 +88,7 @@ public class GreyhoundBuilderTest {
 
             boolean consumedAll = lock.await(3000, TimeUnit.MILLISECONDS);
 
-            assertEquals(consumedAll, true);
+            assertTrue(consumedAll);
 
             for (int i = 0; i < numOfMessages; i++) {
                 ConsumerRecord<Integer, String> consumed = consumedRecords.get(i);
@@ -108,22 +105,24 @@ public class GreyhoundBuilderTest {
         CountDownLatch lock = new CountDownLatch(numOfMessages);
         CountDownLatch lockMaxPar = new CountDownLatch(numOfMessages);
 
-        Queue<ConsumerRecord<Integer, String>> consumedNoPar = new ConcurrentLinkedQueue<ConsumerRecord<Integer, String>>();
-        Queue<ConsumerRecord<Integer, String>> consumedMaxPar = new ConcurrentLinkedQueue<ConsumerRecord<Integer, String>>();
+        Queue<ConsumerRecord<Integer, String>> consumedNoPar = new ConcurrentLinkedQueue<>();
+        Queue<ConsumerRecord<Integer, String>> consumedMaxPar = new ConcurrentLinkedQueue<>();
 
+        String messagePrefix = UUID.randomUUID().toString();
         GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
         GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
         GreyhoundConsumersBuilder consumersBuilder =
                 new GreyhoundConsumersBuilder(config)
-                        .withConsumer(consumerWith(maxParGroup, lockMaxPar, consumedMaxPar, maxParTopic, 8))
-                        .withConsumer(consumerWith(group, lock, consumedNoPar, topic, 1));
+                        .withConsumer(consumerWith(maxParGroup, lockMaxPar, consumedMaxPar, maxParTopic, messagePrefix, 8))
+                        .withConsumer(consumerWith(group, lock, consumedNoPar, topic, messagePrefix, 1));
 
         try (GreyhoundConsumers ignored = consumersBuilder.build();
              GreyhoundProducer producer = producerBuilder.build()) {
 
             for (int i = 0; i < numOfMessages; i++) {
-                produceTo(producer, topic);
-                produceTo(producer, maxParTopic);
+                String msg = messagePrefix+"-"+i;
+                produceTo(producer, topic, msg);
+                produceTo(producer, maxParTopic, msg);
             }
 
             lock.await(waitInMillis, TimeUnit.MILLISECONDS);
@@ -262,9 +261,9 @@ public class GreyhoundBuilderTest {
         assertConsumerRecord(invocations.remove(), 123, "bar", topic);
     }
 
-    private void produceTo(GreyhoundProducer producer, String topic) {
+    private void produceTo(GreyhoundProducer producer, String topic, String message) {
         producer.produce(
-                new ProducerRecord<>(topic, "hello world"),
+                new ProducerRecord<>(topic, message),
                 new IntegerSerializer(),
                 new StringSerializer());
     }
@@ -279,13 +278,16 @@ public class GreyhoundBuilderTest {
     private GreyhoundConsumer<Integer, String> consumerWith(String group, CountDownLatch lockMaxPar,
                                                             Queue<ConsumerRecord<Integer, String>> consumed,
                                                             String topic2,
+                                                            String msgPrefix,
                                                             int parallelism) {
         return GreyhoundConsumer.with(
                 topic2,
                 group,
                 aBlockingRecordHandler(value -> {
-                    consumed.add(value);
-                    lockMaxPar.countDown();
+                    if(value.value().startsWith(msgPrefix)) {
+                        consumed.add(value);
+                        lockMaxPar.countDown();
+                    }
                 }),
                 new IntegerDeserializer(),
                 new StringDeserializer())
