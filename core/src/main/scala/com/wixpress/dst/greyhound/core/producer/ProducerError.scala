@@ -4,7 +4,7 @@ import org.apache.kafka.common.KafkaException
 import org.apache.kafka.common.errors._
 import zio.IO
 
-sealed abstract class ProducerError(cause: Throwable) extends RuntimeException(cause)
+sealed abstract class ProducerError(cause: Throwable) extends RuntimeException(s"${cause.getClass.getName}: ${cause.getMessage}", cause)
 
 case class SerializationError(cause: Throwable) extends ProducerError(cause)
 case class AuthenticationError(cause: AuthenticationException) extends ProducerError(cause)
@@ -19,21 +19,25 @@ case class IllegalArgumentError(e: IllegalArgumentException) extends ProducerErr
 case class UnknownError(cause: Throwable) extends ProducerError(cause)
 
 object ProducerError {
-  def apply(exception: Throwable): IO[ProducerError, Nothing] = exception match {
-    case e: AuthenticationException => IO.fail(AuthenticationError(e))
-    case e: AuthorizationException => IO.fail(AuthorizationError(e))
-    case e: IllegalStateException => IO.fail(IllegalStateError(e))
-    case e: InterruptException => IO.fail(InterruptError(e))
-    case e: SerializationException => IO.fail(SerializationError(e))
-    case e: TimeoutException => IO.fail(TimeoutError(e))
-    case e: KafkaException => IO.fail(KafkaError(e))
-    case e: GrpcError => IO.fail(GrpcProxyError(e))
-    case e: IllegalArgumentException => IO.fail(IllegalArgumentError(e))
-    case _: ProducerClosed => IO.fail(ProducerClosedError())
-    case e: Throwable => IO.fail(UnknownError(e))
-    case e => IO.die(e)
+  def from(exception: Throwable): ProducerError = {
+    exception match {
+      case e: ProducerError => e
+      case e: AuthenticationException => AuthenticationError(e)
+      case e: AuthorizationException => AuthorizationError(e)
+      case e: IllegalStateException => IllegalStateError(e)
+      case e: InterruptException => InterruptError(e)
+      case e: SerializationException => SerializationError(e)
+      case e: TimeoutException => TimeoutError(e)
+      case e: KafkaException => KafkaError(e)
+      case e: GrpcError => GrpcProxyError(e)
+      case e: IllegalArgumentException => IllegalArgumentError(e)
+      case _: ProducerClosed => ProducerClosedError()
+      case e => UnknownError(e)
+    }
   }
+  def apply(exception: Throwable): IO[ProducerError, Nothing] = IO.fail(ProducerError.from(exception))
 }
 
 case class ProducerClosed()  extends RuntimeException("Producer is closing, not accepting writes")
 case class GrpcError(cause: Throwable) extends RuntimeException(cause)
+
