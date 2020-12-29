@@ -12,7 +12,7 @@ import zio.duration._
 
 import scala.collection.JavaConverters._
 
-trait ProducerR[-R] {
+trait ProducerR[-R] { self =>
   def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]]
 
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, RecordMetadata] =
@@ -97,6 +97,15 @@ object Producer {
               .catchAll(e => produceCompletePromise.complete(ProducerError(e)))
           } yield (produceCompletePromise.await)
       }
+    }
+  }
+}
+
+object ProducerR {
+  implicit class Ops[R <: Has[_]: Tag](producer: ProducerR[R]) {
+    def provide(env: R) = new ProducerR[Any] {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
+        producer.produceAsync(record).provideSome[Blocking](_.union[R](env))
     }
   }
 }
