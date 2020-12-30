@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.producer
 
 import java.util.concurrent.TimeUnit
 
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.Producer.Producer
 import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.ReportingProducerTest._
@@ -36,7 +37,7 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       fakeProducer <- makeProducer
       _ <- fakeProducer.produce(record)
       metrics <- reportedMetrics
-    } yield metrics must contain(ProducingRecord(record))
+    } yield metrics must contain(ProducingRecord(record, cluster))
   }
 
   "report metric when message is produced successfully" in {
@@ -51,7 +52,7 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       _ <- promise.succeed(())
       _ <- producer.produceAsync(record).tap(_.tap(_ => adjustTestClock(1.second)))
       metrics <- reportedMetrics
-    } yield metrics must contain(RecordProduced(metadata, FiniteDuration(0, TimeUnit.SECONDS)))
+    } yield metrics must contain(RecordProduced(metadata, cluster, FiniteDuration(0, TimeUnit.SECONDS)))
   }
 
   "report metric when produce fails" in (
@@ -61,17 +62,18 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       _ <- producer.produce(record).either
       _ <- adjustTestClock(1.second)
       metrics <- reportedMetrics
-    } yield metrics must contain(beAnInstanceOf[ProduceFailed])
-    )
+    } yield metrics must contain(beLike[GreyhoundMetric] {
+      case pf: ProduceFailed => pf.cluster === cluster
+    }))
 
   private def reportedMetrics =
-    TestMetrics.reported //.provideLayer(ZLayer.succeedMany(deps))
+    TestMetrics.reported
 
   private def producerFrom(underlying: Producer) =
-    ReportingProducer(underlying)
+    ReportingProducer(underlying, cluster)
 
   private def makeProducer =
-    FakeProducer.make.map(ReportingProducer(_))
+    FakeProducer.make.map(ReportingProducer(_, cluster))
 
   private def adjustTestClock(by: Duration): URIO[TestClock, Unit] =
     TestClock.adjust(by)
@@ -80,5 +82,6 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
 object ReportingProducerTest {
   val topic = "topic"
   val partition = 0
+  val cluster = "some-cluster"
   val record = ProducerRecord(topic, Chunk.empty, partition = Some(partition))
 }
