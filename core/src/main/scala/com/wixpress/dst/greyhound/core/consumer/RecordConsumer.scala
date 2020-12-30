@@ -132,7 +132,8 @@ object RecordConsumer {
     config.retryConfig match {
       case Some(retryConfig) =>
         UIO(println(s"creating retry producer for ${config.bootstrapServers}, auth: ${config.kafkaAuthProperties} ")).toManaged_ *>
-        Producer.makeR[R](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties))
+        Producer.makeR[R](ProducerConfig(config.bootstrapServers,
+          retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties))
           .map(producer => ReportingProducer(producer))
           .map(producer => RetryRecordHandler.withRetries(handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
       case None =>

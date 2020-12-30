@@ -90,8 +90,9 @@ object Producer {
             _ <- effectBlocking(producer.send(recordFrom(record), new Callback {
               override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit =
                 runtime.unsafeRun {
-                  if (exception != null) produceCompletePromise.complete(ProducerError(exception))
-                  else produceCompletePromise.succeed(RecordMetadata(metadata))
+                  (if (exception != null) produceCompletePromise.complete(ProducerError(exception))
+                  else produceCompletePromise.succeed(RecordMetadata(metadata))) *>
+                    config.onProduceListener(record)
                 }
             }))
               .catchAll(e => produceCompletePromise.complete(ProducerError(e)))
@@ -112,7 +113,8 @@ object ProducerR {
 
 case class ProducerConfig(bootstrapServers: String,
                           retryPolicy: ProducerRetryPolicy = ProducerRetryPolicy.Default,
-                          extraProperties: Map[String, String] = Map.empty)  extends CommonGreyhoundConfig {
+                          extraProperties: Map[String, String] = Map.empty,
+                          onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit) extends CommonGreyhoundConfig {
   def withBootstrapServers(servers: String) = copy(bootstrapServers = servers)
 
   def withRetryPolicy(retryPolicy: ProducerRetryPolicy) = copy(retryPolicy = retryPolicy)
