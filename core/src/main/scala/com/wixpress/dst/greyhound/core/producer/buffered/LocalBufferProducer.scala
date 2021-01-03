@@ -18,6 +18,8 @@ import zio.duration._
 import zio.random.nextInt
 import zio.stm.{STM, TRef}
 
+import scala.util.Random
+
 
 trait LocalBufferProducer[R] {
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
@@ -98,7 +100,7 @@ object LocalBufferProducer {
     } yield new LocalBufferProducer[R] {
       override def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
         validate(config, state) *>
-          nextInt.flatMap(generatedMsgId =>
+          UIO(Random.nextLong).flatMap(generatedMsgId =>
             report(ResilientProducerAppendingMessage(record.topic, generatedMsgId, config.id)) *>
               state.update(_.updateEnqueuedCount(1)).commit *>
               enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId)
@@ -156,13 +158,13 @@ object LocalBufferProducer {
     }
 
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState],
-                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
+                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
     Promise.make[producer.ProducerError, producer.RecordMetadata].flatMap(promise =>
       localBuffer.enqueue(persistedRecord(record, generatedMessageId))
         .tap(id => state.update(_.withPromise(id, promise)).commit)
         .map { id => BufferedProduceResult(id, promise.await) })
 
-  private def persistedRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Int) = {
+  private def persistedRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long) = {
     val target = SerializableTarget(record.topic, record.partition, record.key)
     PersistedRecord(generatedMessageId,
       target,
