@@ -64,30 +64,34 @@ object LocalBufferProducer {
       unsent <- localBuffer.unsentRecordsCount
       state <- TRef.makeCommit(LocalBufferProducerState.empty.copy(enqueued = unsent))
       router <- ProduceFlusher.make(producer, config.giveUpAfter, config.retryInterval, config.strategy)
-      fiber <- ZIO.whenM(localBuffer.isOpen)(localBuffer.take(config.localBufferBatchSize).flatMap(msgs =>
-        state.update(_.incQueryCount).commit *>
-          ZIO.foreach(msgs)(record =>
-            router.produceAsync(producerRecord(record))
-              .tap(_
-                .tapBoth(
-                  error => updateReferences(Left(error), state, record) *>
-                    localBuffer.markDead(record.id) *>
-                    report(ResilientProducerFailedNonRetriable(error, config.id, record.topic, record.id, record.submitted)),
-                  metadata =>
-                    updateReferences(Right(metadata), state, record) *>
-                      localBuffer.delete(record.id) *>
-                      report(ResilientProducerSentRecord(record.topic, metadata.partition, metadata.offset, config.id, record.id)))
-                .ignore
-                .fork)
-          ).flatMap(ZIO.collectAll(_))
-            .as(msgs)
-      )
+      fiber <- ZIO.whenM(localBuffer.isOpen)(localBuffer.take(config.localBufferBatchSize)
+        .timed
+        .tap { case (d, msgs) => report(LocalBufferRetrievedBatch(msgs.size, d.toMillis, config.id)) }
+        .map(_._2)
+        .flatMap(msgs =>
+          state.update(_.incQueryCount).commit *>
+            ZIO.foreach(msgs)(record =>
+              router.produceAsync(producerRecord(record))
+                .tap(_
+                  .tapBoth(
+                    error => updateReferences(Left(error), state, record) *>
+                      localBuffer.markDead(record.id) *>
+                      report(ResilientProducerFailedNonRetriable(error, config.id, record.topic, record.id, record.submitted)),
+                    metadata =>
+                      updateReferences(Right(metadata), state, record) *>
+                        localBuffer.delete(record.id) *>
+                        report(ResilientProducerSentRecord(record.topic, metadata.partition, metadata.offset, config.id, record.id)))
+                  .ignore
+                  .fork)
+            ).flatMap(ZIO.collectAll(_))
+              .as(msgs)
+        )
         .tap(r => ZIO.whenCase(r.size) {
           case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(1.millis) // this waits until there are more messages in buffer
           case x if x <= 10 => sleep(10.millis)
         })
         .catchAllCause { e: Cause[Throwable] =>
-          GreyhoundMetrics.report(LocalBufferProducerCaughtError(e.squashTrace))
+          report(LocalBufferProducerCaughtError(e.squashTrace))
         })
         .repeatWhileM(_ => state.get.commit.map(s => s.running || s.enqueued > 0))
         .forkDaemon
@@ -214,6 +218,8 @@ object LocalBufferProducerMetric {
   case class LocalBufferFlushFinished(recordsFlushed: Int, durationMillis: Long, id: Int) extends LocalBufferProducerMetric
 
   case class LocalBufferFlushingRecords(recordsToFlush: Int, id: Int) extends LocalBufferProducerMetric
+
+  case class LocalBufferRetrievedBatch(batchSize: Int, durationMillis: Long, id: Int) extends LocalBufferProducerMetric
 
   case class ResilientProducerAppendingMessage(topic: Topic, persistedMessageId: PersistedMessageId, id: Int) extends LocalBufferProducerMetric
 
