@@ -63,18 +63,17 @@ object Consumer {
   } yield {
     new Consumer {
       override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(missingOffsetsCommitter.commitMissingOffsets, rebalanceListener *> config.additionalListener)
+        listener(missingOffsetsCommitter.commitMissingOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
       override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(missingOffsetsCommitter.commitMissingOffsets, rebalanceListener *> config.additionalListener)
+        listener(missingOffsetsCommitter.commitMissingOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
       override def poll(timeout: Duration): RIO[Blocking, Records] =
-        withConsumerBlocking {c =>
+        withConsumerBlocking { c =>
           c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
         }
-
 
       override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
@@ -180,7 +179,9 @@ object OffsetReset {
 
 trait UnsafeOffsetOperations {
   def committed(partitions: Set[TopicPartition], timeout: zio.duration.Duration): Map[TopicPartition, Offset]
+
   def position(partition: TopicPartition, timeout: zio.duration.Duration): Offset
+
   def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
 }
 
