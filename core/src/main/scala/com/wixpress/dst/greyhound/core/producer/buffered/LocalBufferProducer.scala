@@ -15,7 +15,6 @@ import zio._
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration._
-import zio.random.nextInt
 import zio.stm.{STM, TRef}
 
 import scala.util.Random
