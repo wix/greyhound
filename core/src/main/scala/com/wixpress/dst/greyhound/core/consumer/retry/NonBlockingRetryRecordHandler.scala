@@ -43,7 +43,7 @@ private[retry] object NonBlockingRetryRecordHandler {
       }
     }
 
-    private def maybeRetry[E](retryAttempt: Option[RetryAttempt], error: E, record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {
+    private def maybeRetry[E1](retryAttempt: Option[RetryAttempt], error: E1, record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {
       nonBlockingRetryHelper.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
         case RetryWith(retryRecord) =>
           producer.produce(retryRecord).tapError(_ => sleep(5.seconds)).eventually.ignore
@@ -52,6 +52,4 @@ private[retry] object NonBlockingRetryRecordHandler {
       }
     }
   }
-
-
 }
