@@ -14,14 +14,7 @@ case class ReportingProducer[-R](internal: ProducerR[R], attributes: Map[String,
   extends ProducerR[GreyhoundMetrics with Clock with R] {
 
   override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking with Clock with GreyhoundMetrics with R, ProducerError, IO[ProducerError, RecordMetadata]] =
-    GreyhoundMetrics.report(ProducingRecord(record, attributes)) *>
-      internal.produceAsync(record)
-        .tap(_.timed.flatMap {
-          case (duration, metadata) =>
-            GreyhoundMetrics.report(RecordProduced(metadata, attributes, FiniteDuration(duration.toMillis, MILLISECONDS))).as(metadata)
-        }.tapError { error =>
-          GreyhoundMetrics.report(ProduceFailed(error, attributes))
-        }.forkDaemon)
+    ReportingProducer.reporting[R](internal.produceAsync)(record, attributes)
 }
 
 object ReportingProducer {
@@ -29,6 +22,18 @@ object ReportingProducer {
 
   def apply[R](internal: ProducerR[R], attributes: (String, String)*): ReportingProducer[R] =
     new ReportingProducer(internal, attributes.toMap)
+
+  def reporting[R](produceAsync: ProducerRecord[Chunk[Byte], Chunk[Byte]] => ZIO[Blocking with Clock with R, ProducerError, IO[ProducerError, RecordMetadata]])
+                  (record: ProducerRecord[Chunk[Byte], Chunk[Byte]], attributes: Map[String, String] = Map.empty): ZIO[Blocking with Clock with GreyhoundMetrics with R, ProducerError, IO[ProducerError, RecordMetadata]] = {
+    GreyhoundMetrics.report(ProducingRecord(record, attributes)) *>
+      produceAsync(record)
+        .tap(_.timed.flatMap {
+          case (duration, metadata) =>
+            GreyhoundMetrics.report(RecordProduced(metadata, attributes, FiniteDuration(duration.toMillis, MILLISECONDS))).as(metadata)
+        }.tapError { error =>
+          GreyhoundMetrics.report(ProduceFailed(error, attributes))
+        }.forkDaemon)
+  }
 }
 
 sealed trait ProducerMetric extends GreyhoundMetric
