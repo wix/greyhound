@@ -17,24 +17,23 @@ class ZRetryConfigTest extends SpecificationWithJUnit {
       Params(max = 5, init = 10, mult = 1),
       Params(max = 5, init = 10, mult = -1)
     )) { params =>
-      s"exponentialBackoff with maxMultiplications for params: ${params}" in {
+      s"exponentialBackoff with maxMultiplications for params: $params" in {
         val max = params.max
         val init = params.init
         val mult = params.mult
 
         val config = ZRetryConfig.exponentialBackoffBlockingRetry(init.millis, max, mult, infiniteRetryMaxInterval = true)
-        val backoffs = config.blockingBackoffs()
+        val backoffs = config.blockingBackoffs("any_topic")
 
         val absMult = abs(params.mult)
         val safeInit = if(init < 10) 10 else init
-        for (i <- 0 to max) yield {backoffs(i)} mustEqual (pow((1 + absMult), i) * safeInit).toLong.millis
+        for (i <- 0 to max) yield {backoffs()(i)} mustEqual (pow(1 + absMult, i) * safeInit).toLong.millis
         val maxMult = math.max(0, max)
         val lastDurationToCheck = abs(max + 1) * 2
         val firstDurationToCheck = math.max(0, max + 1)
-        for (i <- firstDurationToCheck to lastDurationToCheck) yield backoffs(i) mustEqual (pow((1 + absMult), maxMult) * safeInit).toLong.millis
+        for (i <- firstDurationToCheck to lastDurationToCheck) yield backoffs()(i) mustEqual (pow(1 + absMult, maxMult) * safeInit).toLong.millis
       }
     }
-
 
     Fragment.foreach(Seq(
       Params2(maxDuration = 160, maxMult = 4, init = 10, mult = 1),
@@ -42,21 +41,21 @@ class ZRetryConfigTest extends SpecificationWithJUnit {
       Params2(maxDuration = -20, maxMult = 0, init = 10, mult = 1),
       Params2(maxDuration = -20, maxMult = 0, init = -10, mult = 1)
     )) { params =>
-      s"exponentialBackoff with maxMultiplications for params: ${params}" in {
+      s"exponentialBackoff with maxMultiplications for params: $params" in {
         val maxDuration = params.maxDuration
         val init = params.init
         val mult = params.mult
         val maxMult = params.maxMult
 
         val config = ZRetryConfig.exponentialBackoffBlockingRetry(init.millis, maxDuration.millis, mult, infiniteRetryMaxInterval = true)
-        val backoffs = config.blockingBackoffs()
+        val backoffs = config.blockingBackoffs("any_topic")
 
         val absMult = abs(params.mult)
         val safeInit = if(init < 10) 10 else init
-        for (i <- 0 to maxMult) yield {backoffs(i)} mustEqual (pow((1 + absMult), i) * safeInit).toLong.millis
+        for (i <- 0 to maxMult) yield {backoffs()(i)} mustEqual (pow(1 + absMult, i) * safeInit).toLong.millis
         val lastDurationToCheck = abs(maxMult + 1) * 2
         val firstDurationToCheck = math.max(0, maxMult + 1)
-        for (i <- firstDurationToCheck to lastDurationToCheck) yield backoffs(i) mustEqual (pow((1 + absMult), maxMult) * safeInit).toLong.millis
+        for (i <- firstDurationToCheck to lastDurationToCheck) yield backoffs()(i) mustEqual (pow(1 + absMult, maxMult) * safeInit).toLong.millis
       }
     }
   }

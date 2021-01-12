@@ -81,7 +81,7 @@ object RecordConsumer {
       }
 
       override def state: UIO[RecordConsumerExposedState] = for {
-        dispatcherState <-  eventLoop.state
+        dispatcherState <- eventLoop.state
         blockingStateMap <- blockingState.get
       } yield RecordConsumerExposedState(dispatcherState, config.clientId, blockingStateMap)
 
@@ -94,7 +94,7 @@ object RecordConsumer {
         for {
           assigned <- Ref.make[AssignedPartitions](Set.empty)
           promise <- Promise.make[Nothing, AssignedPartitions]
-          rebalanceListener = eventLoop.rebalanceListener  *>  listener *> new RebalanceListener[R1] {
+          rebalanceListener = eventLoop.rebalanceListener *> listener *> new RebalanceListener[R1] {
             override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
               DelayedRebalanceEffect.zioUnit
 
@@ -109,7 +109,7 @@ object RecordConsumer {
           resubscribeTimeout = config.eventLoopConfig.drainTimeout
           result <- promise.await.disconnect.timeoutFail(
             ResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
-              .catchAll(ex => report(ResubscribeError(ex, group, clientId)) *> UIO(Set.empty[TopicPartition]))
+            .catchAll(ex => report(ResubscribeError(ex, group, clientId)) *> UIO(Set.empty[TopicPartition]))
         } yield result
 
       override def clientId: ClientId = config.clientId
@@ -131,11 +131,10 @@ object RecordConsumer {
                                         nonBlockingRetryHelper: NonBlockingRetryHelper) =
     config.retryConfig match {
       case Some(retryConfig) =>
-        UIO(println(s"creating retry producer for ${config.bootstrapServers}, auth: ${config.kafkaAuthProperties} ")).toManaged_ *>
         Producer.makeR[R](ProducerConfig(config.bootstrapServers,
           retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties))
           .map(producer => ReportingProducer(producer))
-          .map(producer => RetryRecordHandler.withRetries(handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
+          .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
           report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))
@@ -168,7 +167,7 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
                                 extraProperties: Map[String, String] = Map.empty,
-                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty ) extends CommonGreyhoundConfig {
+                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
 }

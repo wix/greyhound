@@ -4,8 +4,8 @@ import java.util.concurrent.Executor
 
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler ⇒ CoreRecordHandler}
-import com.wixpress.dst.greyhound.core.consumer.retry.{RetryConfig ⇒ CoreRetryConfig}
+import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.retry.{RetryConfigForTopic, RetryConfig => CoreRetryConfig}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
@@ -51,10 +51,10 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
   }
 
   private def createExecutor =
-      new Executor {
-        override def execute(command: Runnable): Unit =
-          blockingExecutor.submit(command)
-      }
+    new Executor {
+      override def execute(command: Runnable): Unit =
+        blockingExecutor.submit(command)
+    }
 
   private def handlers(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]): Map[Group, JavaConsumerConfig] =
     consumers.foldLeft(Map.empty[Group, JavaConsumerConfig]) { (acc, consumer) =>
@@ -71,10 +71,11 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
   private def convertRetryConfig(retryConfig: Option[RetryConfig]): Option[CoreRetryConfig] = {
     import scala.collection.JavaConverters._
 
-    retryConfig.map(config ⇒ CoreRetryConfig(
-      () ⇒ config.blockingBackoffs().asScala,
-      config.nonBlockingBackoffs().asScala
-    ))
+    retryConfig.map(config ⇒ CoreRetryConfig { case _ =>
+      RetryConfigForTopic(
+        () ⇒ config.blockingBackoffs().asScala,
+        config.nonBlockingBackoffs().asScala)
+    })
   }
 }
 

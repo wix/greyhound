@@ -30,8 +30,8 @@ object RetryConfigBuilder {
   }
 
   private def fromCoreRetryConfig(coreRetryConfig: com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig): RetryConfig = {
-    val blocking: util.List[Duration] = seqAsJavaList(coreRetryConfig.blockingBackoffs.apply)
-    val nonBlocking: util.List[Duration] = seqAsJavaList(coreRetryConfig.nonBlockingBackoffs)
+    val blocking: util.List[Duration] = seqAsJavaList(coreRetryConfig.blockingBackoffs("").apply)
+    val nonBlocking: util.List[Duration] = seqAsJavaList(coreRetryConfig.nonBlockingBackoffs(""))
     new RetryConfig(blocking, nonBlocking)
   }
 }

@@ -34,7 +34,7 @@ private[retry] object BlockingRetryRecordHandler {
           shouldBlock <- blockingStateResolver.resolve(record)
           shouldPollAgain <- if (shouldBlock) {
             clock.sleep(100.milliseconds) *>
-            currentTime(TimeUnit.MILLISECONDS).map(end =>
+              currentTime(TimeUnit.MILLISECONDS).map(end =>
                 PollResult(pollAgain = end - start < interval.toMillis, blockHandling = true))
           } else
             UIO(PollResult(pollAgain = false, blockHandling = false))
@@ -67,18 +67,17 @@ private[retry] object BlockingRetryRecordHandler {
         }
       }
 
-      def maybeBackToStateBlocking = {
+      def maybeBackToStateBlocking =
         blockingState.modify(state => state.get(TopicPartitionTarget(topicPartition)).map {
           case IgnoringOnce => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
-          case _:Blocked[V, K] => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
+          case _: Blocked[V, K] => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
           case _ => ((), state)
         }.getOrElse(((), state)))
-      }
 
       if (nonBlockingHandler.isHandlingRetryTopicMessage(record)) {
         UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       } else {
-        val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs().map(Some(_)) :+ None
+        val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs(record.topic)().map(Some(_)) :+ None
         for {
           result <- foreachWhile(durationsIncludingForInvocationWithNoErrorHandling) { interval =>
             handleAndMaybeBlockOnErrorFor(interval)
