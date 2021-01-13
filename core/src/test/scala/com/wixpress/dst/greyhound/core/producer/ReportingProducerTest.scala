@@ -41,18 +41,20 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
   }
 
   "report metric when message is produced successfully" in {
+    val syncDelay = 100
+    val asyncDelay = 200
     for {
-      promise <- Promise.make[Nothing, Unit]
+      testClock <- ZIO.environment[TestClock].map(_.get)
       metadata = RecordMetadata(topic, partition, 0)
-      internal = new Producer {
-        override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
-          UIO(UIO(metadata))
-      }
+      internal <- FakeProducer.make(
+        r => testClock.adjust(syncDelay.millis).as(r),
+        m => testClock.adjust(asyncDelay.millis).as(m)
+      )
       producer = producerFrom(internal)
-      _ <- promise.succeed(())
-      _ <- producer.produceAsync(record).tap(_.tap(_ => adjustTestClock(1.second)))
+      promise <- producer.produceAsync(record)
+      _ <- promise *> promise // evaluating the inner effect more than once should not report duplicate metrics
       metrics <- reportedMetrics
-    } yield metrics must contain(RecordProduced(metadata, attributes.toMap, FiniteDuration(0, TimeUnit.SECONDS)))
+    } yield metrics.filter(_.isInstanceOf[RecordProduced]) must exactly(RecordProduced(metadata, attributes.toMap, FiniteDuration(syncDelay + asyncDelay, TimeUnit.MILLISECONDS)))
   }
 
   "report metric when produce fails" in (
