@@ -33,7 +33,7 @@ object ReportingProducer {
       reported <- Ref.make(false)
       once = (block: UIO[Unit]) => reported.getAndUpdate(_ => true).negate.flatMap(ZIO.when(_)(block))
       promise <- produceAsync(record).map(_.tapBoth (
-        error =>  once(GreyhoundMetrics.report(ProduceFailed(error, attributes)).provide(env)),
+        error =>  once(GreyhoundMetrics.report(ProduceFailed(error, record.topic, attributes)).provide(env)),
         metadata => once(currentTime(TimeUnit.MILLISECONDS).flatMap(ended =>
           GreyhoundMetrics.report(RecordProduced(metadata, attributes, FiniteDuration(ended - started, MILLISECONDS)))
         ).provide(env))
@@ -50,7 +50,7 @@ object ProducerMetric {
 
   case class RecordProduced(metadata: RecordMetadata, attributes: Map[String, String], duration: FiniteDuration) extends ProducerMetric
 
-  case class ProduceFailed(error: ProducerError, attributes: Map[String, String]) extends ProducerMetric
+  case class ProduceFailed(error: ProducerError, topic: String, attributes: Map[String, String]) extends ProducerMetric
 
 }
 

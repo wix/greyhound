@@ -8,7 +8,6 @@ import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import com.wixpress.dst.greyhound.core.producer.ReportingProducerTest._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, FakeProducer, TestMetrics}
 import zio._
-import zio.blocking.Blocking
 import zio.duration._
 import zio.test.environment.{TestClock, TestEnvironment}
 
@@ -65,7 +64,7 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       _ <- adjustTestClock(1.second)
       metrics <- reportedMetrics
     } yield metrics must contain(beLike[GreyhoundMetric] {
-      case pf: ProduceFailed => pf.attributes === attributes.toMap
+      case pf: ProduceFailed => (pf.attributes === attributes.toMap) and pf.topic === record.topic
     }))
 
   private def reportedMetrics =
