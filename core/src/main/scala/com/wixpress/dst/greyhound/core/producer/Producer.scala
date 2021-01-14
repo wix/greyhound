@@ -108,6 +108,12 @@ object ProducerR {
       override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
         producer.produceAsync(record).provideSome[Blocking](_.union[R](env))
     }
+    def onShutdown(onShutdown: => UIO[Unit]): ProducerR[R] = new ProducerR[R] {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
+        producer.produceAsync(record)
+
+      override def shutdown: UIO[Unit] = onShutdown *> producer.shutdown
+    }
   }
 }
 
