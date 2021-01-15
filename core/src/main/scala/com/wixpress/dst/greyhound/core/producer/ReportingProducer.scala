@@ -30,14 +30,11 @@ object ReportingProducer {
       started <- currentTime(TimeUnit.MILLISECONDS)
       env <- ZIO.environment[Clock with GreyhoundMetrics with Blocking]
       _ <- GreyhoundMetrics.report(ProducingRecord(record, attributes))
-      reported <- Ref.make(false)
-      once = (block: UIO[Unit]) => reported.getAndUpdate(_ => true).negate.flatMap(ZIO.when(_)(block))
-      promise <- produceAsync(record).map(_.tapBoth (
-        error =>  once(GreyhoundMetrics.report(ProduceFailed(error, record.topic, attributes)).provide(env)),
-        metadata => once(currentTime(TimeUnit.MILLISECONDS).flatMap(ended =>
-          GreyhoundMetrics.report(RecordProduced(metadata, attributes, FiniteDuration(ended - started, MILLISECONDS)))
-        ).provide(env))
-      ))
+      onError <- ZIO.memoize((error: ProducerError) => GreyhoundMetrics.report(ProduceFailed(error, record.topic, attributes)).provide(env))
+      onSuccess <- ZIO.memoize((metadata: RecordMetadata) => currentTime(TimeUnit.MILLISECONDS).flatMap(ended =>
+        GreyhoundMetrics.report(RecordProduced(metadata, attributes, FiniteDuration(ended - started, MILLISECONDS)))
+      ).provide(env))
+      promise <- produceAsync(record).map(_.tapBoth (onError, onSuccess))
     } yield promise
   }
 }
