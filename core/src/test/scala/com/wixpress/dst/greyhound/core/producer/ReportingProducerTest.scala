@@ -53,7 +53,8 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       promise <- producer.produceAsync(record)
       _ <- promise *> promise // evaluating the inner effect more than once should not report duplicate metrics
       metrics <- reportedMetrics
-    } yield metrics.filter(_.isInstanceOf[RecordProduced]) must exactly(RecordProduced(metadata, attributes.toMap, FiniteDuration(syncDelay + asyncDelay, TimeUnit.MILLISECONDS)))
+    } yield metrics.filter(_.isInstanceOf[RecordProduced]) must
+      exactly(RecordProduced(metadata, attributes.toMap, FiniteDuration(syncDelay + asyncDelay, TimeUnit.MILLISECONDS)))
   }
 
   "report metric when produce fails" in (
