@@ -56,7 +56,7 @@ object Consumer {
 
   def make(config: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
     semaphore <- Semaphore.make(1).toManaged_
-    consumer <- makeConsumer(config)
+    consumer <- makeConsumer(config, semaphore)
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
     missingOffsetsCommitter <- MissingOffsetsCommitter.make(config.clientId, config.groupId, UnsafeOffsetOperations.make(consumer), 500.millis).toManaged_
@@ -135,9 +135,9 @@ object Consumer {
       }
     }
 
-  private def makeConsumer(config: ConsumerConfig): RManaged[Blocking, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
+  private def makeConsumer(config: ConsumerConfig, semaphore: Semaphore): RManaged[Blocking, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
     val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
-    ZManaged.make(acquire)(consumer => effectBlocking(consumer.close()).ignore)
+    ZManaged.make(acquire)(consumer => semaphore.withPermit(effectBlocking(consumer.close()).ignore))
   }
 
 
