@@ -33,15 +33,17 @@ trait NonBlockingRetryHelper {
 
 object NonBlockingRetryHelper {
   def apply(group: Group, retryConfig: Option[RetryConfig]): NonBlockingRetryHelper = new NonBlockingRetryHelper {
-    def backoffs(topic: Topic): Seq[Duration] = retryConfig.map(_.nonBlockingBackoffs(originalTopic(topic, group))).getOrElse(Seq.empty)
 
-    private val longDeserializer = StringSerde.mapM(string => Task(string.toLong))
+    def policy(topic: Topic): NonBlockingBackoffPolicy =
+      retryConfig.map(_.nonBlockingBackoffs(originalTopic(topic, group))).getOrElse(NonBlockingBackoffPolicy.empty)
 
+    private val longDeserializer = StringSerde.mapM((str: String) => Task(str.toLong))
     private val instantDeserializer = longDeserializer.map(Instant.ofEpochMilli)
     private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))
 
     override def retryTopicsFor(topic: Topic): Set[Topic] =
-      (backoffs(topic).indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt"))
+      policy(topic).intervals.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt")
+
 
     override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = {
       (for {
@@ -65,30 +67,29 @@ object NonBlockingRetryHelper {
     override def retryDecision[E](retryAttempt: Option[RetryAttempt],
                                   record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
                                   error: E,
-                                  subscription: ConsumerSubscription): URIO[Clock, RetryDecision] = {
-      currentTime.map(now => {
-        val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
-        val originalTopic = retryAttempt.fold(record.topic)(_.originalTopic)
-        val retryTopic = subscription match {
-          case _: TopicPattern => patternRetryTopic(group, nextRetryAttempt)
-          case _: Topics => fixedRetryTopic(originalTopic, group, nextRetryAttempt)
-        }
-        backoffs(record.topic).lift(nextRetryAttempt).map { backoff => {
-          ProducerRecord(
-            topic = retryTopic,
-            value = record.value,
-            key = record.key,
-            partition = None,
-            headers = record.headers +
-              (RetryHeader.Submitted -> toChunk(now.toEpochMilli)) +
-              (RetryHeader.Backoff -> toChunk(backoff.toMillis)) +
-              (RetryHeader.OriginalTopic -> toChunk(originalTopic)) +
-              (RetryHeader.RetryAttempt -> toChunk(nextRetryAttempt))
-          )
-        }
-        }.fold[RetryDecision](NoMoreRetries)(RetryWith)
-      })
-    }
+                                  subscription: ConsumerSubscription): URIO[Clock, RetryDecision] = currentTime.map(now => {
+      val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
+      val originalTopic = retryAttempt.fold(record.topic)(_.originalTopic)
+      val retryTopic = subscription match {
+        case _: TopicPattern => patternRetryTopic(group, nextRetryAttempt)
+        case _: Topics => fixedRetryTopic(originalTopic, group, nextRetryAttempt)
+      }
+
+      val topicRetryPolicy = policy(record.topic)
+      topicRetryPolicy.intervals.lift(nextRetryAttempt).map { backoff =>
+        topicRetryPolicy.recordMutate(ProducerRecord(
+          topic = retryTopic,
+          value = record.value,
+          key = record.key,
+          partition = None,
+          headers = record.headers +
+            (RetryHeader.Submitted -> toChunk(now.toEpochMilli)) +
+            (RetryHeader.Backoff -> toChunk(backoff.toMillis)) +
+            (RetryHeader.OriginalTopic -> toChunk(originalTopic)) +
+            (RetryHeader.RetryAttempt -> toChunk(nextRetryAttempt))
+        ))
+      }.fold[RetryDecision](NoMoreRetries)(RetryWith)
+    })
 
     private def toChunk(long: Long): Chunk[Byte] =
       Chunk.fromArray(long.toString.getBytes)
