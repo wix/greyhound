@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.{IgnoreOnceFor, NonRetriableException, RetryConfig, RetryConfigForTopic, ZRetryConfig}
+import com.wixpress.dst.greyhound.core.consumer.retry.{IgnoreOnceFor, NonBlockingBackoffPolicy, NonRetriableException, RetryConfig, RetryConfigForTopic, ZRetryConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
@@ -33,8 +33,8 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       invocations <- Ref.make(0)
       done <- Promise.make[Nothing, Unit]
       retryConfig = ZRetryConfig.perTopicRetries {
-        case `topic` => RetryConfigForTopic(() => Nil, 1.second :: Nil)
-        case `anotherTopic` => RetryConfigForTopic(() => Nil, 1.second :: Nil)
+        case `topic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
+        case `anotherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
       }
 
       retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
@@ -56,7 +56,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       consumedValuesRef <- Ref.make(List.empty[String])
 
       retryConfig = ZRetryConfig.finiteBlockingRetry(100.millis, 100.millis)
-        .withCustomRetriesFor { case `topic2` => RetryConfigForTopic(() => 300.millis :: Nil, Nil) }
+        .withCustomRetriesFor { case `topic2` => RetryConfigForTopic(() => 300.millis :: Nil, NonBlockingBackoffPolicy.empty) }
       retryHandler = failingBlockingRecordHandlerWith(consumedValuesRef, Set(topic, topic2)).withDeserializers(StringSerde, StringSerde)
       _ <- RecordConsumer.make(configFor(kafka, group, retryConfig, topic, topic2), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
@@ -208,7 +208,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       group <- randomGroup
       originalTopicCallCount <- Ref.make[Int](0)
       retryTopicCallCount <- Ref.make[Int](0)
-      retryConfig = ZRetryConfig.blockingFollowedByNonBlockingRetry(List(1.second), List(1.seconds))
+      retryConfig = ZRetryConfig.blockingFollowedByNonBlockingRetry(List(1.second), NonBlockingBackoffPolicy(List(1.seconds)))
       retryHandler = failingBlockingNonBlockingRecordHandler(originalTopicCallCount, retryTopicCallCount, topic).withDeserializers(StringSerde, StringSerde)
       _ <- RecordConsumer.make(configFor(kafka, group, retryConfig, topic), retryHandler).use_ {
         producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>

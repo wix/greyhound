@@ -240,7 +240,7 @@ class RetryRecordHandlerTest extends BaseTest[Random with Clock with Blocking wi
         handleCountRef <- Ref.make(0)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHandler = RetryRecordHandler.withRetries(group, failingHandlerWith(handleCountRef),
-          ZRetryConfig.blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), List(1.second)), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
+          ZRetryConfig.blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), NonBlockingBackoffPolicy(List(1.second))), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
         _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
@@ -259,7 +259,7 @@ class RetryRecordHandlerTest extends BaseTest[Random with Clock with Blocking wi
         otherTopic <- randomTopicName
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         policy = ZRetryConfig.perTopicRetries {
-          case `otherTopic` => RetryConfigForTopic(() => Nil, 1.second :: Nil)
+          case `otherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
         }
         retryHandler = RetryRecordHandler.withRetries(group, failingHandler,
           policy, producer, Topics(Set(topic, otherTopic)), blockingState, FakeRetryHelper(topic))

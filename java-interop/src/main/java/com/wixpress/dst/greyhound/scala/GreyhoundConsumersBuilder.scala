@@ -5,7 +5,7 @@ import java.util.concurrent.Executor
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
-import com.wixpress.dst.greyhound.core.consumer.retry.{RetryConfigForTopic, RetryConfig => CoreRetryConfig}
+import com.wixpress.dst.greyhound.core.consumer.retry.{NonBlockingBackoffPolicy, RetryConfigForTopic, RetryConfig => CoreRetryConfig}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
@@ -74,7 +74,7 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
     retryConfig.map(config ⇒ CoreRetryConfig { case _ =>
       RetryConfigForTopic(
         () ⇒ config.blockingBackoffs().asScala,
-        config.nonBlockingBackoffs().asScala)
+        NonBlockingBackoffPolicy(config.nonBlockingBackoffs.asScala))
     })
   }
 }
