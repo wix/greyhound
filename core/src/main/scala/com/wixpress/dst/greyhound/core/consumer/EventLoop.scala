@@ -8,6 +8,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio._
 import zio.blocking.Blocking
+import zio.clock.Clock
 import zio.duration._
 
 
@@ -65,7 +66,7 @@ object EventLoop {
             case _ => true
           }
 
-          override def state: UIO[DispatcherExposedState] = dispatcher.expose
+          override def state: UIO[DispatcherExposedState] = dispatcher.expose.provideLayer(Clock.live)
 
           override def rebalanceListener: RebalanceListener[Any] = listener
         }
