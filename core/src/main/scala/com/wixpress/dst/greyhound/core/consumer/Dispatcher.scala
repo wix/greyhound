@@ -1,5 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.util.concurrent.TimeUnit
+
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
@@ -9,12 +11,13 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
+import zio.clock.Clock
 import zio.duration.{Duration, _}
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R with Env, SubmitResult]
 
-  def resumeablePartitions(paused: Set[TopicPartition]): UIO[Set[TopicPartition]]
+  def resumeablePartitions(paused: Set[TopicPartition]): URIO[Clock, Set[TopicPartition]]
 
   def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics with ZEnv, Unit]
 
@@ -24,7 +27,7 @@ trait Dispatcher[-R] {
 
   def shutdown: URIO[GreyhoundMetrics with ZEnv, Unit]
 
-  def expose: UIO[DispatcherExposedState]
+  def expose: URIO[Clock, DispatcherExposedState]
 
 }
 
@@ -49,7 +52,7 @@ object Dispatcher {
           submitted <- worker.submit(record)
         } yield if (submitted) Submitted else Rejected
 
-      override def resumeablePartitions(paused: Set[TopicPartition]): UIO[Set[TopicPartition]] =
+      override def resumeablePartitions(paused: Set[TopicPartition]): URIO[Clock, Set[TopicPartition]] =
         workers.get.flatMap { workers =>
           ZIO.foldLeft(paused)(Set.empty[TopicPartition]) { (acc, partition) =>
             workers.get(partition) match {
@@ -65,7 +68,7 @@ object Dispatcher {
           }
         }
 
-      override def expose: UIO[DispatcherExposedState] =
+      override def expose: URIO[Clock, DispatcherExposedState] =
         for {
           dispatcherState <- state.get
           workers <- workers.get
@@ -149,9 +152,9 @@ object Dispatcher {
   case class Task(record: Record, complete: UIO[Unit])
 
   trait Worker {
-    def submit(record: Record): UIO[Boolean]
+    def submit(record: Record): URIO[Clock, Boolean]
 
-    def expose: UIO[WorkerExposedState]
+    def expose: URIO[Clock, WorkerExposedState]
 
     def shutdown: UIO[Unit]
 
@@ -166,24 +169,31 @@ object Dispatcher {
                 clientId: ClientId,
                 partition: TopicPartition): URIO[R with Env, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
-      internalState <- Ref.make(WorkerInternalState.empty)
+      internalState <- RefM.make(WorkerInternalState.empty)
       fiber <-
         pollOnce(status, internalState, handle, queue, group, clientId, partition)
           .interruptible.repeatWhile(_ == true).forkDaemon
     } yield new Worker {
-      override def submit(record: Record): UIO[Boolean] =
+      override def submit(record: Record): URIO[Clock, Boolean] =
         queue.offer(record)
           .tap(submitted => ZIO.when(!submitted) {
-            internalState.update(s => if (s.reachedHighWatermarkSince.isEmpty) s.reachedHighWatermark else s)
-          })
+            internalState.update(s =>
+              if (s.reachedHighWatermarkSince.isEmpty)
+                s.reachedHighWatermark
+              else
+                UIO(s))
+          }).tap(submitted => ZIO.when(submitted) {
+          queue.size.map(size => println(s">>>> successfully submitted $size elements already"))
+        })
 
-      override def expose: UIO[WorkerExposedState] =
+      override def expose: URIO[Clock, WorkerExposedState] =
         (queue.size zip internalState.get)
-          .map { case (queued, state) =>
-            WorkerExposedState(
+          .flatMap { case (queued, state) =>
+            clock.currentTime(TimeUnit.MILLISECONDS).map(currentTime =>
+              WorkerExposedState(
               Math.max(0, queued),
-              state.currentExecutionStarted.map(System.currentTimeMillis - _),
-              state.reachedHighWatermarkSince.map(System.currentTimeMillis - _))
+              state.currentExecutionStarted.map(currentTime - _),
+              state.reachedHighWatermarkSince.map(currentTime - _)))
           }
 
       override def shutdown: UIO[Unit] =
@@ -193,17 +203,17 @@ object Dispatcher {
     }
 
     private def pollOnce[R](state: Ref[DispatcherState],
-                            internalState: Ref[WorkerInternalState],
+                            internalState: RefM[WorkerInternalState],
                             handle: Record => URIO[R, Any],
                             queue: Queue[Record],
                             group: Group,
                             clientId: ClientId,
                             partition: TopicPartition): URIO[R with Env, Boolean] =
-      internalState.update(_.cleared) *>
+      internalState.update(s => UIO(s.cleared)) *>
         state.get.flatMap {
           case DispatcherState.Running => queue.poll.flatMap {
             case Some(record) => report(TookRecordFromQueue(record, group, clientId)) *>
-              internalState.update(_.started) *>
+              internalState.update(s => UIO(s.started)) *>
               handle(record).uninterruptible
                 .as(true)
             case None => UIO(true).delay(5.millis)
@@ -224,8 +234,8 @@ case class WorkerInternalState(currentExecutionStarted: Option[Long], reachedHig
 
   def started = copy(currentExecutionStarted = Some(System.currentTimeMillis()))
 
-  def reachedHighWatermark = copy(reachedHighWatermarkSince = Some(System.currentTimeMillis()))
-  def clearReachedHighWatermark = copy(reachedHighWatermarkSince = None)
+  def reachedHighWatermark: URIO[Clock, WorkerInternalState] = clock.currentTime(TimeUnit.MILLISECONDS).map(currentTime => copy(reachedHighWatermarkSince = Some(currentTime)) )
+  def clearReachedHighWatermark = UIO(copy(reachedHighWatermarkSince = None))
 }
 
 object WorkerInternalState {

@@ -15,6 +15,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import zio._
+import zio.clock.Clock
 import zio.duration._
 
 import scala.util.Random
