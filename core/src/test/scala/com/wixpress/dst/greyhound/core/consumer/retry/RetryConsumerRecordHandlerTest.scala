@@ -7,7 +7,7 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerTest.{offset, partition, _}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryHelper._
@@ -20,7 +20,7 @@ import zio.duration._
 import zio.random.{Random, nextBytes, nextIntBounded}
 import zio.test.environment.{TestClock, TestRandom}
 
-class RetryRecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
+class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
 
   override def env =
     for {
@@ -281,7 +281,7 @@ class RetryRecordHandlerTest extends BaseTest[Random with Clock with Blocking wi
   }
 }
 
-object RetryRecordHandlerTest {
+object RetryConsumerRecordHandlerTest {
   val group = "some-group"
   val partition = 0
   val offset = 0L
