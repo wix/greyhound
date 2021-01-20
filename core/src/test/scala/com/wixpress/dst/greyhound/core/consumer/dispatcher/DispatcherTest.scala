@@ -78,7 +78,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     )
   }
 
-  "block resume paused partitions" in new ctx(lowWatermark = 3, highWatermark = 7) {
+  "block resume paused partitions" in new ctx(lowWatermark = 30, highWatermark = 34) {
     run(
       for {
         queue <- Queue.bounded[Record](1)
