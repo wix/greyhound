@@ -62,21 +62,21 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     } yield (result1 must equalTo(SubmitResult.Rejected)) or (result2 must equalTo(SubmitResult.Rejected)))
   }
 
-  "resume paused partitions" in new ctx(lowWatermark = 3, highWatermark = 7) {
-    run(
-      for {
-        queue <- Queue.bounded[Record](1)
-        dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))), lowWatermark, highWatermark)
-        _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
-           submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
-        }
-        _ <-  submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
-        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
-        _ <- ZIO.foreach_(1 to 4 )(_ => queue.take)
-        _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
-      } yield ok
-    )
-  }
+//   "resume paused partitions" in new ctx(lowWatermark = 3, highWatermark = 7) {
+//     run(
+//       for {
+//         queue <- Queue.bounded[Record](1)
+//         dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))), lowWatermark, highWatermark)
+//         _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
+//            submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
+//         }
+//         _ <-  submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)) // Will be dropped
+//         _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
+//         _ <- ZIO.foreach_(1 to 4 )(_ => queue.take)
+//         _ <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
+//       } yield ok
+//     )
+//   }
 
   "block resume paused partitions" in new ctx(lowWatermark = 30, highWatermark = 34) {
     run(
