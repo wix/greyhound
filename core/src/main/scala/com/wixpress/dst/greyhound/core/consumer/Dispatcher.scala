@@ -13,6 +13,7 @@ import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
 import zio._
 import zio.clock.Clock
 import zio.duration.{Duration, _}
+import zio.stm.{STM, TRef}
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R with Env, SubmitResult]
@@ -29,6 +30,7 @@ trait Dispatcher[-R] {
 
   def expose: URIO[Clock, DispatcherExposedState]
 
+  def waitForCurrentRecordsCompletion: UIO[Unit]
 }
 
 object Dispatcher {
@@ -74,6 +76,10 @@ object Dispatcher {
           workers <- workers.get
           workersState <- ZIO.foreach(workers) { case (tp, worker) => worker.expose.map(pending => (tp, pending)) }.map(_.toMap)
         } yield DispatcherExposedState(workersState, dispatcherState)
+
+
+      override def waitForCurrentRecordsCompletion: UIO[Unit] =
+        workers.get.flatMap(workers => ZIO.foreach(workers.values)(_.waitForCurrentExecutionCompletion)).unit
 
       override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics with ZEnv, Unit] =
         workers.modify { workers =>
@@ -159,6 +165,8 @@ object Dispatcher {
     def shutdown: UIO[Unit]
 
     def clearPausedPartitionDuration: UIO[Unit]
+
+    def waitForCurrentExecutionCompletion: UIO[Unit]
   }
 
   object Worker {
@@ -169,7 +177,7 @@ object Dispatcher {
                 clientId: ClientId,
                 partition: TopicPartition): URIO[R with Env, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
-      internalState <- RefM.make(WorkerInternalState.empty)
+      internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber <-
         pollOnce(status, internalState, handle, queue, group, clientId, partition)
           .interruptible.repeatWhile(_ == true).forkDaemon
@@ -177,43 +185,43 @@ object Dispatcher {
       override def submit(record: Record): URIO[Clock, Boolean] =
         queue.offer(record)
           .tap(submitted => ZIO.when(!submitted) {
-            internalState.update(s =>
-              if (s.reachedHighWatermarkSince.isEmpty)
-                s.reachedHighWatermark
-              else
-                UIO(s))
+            clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now =>
+              internalState.update(s =>
+                if (s.reachedHighWatermarkSince.nonEmpty) s else s.reachedHighWatermark(now)).commit)
           }).tap(submitted => ZIO.when(submitted) {
           queue.size.map(size => println(s">>>> successfully submitted $size elements already"))
         })
 
       override def expose: URIO[Clock, WorkerExposedState] =
-        (queue.size zip internalState.get)
+        (queue.size zip internalState.get.commit)
           .flatMap { case (queued, state) =>
             clock.currentTime(TimeUnit.MILLISECONDS).map(currentTime =>
               WorkerExposedState(
-              Math.max(0, queued),
-              state.currentExecutionStarted.map(currentTime - _),
-              state.reachedHighWatermarkSince.map(currentTime - _)))
+                Math.max(0, queued),
+                state.currentExecutionStarted.map(currentTime - _),
+                state.reachedHighWatermarkSince.map(currentTime - _)))
           }
 
       override def shutdown: UIO[Unit] =
         fiber.interrupt.unit
 
-      override def clearPausedPartitionDuration: UIO[Unit] = internalState.update(_.clearReachedHighWatermark)
+      override def clearPausedPartitionDuration: UIO[Unit] = internalState.update(_.clearReachedHighWatermark).commit
+
+      override def waitForCurrentExecutionCompletion: UIO[Unit] = internalState.get.flatMap(state => STM.check(state.currentExecutionStarted.isEmpty)).commit
     }
 
     private def pollOnce[R](state: Ref[DispatcherState],
-                            internalState: RefM[WorkerInternalState],
+                            internalState: TRef[WorkerInternalState],
                             handle: Record => URIO[R, Any],
                             queue: Queue[Record],
                             group: Group,
                             clientId: ClientId,
                             partition: TopicPartition): URIO[R with Env, Boolean] =
-      internalState.update(s => UIO(s.cleared)) *>
+      internalState.update(s => s.cleared).commit *>
         state.get.flatMap {
           case DispatcherState.Running => queue.poll.flatMap {
             case Some(record) => report(TookRecordFromQueue(record, group, clientId)) *>
-              internalState.update(s => UIO(s.started)) *>
+              internalState.update(_.started).commit *>
               handle(record).uninterruptible
                 .as(true)
             case None => UIO(true).delay(5.millis)
@@ -234,8 +242,9 @@ case class WorkerInternalState(currentExecutionStarted: Option[Long], reachedHig
 
   def started = copy(currentExecutionStarted = Some(System.currentTimeMillis()))
 
-  def reachedHighWatermark: URIO[Clock, WorkerInternalState] = clock.currentTime(TimeUnit.MILLISECONDS).map(currentTime => copy(reachedHighWatermarkSince = Some(currentTime)) )
-  def clearReachedHighWatermark = UIO(copy(reachedHighWatermarkSince = None))
+  def reachedHighWatermark(nowMs: Long): WorkerInternalState = copy(reachedHighWatermarkSince = Some(nowMs))
+
+  def clearReachedHighWatermark = copy(reachedHighWatermarkSince = None)
 }
 
 object WorkerInternalState {

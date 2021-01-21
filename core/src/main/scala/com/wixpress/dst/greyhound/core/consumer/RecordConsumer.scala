@@ -33,6 +33,8 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
   def resubscribe[R1](subscription: ConsumerSubscription, listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
 
   def setBlockingState(command: BlockingStateCommand): RIO[Env, Unit]
+
+  def waitForCurrentRecordsCompletion: UIO[Unit]
 }
 
 object RecordConsumer {
@@ -79,6 +81,8 @@ object RecordConsumer {
       override def setBlockingState(command: BlockingStateCommand): RIO[Env, Unit] = {
         blockingStateResolver.setBlockingState(command)
       }
+
+      override def waitForCurrentRecordsCompletion: UIO[Unit] = eventLoop.waitForCurrentRecordsCompletion
 
       override def state: UIO[RecordConsumerExposedState] = for {
         dispatcherState <- eventLoop.state
