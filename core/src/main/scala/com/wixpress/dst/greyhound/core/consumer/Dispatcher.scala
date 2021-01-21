@@ -188,9 +188,7 @@ object Dispatcher {
             clock.currentTime(TimeUnit.MILLISECONDS).flatMap(now =>
               internalState.update(s =>
                 if (s.reachedHighWatermarkSince.nonEmpty) s else s.reachedHighWatermark(now)).commit)
-          }).tap(submitted => ZIO.when(submitted) {
-          queue.size.map(size => println(s">>>> successfully submitted $size elements already"))
-        })
+          })
 
       override def expose: URIO[Clock, WorkerExposedState] =
         (queue.size zip internalState.get.commit)
