@@ -16,6 +16,7 @@ import zio.test.environment.TestClock
 import zio.{test, _}
 
 class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
+  sequential
 
   override def env: UManaged[Env with TestClock with TestMetrics] =
     for {
