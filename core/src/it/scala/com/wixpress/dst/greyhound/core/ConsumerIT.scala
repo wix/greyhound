@@ -4,23 +4,25 @@ import java.util.concurrent.{TimeUnit, TimeoutException}
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
-import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, CountDownLatch, eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.core.Serdes._
-import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.OffsetReset.{Earliest, Latest}
 import com.wixpress.dst.greyhound.core.consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, CountDownLatch, eventuallyTimeoutFail, eventuallyZ}
+import com.wixpress.dst.greyhound.core.zioutils.Gate
 import com.wixpress.dst.greyhound.testkit.ITEnv.{clientId, _}
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio.clock.{Clock, sleep}
 import zio.console.Console
 import zio.duration._
+import zio.stm.{STM, TRef}
 import zio.{console, _}
 
-class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources]  {
+class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   sequential
 
@@ -108,7 +110,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources]  {
       record = ProducerRecord.tombstone(topic, Some("foo"))
       message <- RecordConsumer.make(config, handler).use_ {
         producer.produce(record, StringSerde, StringSerde) *>
-        queue.take.timeoutFail(TimedOutWaitingForMessages)(10.seconds)
+          queue.take.timeoutFail(TimedOutWaitingForMessages)(10.seconds)
       }
     } yield {
       message must (beRecordWithKey("foo") and beRecordWithValue(null))
@@ -178,7 +180,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources]  {
           end <- clock.currentTime(TimeUnit.MILLISECONDS)
 
         } yield {
-          (handledAllFromPartition aka "handledAllFromPartition" must beSome) and (end-start aka "complete handling duration" must beGreaterThan(3000L))
+          (handledAllFromPartition aka "handledAllFromPartition" must beSome) and (end - start aka "complete handling duration" must beGreaterThan(3000L))
         }
       }
     } yield test
@@ -342,12 +344,12 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources]  {
           hangForever.await
       }
       record <- aProducerRecord(topic)
-      recordValue =  record.value.get
+      recordValue = record.value.get
       _ <- makeConsumer(kafka, topic, group, hangingHandler, 0, _.copy(drainTimeout = 200.millis)).use { consumer =>
         producer.produce(record, StringSerde, StringSerde) *>
           handlingStarted.await *>
-            //unsubscribe to make sure partitions are released
-            consumer.resubscribe(ConsumerSubscription.topics())
+          //unsubscribe to make sure partitions are released
+          consumer.resubscribe(ConsumerSubscription.topics())
       }.disconnect.timeoutFail(new TimeoutException("timed out waiting for consumer 0"))(10.seconds)
       consumed <- AwaitableRef.make(Seq.empty[String])
       handler = RecordHandler { record: ConsumerRecord[String, String] =>
@@ -355,18 +357,49 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources]  {
       }.withDeserializers(StringSerde, StringSerde)
 
       consumedValues <- makeConsumer(kafka, topic, group, handler, 1, modifyConfig = _.copy(offsetReset = Latest)).use { _ =>
-         consumed.await(_.nonEmpty, 5.seconds)
+        consumed.await(_.nonEmpty, 5.seconds)
       }.disconnect.timeoutFail(new TimeoutException("timed out waiting for consumer 1"))(10.seconds)
     } yield {
       consumedValues must contain(recordValue)
     }
   }
 
+  "block until current tasks complete" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = "block-until")
+      group <- randomGroup
+
+      waitForTasksDuration <- TRef.make[Duration](0.millis).commit
+      innerGate <- Gate.make(initiallyAllow = false)
+      outerGate <- Gate.make(initiallyAllow = false)
+      handler = RecordHandler((_: ConsumerRecord[String, String]) =>
+        outerGate.toggle(true) *> innerGate.await())
+        .withDeserializers(StringSerde, StringSerde).ignore
+      config = configFor(kafka, group, topic)
+      record = ProducerRecord(topic, "bar", Some("foo"))
+
+      test <- RecordConsumer.make(config, handler).use { consumer =>
+        for {
+          _ <- ZIO.foreach((0 until 100).toSet)(_ => producer.produce(record, StringSerde, StringSerde)) *>
+            outerGate.await() /* handler waiting on innerGate now */ *>
+            consumer.waitForCurrentRecordsCompletion.timed.map(_._1) /* after 'delay' the consumer's innerGate opens and handler completes */
+              .flatMap(d => waitForTasksDuration.set(d).commit)
+              .fork
+          delay = 1.second
+          tasksDurationFiber <- waitForTasksDuration.get.tap(d => STM.check(d > 0.millis)).commit.fork
+          _ <- innerGate.toggle(true).delay(delay) /*and now handler will complete */
+          tasksDuration <- tasksDurationFiber.join
+        } yield tasksDuration must between(delay, delay * 3)
+      }
+    } yield test
+  }
+
   private def makeConsumer[E](kafka: ManagedKafka, topic: String, group: String,
-                           handler: RecordHandler[Console with Clock, E, Chunk[Byte], Chunk[Byte]], i: Int,
-                           mutateEventLoop: EventLoopConfig => EventLoopConfig = identity,
-                           modifyConfig: RecordConsumerConfig => RecordConsumerConfig = identity
-                          ): ZManaged[RecordConsumer.Env, Throwable, RecordConsumer[Console with Clock with RecordConsumer.Env]] =
+                              handler: RecordHandler[Console with Clock, E, Chunk[Byte], Chunk[Byte]], i: Int,
+                              mutateEventLoop: EventLoopConfig => EventLoopConfig = identity,
+                              modifyConfig: RecordConsumerConfig => RecordConsumerConfig = identity
+                             ): ZManaged[RecordConsumer.Env, Throwable, RecordConsumer[Console with Clock with RecordConsumer.Env]] =
     RecordConsumer.make(modifyConfig(configFor(kafka, group, topic, mutateEventLoop).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest)), handler)
 
   private def makeConsumer(kafka: ManagedKafka, pattern: Pattern, group: String,

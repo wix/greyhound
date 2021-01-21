@@ -15,6 +15,7 @@ import zio.duration._
 trait EventLoop[-R] extends Resource[R] {
   self =>
   def state: UIO[DispatcherExposedState]
+  def waitForCurrentRecordsCompletion: UIO[Unit]
   def rebalanceListener: RebalanceListener[Any]
 }
 
@@ -69,6 +70,8 @@ object EventLoop {
           override def state: UIO[DispatcherExposedState] = dispatcher.expose.provideLayer(Clock.live)
 
           override def rebalanceListener: RebalanceListener[Any] = listener
+
+          override def waitForCurrentRecordsCompletion: UIO[Unit] = dispatcher.waitForCurrentRecordsCompletion
         }
     }
   }
