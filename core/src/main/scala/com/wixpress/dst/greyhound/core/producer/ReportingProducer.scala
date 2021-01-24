@@ -7,7 +7,7 @@ import _root_.zio.blocking.Blocking
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
 import zio.clock.{Clock, currentTime}
-import zio.{Chunk, IO, Ref, UIO, ULayer, URIO, ZIO}
+import zio.{Chunk, IO, ULayer, ZIO}
 
 import scala.concurrent.duration.FiniteDuration
 
