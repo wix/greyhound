@@ -4,6 +4,7 @@ import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CreatingConsumer
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.{ResubscribeError, UncaughtHandlerError}
@@ -49,12 +50,13 @@ object RecordConsumer {
   def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     for {
       _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers)).toManaged_
+      _ <- validateRetryPolicy(config)
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
       consumer <- Consumer.make(
         ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
-        maybeAddRetryTopics(config, nonBlockingRetryHelper))
+        maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
@@ -119,13 +121,14 @@ object RecordConsumer {
       override def clientId: ClientId = config.clientId
     }
 
-  private def maybeAddRetryTopics[E, R](config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
+  private def maybeAddRetryTopics[E, R](retryConfig: RetryConfig, config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
     config.initialSubscription match {
       case Topics(topics) =>
         val retryTopics = topics.flatMap(helper.retryTopicsFor)
         (Topics(topics ++ retryTopics), retryTopics)
       case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
-        (0 until helper.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
+        (0 until retryConfig.nonBlockingBackoffs("").length)
+          .map(step => patternRetryTopic(config.group, step)).toSet)
     }
   }
 
@@ -143,6 +146,15 @@ object RecordConsumer {
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
           report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))
     }
+
+  private def validateRetryPolicy(config: RecordConsumerConfig) =
+    (config.initialSubscription match {
+      case _: ConsumerSubscription.TopicPattern =>
+        ZIO.unit
+      case _: ConsumerSubscription.Topics =>
+        ZIO.when(config.retryConfig.exists(_.forPatternSubscription.exists(_.nonEmpty)))(ZIO.fail(InvalidRetryConfigForPatternSubscription))
+    }).toManaged_
+
 }
 
 sealed trait RecordConsumerMetric extends GreyhoundMetric {
@@ -154,7 +166,9 @@ sealed trait RecordConsumerMetric extends GreyhoundMetric {
 object RecordConsumerMetric {
 
   case class UncaughtHandlerError[E](error: E, topic: Topic, partition: Partition, offset: Offset, group: Group, clientId: ClientId) extends RecordConsumerMetric
+
   case class ResubscribeError[E](error: E, group: Group, clientId: ClientId) extends RecordConsumerMetric
+
 }
 
 case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, consumerId: String, blockingState: Map[BlockingTarget, BlockingState]) {
@@ -181,3 +195,11 @@ object RecordConsumerConfig {
 }
 
 case class ResubscribeTimeout(resubscribeTimeout: duration.Duration, subscription: ConsumerSubscription) extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")
+
+abstract class ConsumerConfigFailedValidation(val msg: String) extends RuntimeException(msg)
+
+object ConsumerConfigFailedValidation {
+
+  case object InvalidRetryConfigForPatternSubscription extends ConsumerConfigFailedValidation("A consumer with a pattern subscription cannot be created with a custom retry policy. Use ZRetryConfig.retryForPattern(..)")
+
+}

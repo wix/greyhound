@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import java.util.concurrent.TimeUnit
 
+import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
@@ -19,7 +20,8 @@ trait BlockingRetryRecordHandler[V, K, R] {
 }
 
 private[retry] object BlockingRetryRecordHandler {
-  def apply[R, E, V, K](handler: RecordHandler[R, E, K, V],
+  def apply[R, E, V, K](group: Group,
+                        handler: RecordHandler[R, E, K, V],
                         retryConfig: RetryConfig,
                         blockingState: Ref[Map[BlockingTarget, BlockingState]],
                         nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
@@ -74,7 +76,7 @@ private[retry] object BlockingRetryRecordHandler {
           case _ => ((), state)
         }.getOrElse(((), state)))
 
-      if (nonBlockingHandler.isHandlingRetryTopicMessage(record)) {
+      if (nonBlockingHandler.isHandlingRetryTopicMessage(group,record)) {
         UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       } else {
         val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs(record.topic)().map(Some(_)) :+ None

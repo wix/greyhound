@@ -8,21 +8,32 @@ import zio.duration.{Duration => ZDuration}
 
 import scala.concurrent.duration.Duration
 
-case class RetryConfig(configs: PartialFunction[Topic, RetryConfigForTopic]) {
+case class RetryConfig(perTopic: PartialFunction[Topic, RetryConfigForTopic],
+                       forPatternSubscription: Option[RetryConfigForTopic]) {
   def blockingBackoffs(topic: Topic) =
-    configs(topic).blockingBackoffs
+    get(topic)(_.blockingBackoffs)(ifEmpty = () => Nil)
 
-  def retryType(topic: Topic) =
-    if (configs.isDefinedAt(topic)) configs(topic).retryType else NoRetries
-
-  def withCustomRetriesFor(overrideConfigs: PartialFunction[Topic, RetryConfigForTopic]): RetryConfig =
-    copy(configs = {
-      case t =>
-        if (overrideConfigs.isDefinedAt(t)) overrideConfigs(t) else configs(t)
-    })
+  def retryType(originalTopic: Topic): RetryType =
+    get(originalTopic)(_.retryType)(ifEmpty = NoRetries)
 
   def nonBlockingBackoffs(topic: Topic): NonBlockingBackoffPolicy =
-    configs(topic).nonBlockingBackoffs
+    get(topic)(_.nonBlockingBackoffs)(ifEmpty = NonBlockingBackoffPolicy.empty)
+
+  def withCustomRetriesFor(overrideConfigs: PartialFunction[Topic, RetryConfigForTopic]): RetryConfig = {
+    val newConfigs: PartialFunction[Topic, RetryConfigForTopic] = {
+      case t => if (overrideConfigs.isDefinedAt(t)) overrideConfigs(t) else perTopic(t)
+    }
+
+    copy(perTopic = newConfigs)
+  }
+
+  private def get[T](forTopic: Topic)(f: RetryConfigForTopic => T)(ifEmpty: => T): T =
+    forPatternSubscription.map(f).getOrElse(
+      if (perTopic.isDefinedAt(forTopic))
+        f(perTopic(forTopic))
+      else
+        ifEmpty)
+
 }
 
 case class NonBlockingBackoffPolicy(intervals: Seq[ZDuration],
@@ -37,6 +48,7 @@ object NonBlockingBackoffPolicy {
 }
 
 case class RetryConfigForTopic(blockingBackoffs: () => Seq[ZDuration], nonBlockingBackoffs: NonBlockingBackoffPolicy) {
+  def nonEmpty: Boolean = blockingBackoffs().nonEmpty || nonBlockingBackoffs.nonEmpty
 
   def retryType: RetryType =
     if (blockingBackoffs.apply().nonEmpty) {
@@ -84,13 +96,18 @@ object ZRetryConfig {
     forAllTopics(RetryConfigForTopic(blockingBackoffs = () => blockingBackoffs, nonBlockingBackoffs = nonBlockingBackoffs))
 
   def perTopicRetries(configs: PartialFunction[Topic, RetryConfigForTopic]) =
-    RetryConfig(configs)
+    RetryConfig(configs, None)
+
+  def retryForPattern(config: RetryConfigForTopic) =
+    RetryConfig(Map.empty, Some(config))
 
   private def forAllTopics(config: RetryConfigForTopic): RetryConfig =
-    RetryConfig { case _ => config }
+    RetryConfig({ case _ => config }, None)
 }
 
 object RetryConfig {
+  val empty = RetryConfig(Map.empty, None)
+
   def nonBlockingRetry(firstRetry: Duration, otherRetries: Duration*): RetryConfig =
     ZRetryConfig.nonBlockingRetry(ZDuration.fromScala(firstRetry), otherRetries.toList.map(ZDuration.fromScala): _*)
 
@@ -114,10 +131,6 @@ object RetryConfig {
 
   def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[Duration], nonBlockingBackoffs: List[Duration]): RetryConfig =
     ZRetryConfig.blockingFollowedByNonBlockingRetry(blockingBackoffs = blockingBackoffs.map(ZDuration.fromScala), nonBlockingBackoffs = NonBlockingBackoffPolicy(nonBlockingBackoffs.map(ZDuration.fromScala)))
-
-
-  def perTopicRetryConfig(configs: PartialFunction[Topic, RetryConfigForTopic]) =
-    ZRetryConfig.perTopicRetries(configs)
 }
 
 trait RetryType

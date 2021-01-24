@@ -1,17 +1,20 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
+import com.wixpress.dst.greyhound.core.Group
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper._
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.producer.ProducerR
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration._
-import zio.{Chunk, ZIO}
+import zio.{Chunk, ZIO,UIO}
 
 trait NonBlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any]
 
-  def isHandlingRetryTopicMessage(record: ConsumerRecord[K, V]): Boolean
+  def isHandlingRetryTopicMessage(group: Group, record: ConsumerRecord[K, V]): Boolean
 
   def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any]
 }
@@ -32,9 +35,13 @@ private[retry] object NonBlockingRetryRecordHandler {
       }
     }
 
-    override def isHandlingRetryTopicMessage(record: ConsumerRecord[K, V]): Boolean = {
-      val option = nonBlockingRetryHelper.retryTopicsFor("").-("").headOption
-      option.exists(retryTopicTemplate => record.topic.contains(retryTopicTemplate))
+    override def isHandlingRetryTopicMessage(group: Group, record: ConsumerRecord[K, V]): Boolean = {
+      subscription match {
+        case _: TopicPattern =>
+          record.topic.startsWith(patternRetryTopicPrefix(group))
+        case _: Topics =>
+          record.topic.startsWith(fixedRetryTopicPrefix(originalTopic(record.topic, group), group))
+      }
     }
 
     override def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {

@@ -3,16 +3,17 @@ package com.wixpress.dst.greyhound.core.retry
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core.Serdes._
-import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
 import com.wixpress.dst.greyhound.core.consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.{IgnoreOnceFor, NonBlockingBackoffPolicy, NonRetriableException, RetryConfig, RetryConfigForTopic, ZRetryConfig}
+import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
-import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import com.wixpress.dst.greyhound.testkit.ITEnv._
+import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio._
 import zio.duration._
 
@@ -190,7 +191,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       group <- randomGroup
       invocations <- Ref.make(0)
       done <- Promise.make[Nothing, Unit]
-      retryConfig = ZRetryConfig.nonBlockingRetry(1.second, 1.seconds, 1.seconds)
+      retryConfig = ZRetryConfig.retryForPattern(RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(Seq(1.second, 1.second, 1.seconds))))
       retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
       success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
         initialSubscription = TopicPattern(Pattern.compile("topic-1.*")), retryConfig = Some(retryConfig),
@@ -221,6 +222,18 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
     }
   }
+
+  "fail validation for mismatching pattern retry policy with regular subscription" in {
+    for {
+      TestResources(kafka, _) <- getShared
+      retryConfig = ZRetryConfig.retryForPattern(RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(Seq(1.second, 1.second, 1.seconds))))
+      handler = RecordHandler { _: ConsumerRecord[String, String] => ZIO.unit }.withDeserializers(StringSerde, StringSerde)
+      _ <- RecordConsumer.make(configFor(kafka, "group", retryConfig, "topic"), handler)
+        .flip
+        .use(t => ZIO(t === InvalidRetryConfigForPatternSubscription))
+    } yield ok
+  }
+
 
   private def configFor(kafka: ManagedKafka, group: String, retryConfig: RetryConfig, topics: String*) = {
     RecordConsumerConfig(kafka.bootstrapServers, group,
@@ -308,4 +321,3 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
 }
 
 case class SomeException() extends Exception("expected!", null, true, false)
-
