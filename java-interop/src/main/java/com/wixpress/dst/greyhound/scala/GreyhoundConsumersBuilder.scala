@@ -71,10 +71,12 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
   private def convertRetryConfig(retryConfig: Option[RetryConfig]): Option[CoreRetryConfig] = {
     import scala.collection.JavaConverters._
 
-    retryConfig.map(config ⇒ CoreRetryConfig { case _ =>
-      RetryConfigForTopic(
+    retryConfig.map(config ⇒ {
+      val forTopic = RetryConfigForTopic(
         () ⇒ config.blockingBackoffs().asScala,
         NonBlockingBackoffPolicy(config.nonBlockingBackoffs.asScala))
+
+      CoreRetryConfig({ case _ => forTopic }, None)
     })
   }
 }

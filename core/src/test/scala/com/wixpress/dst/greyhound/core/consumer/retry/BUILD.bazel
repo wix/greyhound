@@ -10,6 +10,8 @@ specs2_unit_test(
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/retry",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/consumer",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@dev_zio_zio_2_12",

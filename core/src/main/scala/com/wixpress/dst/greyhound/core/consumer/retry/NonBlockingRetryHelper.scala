@@ -118,10 +118,16 @@ object NonBlockingRetryHelper {
     s"__gh_pattern-retry-$group-attempt-\\d\\d*"
 
   def patternRetryTopic(group: Group, step: Int) =
-    s"__gh_pattern-retry-$group-attempt-$step"
+    s"${patternRetryTopicPrefix(group)}$step"
+
+  def patternRetryTopicPrefix(group: Group) =
+    s"__gh_pattern-retry-$group-attempt-"
 
   def fixedRetryTopic(originalTopic: Topic, group: Group, nextRetryAttempt: Int) =
-    s"$originalTopic-$group-retry-$nextRetryAttempt"
+    s"${fixedRetryTopicPrefix(originalTopic, group)}$nextRetryAttempt"
+
+  def fixedRetryTopicPrefix(originalTopic: Topic, group: Group) =
+    s"$originalTopic-$group-retry-"
 
   def originalTopic(topic: Topic, group: Group): String = {
     val pattern = ("^(.+)-" + Pattern.quote(group) + "-retry-\\d+$").r

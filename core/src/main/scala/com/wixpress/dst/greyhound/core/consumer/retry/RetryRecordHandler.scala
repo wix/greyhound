@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
+import com.wixpress.dst.greyhound.core.Serdes.StringSerde
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
-import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.originalTopic
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.ProducerR
 import zio._
@@ -29,17 +29,20 @@ object RetryRecordHandler {
                                  (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] = {
 
     val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, subscription, evK, evV, nonBlockingRetryHelper)
-    val blockingHandler = BlockingRetryRecordHandler(handler, retryConfig, blockingState, nonBlockingHandler)
-    val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(blockingHandler, nonBlockingHandler)
+    val blockingHandler = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler)
+    val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
     new RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] {
       override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, Any] =
-        retryConfig.retryType(originalTopic(record.topic, groupId)) match {
-          case BlockingFollowedByNonBlocking => blockingAndNonBlockingHandler.handle(record)
-          case NonBlocking => nonBlockingHandler.handle(record)
-          case Blocking => blockingHandler.handle(record)
-          case NoRetries => handler.handle(record).ignore
-        }
+        record.headers.get[String](RetryHeader.OriginalTopic, StringSerde).catchAll(_ => ZIO.none)
+          .flatMap { originalTopic =>
+            retryConfig.retryType(originalTopic.getOrElse(record.topic)) match {
+              case BlockingFollowedByNonBlocking => blockingAndNonBlockingHandler.handle(record)
+              case NonBlocking => nonBlockingHandler.handle(record)
+              case Blocking => blockingHandler.handle(record)
+              case NoRetries => handler.handle(record).ignore
+            }
+          }
     }
   }
 }

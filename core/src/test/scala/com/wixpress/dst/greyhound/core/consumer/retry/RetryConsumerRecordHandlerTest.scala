@@ -193,10 +193,10 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
 
     Fragment.foreach(Seq(
       (Seq(50.millis, 1.second), (tpartition: TopicPartition) => TopicTarget(tpartition.topic)),
-      (Seq(100.millis, 1.minute), (tpartition: TopicPartition) => TopicTarget(tpartition.topic)),
+      (Seq(100.millis, 6.seconds), (tpartition: TopicPartition) => TopicTarget(tpartition.topic)),
       (Seq(1.second, 1.second), (tpartition: TopicPartition) => TopicTarget(tpartition.topic)),
       (Seq(50.millis, 1.second), (tpartition: TopicPartition) => TopicPartitionTarget(tpartition)),
-      (Seq(100.millis, 1.minute), (tpartition: TopicPartition) => TopicPartitionTarget(tpartition)),
+      (Seq(100.millis, 3.seconds), (tpartition: TopicPartition) => TopicPartitionTarget(tpartition)),
       (Seq(1.second, 1.second), (tpartition: TopicPartition) => TopicPartitionTarget(tpartition)))) { pair: (Seq[Duration], TopicPartition => BlockingTarget) =>
       val (retryDurations, target) = pair
       s"release blocking retry for all for ${target(TopicPartition("", 0))} for retry with duration ${retryDurations.map(_.toMillis)} millis" in {
