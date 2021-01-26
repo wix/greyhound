@@ -13,14 +13,15 @@ trait GreyhoundProducer extends Closeable {
                     valueSerializer: Serializer[V]): Future[RecordMetadata]
 }
 
-case class GreyhoundProducerBuilder(config: GreyhoundConfig) {
+case class GreyhoundProducerBuilder(config: GreyhoundConfig,
+                                    mutateProducer: ProducerConfig => ProducerConfig = identity) {
   def withContextEncoding[C](encoder: ContextEncoder[C]): GreyhoundContextAwareProducerBuilder[C] =
     GreyhoundContextAwareProducerBuilder(config, encoder)
 
   def build: Future[GreyhoundProducer] = config.runtime.unsafeRunToFuture {
     for {
       runtime <- ZIO.runtime[Env]
-      producerConfig = ProducerConfig(config.bootstrapServers)
+      producerConfig = mutateProducer(ProducerConfig(config.bootstrapServers))
       makeProducer = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
       reservation <- makeProducer.reserve
       producer <- reservation.acquire
