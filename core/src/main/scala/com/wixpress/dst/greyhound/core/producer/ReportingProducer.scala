@@ -11,11 +11,13 @@ import zio.{Chunk, IO, ULayer, ZIO}
 
 import scala.concurrent.duration.FiniteDuration
 
-case class ReportingProducer[-R](internal: ProducerR[R], attributes: Map[String, String])
+case class ReportingProducer[-R](internal: ProducerR[R], extraAttributes : Map[String, String])
   extends ProducerR[GreyhoundMetrics with Clock with R] {
 
   override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking with Clock with GreyhoundMetrics with R, ProducerError, IO[ProducerError, RecordMetadata]] =
     ReportingProducer.reporting[R](internal.produceAsync)(record, attributes)
+
+  override def attributes: Map[String, String] = internal.attributes ++ extraAttributes
 }
 
 object ReportingProducer {

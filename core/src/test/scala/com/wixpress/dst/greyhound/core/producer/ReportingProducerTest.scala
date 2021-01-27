@@ -36,7 +36,7 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       fakeProducer <- makeProducer
       _ <- fakeProducer.produce(record)
       metrics <- reportedMetrics
-    } yield metrics must contain(ProducingRecord(record, attributes.toMap))
+    } yield metrics must contain(ProducingRecord(record, underlyingAttributes ++ attributes.toMap))
   }
 
   "report metric when message is produced successfully" in {
@@ -75,7 +75,7 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
     ReportingProducer(underlying, attributes:_*)
 
   private def makeProducer =
-    FakeProducer.make.map(ReportingProducer(_, attributes:_*))
+    FakeProducer.make(attributes = underlyingAttributes).map(ReportingProducer(_, attributes:_*))
 
   private def adjustTestClock(by: Duration): URIO[TestClock, Unit] =
     TestClock.adjust(by)
@@ -85,5 +85,6 @@ object ReportingProducerTest {
   val topic = "topic"
   val partition = 0
   val attributes = Seq("attr1" -> "attr1-value")
+  val underlyingAttributes = Map("attr2" -> "attr2-value")
   val record = ProducerRecord(topic, Chunk.empty, partition = Some(partition))
 }
