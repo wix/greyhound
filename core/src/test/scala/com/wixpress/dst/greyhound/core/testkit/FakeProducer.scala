@@ -11,7 +11,8 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
                         offsets: Ref[Map[TopicPartition, Offset]],
                         config: ProducerConfig,
                         beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] = UIO(_),
-                        beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = UIO(_)
+                        beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = UIO(_),
+                        override val attributes: Map[String, String] = Map.empty
                        ) extends Producer {
 
   def failing: FakeProducer = copy(config = ProducerConfig.Failing)
@@ -43,11 +44,12 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
 object FakeProducer {
   def make: UIO[FakeProducer] = make()
   def make(beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] = UIO(_),
-           beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = UIO(_)
+           beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = UIO(_),
+           attributes: Map[String, String] = Map.empty
           ): UIO[FakeProducer] = for {
     records <- Queue.unbounded[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
     offset <- Ref.make(Map.empty[TopicPartition, Offset])
-  } yield FakeProducer(records, offset, ProducerConfig.Standard, beforeProduce, beforeComplete)
+  } yield FakeProducer(records, offset, ProducerConfig.Standard, beforeProduce, beforeComplete, attributes)
 }
 
 sealed trait ProducerConfig
