@@ -2,13 +2,15 @@ package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.CleanupPolicy.Delete
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
-import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
+import com.wixpress.dst.greyhound.core.producer.ProducerRecord
+import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
 import com.wixpress.dst.greyhound.testkit.ITEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv.{Env, TestResources, testResources}
 import org.apache.kafka.common.errors.InvalidTopicException
-import zio.{Ref, UManaged}
+import zio.duration.Duration.fromScala
+import zio.{Chunk, Ref, UIO, UManaged, ZIO}
 
 import scala.concurrent.duration._
 
@@ -100,6 +102,33 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         }
       } yield {
         (groups === Set(group))
+      }
+    }
+
+    "fetch group topics after partitions assigned" in {
+      val topic = aTopicConfig()
+      for {
+        TestResources(kafka, producer) <- getShared
+        _ <- kafka.adminClient.createTopics(Set(topic))
+        groupTopicsRef <- Ref.make[Map[String, Set[Topic]]](Map.empty)
+        calledGroupsTopicsAfterAssignment <- CountDownLatch.make(1)
+        group = "group1"
+        handler = RecordHandler{_: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => {
+          kafka.adminClient.groupTopics(Set(group)).flatMap(r => groupTopicsRef.set(r)) *>
+            calledGroupsTopicsAfterAssignment.countDown
+        }}
+        (awaitResult, groupTopics) <- RecordConsumer.make( RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))),
+          handler).use{ _ =>
+          for {
+            recordPartition <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
+            _ <- producer.produce(recordPartition)
+            awaitResult <- calledGroupsTopicsAfterAssignment.await.timeout(fromScala(10.seconds))
+            groupTopics <- groupTopicsRef.get
+          } yield (awaitResult, groupTopics)
+        }
+      } yield {
+        (awaitResult aka "awaitResult" must not(beNone)) and
+        (groupTopics === Map(group -> Set(topic.name)))
       }
     }
   }

@@ -26,6 +26,8 @@ trait AdminClient {
   def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]]
 
   def listGroups(): RIO[Blocking, Set[String]]
+
+  def groupTopics(groups: Set[String]): RIO[Blocking, Map[String, Set[Topic]]]
 }
 
 case class TopicPropertiesResult(partitions: Int, properties: Map[String, String])
@@ -85,6 +87,15 @@ object AdminClient {
           result <- effectBlocking(client.listConsumerGroups())
           groups <- result.valid().asZio
         } yield groups.asScala.map(_.groupId()).toSet
+
+        override def groupTopics(groups: Set[String]): RIO[Blocking, Map[String, Set[Topic]]] = for {
+          result <- effectBlocking(client.describeConsumerGroups(groups.asJava))
+          groupEffects = result.describedGroups().asScala.mapValues(_.asZio)
+          groupsList <- ZIO.collectAll(groupEffects.values)
+          membersMap = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala))
+          topicPartitionsMap = membersMap.mapValues(_.flatMap(_.assignment().topicPartitions().asScala))
+          topicsMap = topicPartitionsMap.mapValues(l => l.map(_.topic()).toSet)
+        } yield topicsMap
       }
     }
   }
