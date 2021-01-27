@@ -1,11 +1,14 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.CleanupPolicy.Delete
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv.{Env, TestResources, testResources}
 import org.apache.kafka.common.errors.InvalidTopicException
-import zio.UManaged
+import zio.{Ref, UManaged}
 
 import scala.concurrent.duration._
 
@@ -83,6 +86,20 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       } yield {
         (created1 === Map(topic.name -> None)) and
           (created2 === Map(topic.name -> None))
+      }
+    }
+
+    "list groups" in {
+      val topic = aTopicConfig()
+      for {
+        TestResources(kafka, _) <- getShared
+        group = "group1"
+        groups <- RecordConsumer.make( RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))),
+          RecordHandler.empty).use{ _ =>
+          kafka.adminClient.listGroups()
+        }
+      } yield {
+        (groups === Set(group))
       }
     }
   }
