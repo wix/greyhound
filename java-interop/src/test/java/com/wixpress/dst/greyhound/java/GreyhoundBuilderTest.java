@@ -23,8 +23,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 
 public class GreyhoundBuilderTest {
@@ -33,15 +32,18 @@ public class GreyhoundBuilderTest {
 
     static String topic = "some-topic";
     static String maxParTopic = "some-topic2";
+    static String customPropsTopic = "some-custom-props-topic3";
 
     static String group = "some-group";
     static String maxParGroup = "some-group2";
+    static String customPropsGroup = "some-custom-props-group3";
 
     @BeforeClass
     public static void beforeAll() {
         environment = new DefaultEnvironment();
         environment.kafka().createTopic(new TopicConfig(topic, 8, 1));
         environment.kafka().createTopic(new TopicConfig(maxParTopic, 8, 1));
+        environment.kafka().createTopic(new TopicConfig(customPropsTopic, 8, 1));
     }
 
     @AfterClass
@@ -259,6 +261,52 @@ public class GreyhoundBuilderTest {
         for (int i = 0; i < timesToFail; i++)
             assertConsumerRecord(invocations.remove(), 123, "foo", topic);
         assertConsumerRecord(invocations.remove(), 123, "bar", topic);
+    }
+
+    @Test
+    public void configure_consumer_with_timeout_custom_props() throws Exception {
+        int numOfMessages = 2;
+        List<ConsumerRecord<Integer, String>> consumedRecords = new LinkedList<>();
+        CountDownLatch lock = new CountDownLatch(numOfMessages);
+
+        GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers(), new HashMap<String, String>() {
+            {
+                put("fetch.min.bytes", String.valueOf(Integer.MAX_VALUE));
+                put("request.timeout.ms", String.valueOf(Integer.MAX_VALUE));
+            }
+        });
+        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
+        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
+                .withConsumer(
+                        GreyhoundConsumer.with(
+                                customPropsTopic,
+                                customPropsGroup,
+                                aBlockingRecordHandler(value -> {
+                                    consumedRecords.add(value);
+                                    lock.countDown();
+                                }),
+                                new IntegerDeserializer(),
+                                new StringDeserializer())
+                                .withOffsetReset(OffsetReset.Latest)
+                                .withErrorHandler(ErrorHandler.NoOp())
+                                .withMaxParallelism(1));
+
+        try (GreyhoundConsumers ignored = consumersBuilder.build();
+             GreyhoundProducer producer = producerBuilder.build()) {
+
+            for (int i = 0; i < numOfMessages; i++) {
+                CompletableFuture<OffsetAndMetadata> producerFuture = producer.produce(
+                        new ProducerRecord<>(customPropsTopic, 123, "custom props hello world" + i),
+                        new IntegerSerializer(),
+                        new StringSerializer());
+                producerFuture.join();
+            }
+
+            boolean consumedAll = lock.await(2_000, TimeUnit.MILLISECONDS);
+
+            assertFalse(consumedAll);
+            assertFalse(consumedRecords.size() == numOfMessages);
+        }
     }
 
     private void produceTo(GreyhoundProducer producer, String topic, String message) {

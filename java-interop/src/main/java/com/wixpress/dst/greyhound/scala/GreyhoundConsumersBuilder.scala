@@ -30,7 +30,7 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
       executor = createExecutor
       makeConsumer = ZManaged.foreach(handlers(executor, runtime)) { case (group, javaConsumerConfig) =>
         import javaConsumerConfig._
-        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, Topics(initialTopics), offsetReset = offsetReset, retryConfig = retryConfig), handler)
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, Topics(initialTopics), offsetReset = offsetReset, retryConfig = retryConfig, extraProperties = config.extraProperties), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire
