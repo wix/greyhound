@@ -120,4 +120,8 @@ trait EmptyConsumer extends Consumer {
     ZIO.unit
 
   override def assignment: Task[Set[TopicPartition]] = UIO(Set.empty)
+
+  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] = ZIO(Map.empty)
+
+  override def position(topicPartition: TopicPartition): Task[Offset] = Task(-1L)
 }

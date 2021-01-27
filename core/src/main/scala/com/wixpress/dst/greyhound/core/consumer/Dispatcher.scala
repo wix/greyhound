@@ -281,7 +281,8 @@ object DispatcherMetric {
 
 }
 
-case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState], state: Dispatcher.DispatcherState) {
+case class DispatcherExposedState(workersState: Map[TopicPartition, WorkerExposedState],
+                                  state: Dispatcher.DispatcherState) {
   def totalQueuedTasksPerTopic: Map[Topic, Int] = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.queuedTasks).sum) }
 
   def maxTaskDuration = workersState.groupBy(_._1.topic).map { case (topic, partitionStates) => (topic, partitionStates.map(_._2.currentExecutionDuration.getOrElse(0L)).max) }
