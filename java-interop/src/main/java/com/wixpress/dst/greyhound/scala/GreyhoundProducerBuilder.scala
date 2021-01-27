@@ -16,7 +16,7 @@ class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
   def build: GreyhoundProducer = config.runtime.unsafeRun {
     for {
       runtime <- ZIO.runtime[Env]
-      producerConfig = ProducerConfig(config.bootstrapServers)
+      producerConfig = ProducerConfig(config.bootstrapServers, extraProperties = config.extraProperties)
       makeProducer = Producer.makeR[Any](producerConfig)
       reservation <- makeProducer.reserve
       producer <- reservation.acquire
