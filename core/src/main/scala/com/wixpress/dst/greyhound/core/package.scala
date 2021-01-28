@@ -1,5 +1,10 @@
 package com.wixpress.dst.greyhound
 
+import com.wixpress.dst.greyhound.core.Serdes.StringSerde
+import zio.Task
+import zio.duration.Duration
+import java.time.Instant
+
 package object core {
   type ClientId = String
   type Topic = String
@@ -9,4 +14,9 @@ package object core {
 
   type NonEmptySet[A] = Set[A]
   type NonEmptyList[A] = List[A]
+
+  val longDeserializer = StringSerde.mapM((str: String) => Task(str.toLong))
+  val instantDeserializer: Deserializer[Instant] = longDeserializer.map(Instant.ofEpochMilli)
+  val durationDeserializer = longDeserializer.map(Duration(_, java.util.concurrent.TimeUnit.MILLISECONDS))
+
 }
