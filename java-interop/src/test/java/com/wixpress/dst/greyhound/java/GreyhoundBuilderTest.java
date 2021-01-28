@@ -1,10 +1,12 @@
 package com.wixpress.dst.greyhound.java;
 
+import com.wixpress.dst.greyhound.core.producer.KafkaError;
 import com.wixpress.dst.greyhound.java.testkit.DefaultEnvironment;
 import com.wixpress.dst.greyhound.java.testkit.Environment;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.serialization.IntegerDeserializer;
 import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -17,13 +19,11 @@ import scala.Option;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 
 public class GreyhoundBuilderTest {
@@ -32,18 +32,15 @@ public class GreyhoundBuilderTest {
 
     static String topic = "some-topic";
     static String maxParTopic = "some-topic2";
-    static String customPropsTopic = "some-custom-props-topic3";
 
     static String group = "some-group";
     static String maxParGroup = "some-group2";
-    static String customPropsGroup = "some-custom-props-group3";
 
     @BeforeClass
     public static void beforeAll() {
         environment = new DefaultEnvironment();
         environment.kafka().createTopic(new TopicConfig(topic, 8, 1));
         environment.kafka().createTopic(new TopicConfig(maxParTopic, 8, 1));
-        environment.kafka().createTopic(new TopicConfig(customPropsTopic, 8, 1));
     }
 
     @AfterClass
@@ -264,23 +261,55 @@ public class GreyhoundBuilderTest {
     }
 
     @Test
-    public void configure_consumer_with_timeout_custom_props() throws Exception {
-        int numOfMessages = 2;
-        List<ConsumerRecord<Integer, String>> consumedRecords = new LinkedList<>();
-        CountDownLatch lock = new CountDownLatch(numOfMessages);
-
+    public void configure_producer_with_max_request_size_custom_props() throws Exception {
         GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers(), new HashMap<String, String>() {
             {
-                put("fetch.min.bytes", String.valueOf(Integer.MAX_VALUE));
-                put("request.timeout.ms", String.valueOf(Integer.MAX_VALUE));
+                put("max.request.size", "1");
             }
         });
         GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
         GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
                 .withConsumer(
                         GreyhoundConsumer.with(
-                                customPropsTopic,
-                                customPropsGroup,
+                                topic,
+                                group,
+                                aBlockingRecordHandler(value -> {
+                                }),
+                                new IntegerDeserializer(),
+                                new StringDeserializer())
+                                .withOffsetReset(OffsetReset.Latest)
+                                .withErrorHandler(ErrorHandler.NoOp())
+                                .withMaxParallelism(1));
+        try (GreyhoundProducer producer = producerBuilder.build()) {
+            CompletableFuture<OffsetAndMetadata> producerFuture = producer.produce(
+                    new ProducerRecord<>(topic, 123, "producer custom props max request size"),
+                    new IntegerSerializer(),
+                    new StringSerializer());
+            producerFuture.join();
+            fail("should throw CompletionException with RecordTooLargeException root cause");
+        } catch (CompletionException completionException) {
+            KafkaError kafkaError = (KafkaError) completionException.getCause();
+            assertTrue(kafkaError.getCause() instanceof RecordTooLargeException);
+        }
+    }
+
+    @Test
+    public void configure_consumer_with_custom_props() throws Exception {
+        int numOfMessages = 1;
+        List<ConsumerRecord<Integer, String>> consumedRecords = new LinkedList<>();
+        CountDownLatch lock = new CountDownLatch(numOfMessages);
+        GreyhoundConfig producerConfig = new GreyhoundConfig(environment.kafka().bootstrapServers());
+        GreyhoundConfig consumerConfig = new GreyhoundConfig(environment.kafka().bootstrapServers(), new HashMap<String, String>() {
+            {
+                put("max.poll.interval.ms", "0");
+            }
+        });
+        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(producerConfig);
+        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(consumerConfig)
+                .withConsumer(
+                        GreyhoundConsumer.with(
+                                topic,
+                                group,
                                 aBlockingRecordHandler(value -> {
                                     consumedRecords.add(value);
                                     lock.countDown();
@@ -290,22 +319,11 @@ public class GreyhoundBuilderTest {
                                 .withOffsetReset(OffsetReset.Latest)
                                 .withErrorHandler(ErrorHandler.NoOp())
                                 .withMaxParallelism(1));
-
         try (GreyhoundConsumers ignored = consumersBuilder.build();
              GreyhoundProducer producer = producerBuilder.build()) {
-
-            for (int i = 0; i < numOfMessages; i++) {
-                CompletableFuture<OffsetAndMetadata> producerFuture = producer.produce(
-                        new ProducerRecord<>(customPropsTopic, 123, "custom props hello world" + i),
-                        new IntegerSerializer(),
-                        new StringSerializer());
-                producerFuture.join();
-            }
-
-            boolean consumedAll = lock.await(2_000, TimeUnit.MILLISECONDS);
-
-            assertFalse(consumedAll);
-            assertFalse(consumedRecords.size() == numOfMessages);
+            fail("should throw Exception");
+        } catch (Throwable throwable) {
+            assertTrue(throwable.toString().contains("Invalid value 0 for configuration max.poll.interval.ms: Value must be at least 1"));
         }
     }
 
