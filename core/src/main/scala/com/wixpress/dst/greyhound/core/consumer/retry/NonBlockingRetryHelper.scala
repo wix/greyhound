@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.core.consumer.retry.RetryAttempt.{RetryAttempt
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.{Group, Headers, Topic}
+import com.wixpress.dst.greyhound.core.{Group, Headers, Topic, durationDeserializer, instantDeserializer}
 import zio.clock.Clock
 import zio.duration.Duration
 import zio.{Chunk, UIO, URIO, _}
@@ -36,10 +36,6 @@ object NonBlockingRetryHelper {
 
     def policy(topic: Topic): NonBlockingBackoffPolicy =
       retryConfig.map(_.nonBlockingBackoffs(originalTopic(topic, group))).getOrElse(NonBlockingBackoffPolicy.empty)
-
-    private val longDeserializer = StringSerde.mapM((str: String) => Task(str.toLong))
-    private val instantDeserializer = longDeserializer.map(Instant.ofEpochMilli)
-    private val durationDeserializer = longDeserializer.map(Duration(_, MILLISECONDS))
 
     override def retryTopicsFor(topic: Topic): Set[Topic] =
       policy(topic).intervals.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt")
@@ -150,7 +146,13 @@ case class RetryAttempt(originalTopic: Topic,
                         submittedAt: Instant,
                         backoff: Duration) {
 
-  def sleep: URIO[Clock, Unit] = currentTime.flatMap { now =>
+  def sleep: URIO[Clock, Unit] =
+    RetryUtil.sleep(submittedAt, backoff)
+}
+
+object RetryUtil {
+  def sleep(submittedAt: Instant, backoff: Duration): URIO[Clock, Unit] =
+    currentTime.flatMap { now =>
     val expiresAt = submittedAt.plus(backoff.asJava)
     val sleep = JavaDuration.between(now, expiresAt)
     clock.sleep(Duration.fromJava(sleep))
