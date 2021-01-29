@@ -268,18 +268,6 @@ public class GreyhoundBuilderTest {
             }
         });
         GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
-        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
-                .withConsumer(
-                        GreyhoundConsumer.with(
-                                topic,
-                                group,
-                                aBlockingRecordHandler(value -> {
-                                }),
-                                new IntegerDeserializer(),
-                                new StringDeserializer())
-                                .withOffsetReset(OffsetReset.Latest)
-                                .withErrorHandler(ErrorHandler.NoOp())
-                                .withMaxParallelism(1));
         try (GreyhoundProducer producer = producerBuilder.build()) {
             CompletableFuture<OffsetAndMetadata> producerFuture = producer.produce(
                     new ProducerRecord<>(topic, 123, "producer custom props max request size"),
@@ -294,17 +282,15 @@ public class GreyhoundBuilderTest {
     }
 
     @Test
-    public void configure_consumer_with_custom_props() throws Exception {
+    public void configure_consumer_with_max_poll_interval_ms_custom_props() throws Exception {
         int numOfMessages = 1;
         List<ConsumerRecord<Integer, String>> consumedRecords = new LinkedList<>();
         CountDownLatch lock = new CountDownLatch(numOfMessages);
-        GreyhoundConfig producerConfig = new GreyhoundConfig(environment.kafka().bootstrapServers());
         GreyhoundConfig consumerConfig = new GreyhoundConfig(environment.kafka().bootstrapServers(), new HashMap<String, String>() {
             {
                 put("max.poll.interval.ms", "0");
             }
         });
-        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(producerConfig);
         GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(consumerConfig)
                 .withConsumer(
                         GreyhoundConsumer.with(
@@ -319,8 +305,7 @@ public class GreyhoundBuilderTest {
                                 .withOffsetReset(OffsetReset.Latest)
                                 .withErrorHandler(ErrorHandler.NoOp())
                                 .withMaxParallelism(1));
-        try (GreyhoundConsumers ignored = consumersBuilder.build();
-             GreyhoundProducer producer = producerBuilder.build()) {
+        try (GreyhoundConsumers ignored = consumersBuilder.build()) {
             fail("should throw Exception");
         } catch (Throwable throwable) {
             assertTrue(throwable.toString().contains("Invalid value 0 for configuration max.poll.interval.ms: Value must be at least 1"));
