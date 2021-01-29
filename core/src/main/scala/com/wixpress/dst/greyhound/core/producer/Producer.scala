@@ -39,6 +39,8 @@ trait ProducerR[-R] { self =>
 
   def shutdown: UIO[Unit] = UIO.unit
 
+  def attributes: Map[String, String] = Map.empty
+
   private def serialized[V, K](record: ProducerRecord[K, V],
                                keySerializer: Serializer[K],
                                valueSerializer: Serializer[V],
@@ -62,10 +64,10 @@ object Producer {
   private val serializer = new ByteArraySerializer
   type Producer = ProducerR[Any]
 
-  def make(config: ProducerConfig): RManaged[Blocking, Producer] =
-    makeR[Any](config)
+  def make(config: ProducerConfig, attrs: Map[String, String] = Map.empty): RManaged[Blocking, Producer] =
+    makeR[Any](config, attrs)
 
-  def makeR[R](config: ProducerConfig): RManaged[Blocking, ProducerR[R]] = {
+  def makeR[R](config: ProducerConfig, attrs: Map[String, String] = Map.empty): RManaged[Blocking, ProducerR[R]] = {
     val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
       new ProducerR[R] {
@@ -97,6 +99,8 @@ object Producer {
             }))
               .catchAll(e => produceCompletePromise.complete(ProducerError(e)))
           } yield (produceCompletePromise.await)
+
+        override def attributes: Map[String, String] = attrs
       }
     }
   }
@@ -107,12 +111,18 @@ object ProducerR {
     def provide(env: R) = new ProducerR[Any] {
       override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
         producer.produceAsync(record).provideSome[Blocking](_.union[R](env))
+
+      override def attributes: Map[String, String] = producer.attributes
+
+      override def shutdown: UIO[Unit] = producer.shutdown
     }
     def onShutdown(onShutdown: => UIO[Unit]): ProducerR[R] = new ProducerR[R] {
       override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
         producer.produceAsync(record)
 
       override def shutdown: UIO[Unit] = onShutdown *> producer.shutdown
+
+      override def attributes: Map[String, String] = producer.attributes
     }
   }
 }

@@ -109,6 +109,12 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
       }
 
   override def assignment: Task[Set[TopicPartition]] = internal.assignment
+
+  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] =
+    internal.endOffsets(partitions)
+
+  override def position(topicPartition: TopicPartition): Task[Offset] =
+    internal.position(topicPartition)
 }
 
 object ReportingConsumer {

@@ -24,6 +24,8 @@ trait AdminClient {
   def numberOfBrokers: RIO[Blocking, Int]
 
   def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]]
+
+  def listGroups(): RIO[Blocking, Set[String]]
 }
 
 case class TopicPropertiesResult(partitions: Int, properties: Map[String, String])
@@ -79,6 +81,10 @@ object AdminClient {
           new NewTopic(config.name, config.partitions, config.replicationFactor.toShort)
             .configs(config.propertiesMap.asJava)
 
+        override def listGroups(): RIO[Blocking, Set[String]] = for {
+          result <- effectBlocking(client.listConsumerGroups())
+          groups <- result.valid().asZio
+        } yield groups.asScala.map(_.groupId()).toSet
       }
     }
   }

@@ -18,7 +18,7 @@ object BlockingStateResolver {
           mergedBlockingState <- blockingStateRef.modify { state =>
             val topicPartitionBlockingState = state.get(TopicPartitionTarget(topicPartition))
             val topicBlockingState = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
-            val mergedBlockingState = topicPartitionBlockingState.map{
+            val mergedBlockingState = topicPartitionBlockingState.map {
               case IgnoringAll => IgnoringAll
               case IgnoringOnce => IgnoringOnce
               case InternalBlocking => InternalBlocking
@@ -27,10 +27,10 @@ object BlockingStateResolver {
             }.getOrElse(topicBlockingState)
             val shouldBlock = shouldBlockFrom(mergedBlockingState)
             val isBlockedAlready = mergedBlockingState match {
-              case _:BlockingState.Blocked[K,V] => true
+              case _: BlockingState.Blocked[K, V] => true
               case _ => false
             }
-            val updatedState = if(shouldBlock && !isBlockedAlready) {
+            val updatedState = if (shouldBlock && !isBlockedAlready) {
               state.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record.key, record.value, record.headers, topicPartition, record.offset))
             } else
               state
@@ -68,7 +68,7 @@ object BlockingStateResolver {
               case _ => false
             })
 
-            ((),prevState.updated(TopicTarget(topic), blockingState) ++ targetsToUpdate.mapValues(_ => blockingState))
+            ((), prevState.updated(TopicTarget(topic), blockingState) ++ targetsToUpdate.mapValues(_ => blockingState))
           })
         }
 
@@ -87,13 +87,18 @@ object BlockingStateResolver {
 
 trait BlockingStateResolver {
   def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics with Blocking, Boolean]
+
   def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics with Blocking, Unit]
 }
 
 sealed trait BlockingStateCommand
 
 case class IgnoreOnceFor(topicPartition: TopicPartition) extends BlockingStateCommand
+
 case class IgnoreAllFor(topicPartition: TopicPartition) extends BlockingStateCommand
+
 case class BlockErrorsFor(topicPartition: TopicPartition) extends BlockingStateCommand
+
 case class IgnoreAll(topic: Topic) extends BlockingStateCommand
+
 case class BlockErrors(topic: Topic) extends BlockingStateCommand

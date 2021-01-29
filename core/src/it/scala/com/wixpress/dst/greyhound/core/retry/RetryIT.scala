@@ -132,11 +132,11 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       eventually {
         runtime.unsafeRun(firstMessageCallCount.get) === 1
         runtime.unsafeRun(secondPartitionCallCount.get) === numOfMessages
-        runtime.unsafeRun(consumer.state).dispatcherState.totalQueuedTasksPerTopic(topic) === (numOfMessages - 1)
+        runtime.unsafeRun(consumer.state).eventLoopState.dispatcherState.totalQueuedTasksPerTopic(topic) === (numOfMessages - 1)
       }
       eventually(10, 1.second.asScala) {
         runtime.unsafeRun(firstMessageCallCount.get) === 2
-        runtime.unsafeRun(consumer.state).dispatcherState.totalQueuedTasksPerTopic(topic) === 0
+        runtime.unsafeRun(consumer.state).eventLoopState.dispatcherState.totalQueuedTasksPerTopic(topic) === 0
       }
       resource.release()
       ok

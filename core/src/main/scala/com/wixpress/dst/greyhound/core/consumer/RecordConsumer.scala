@@ -35,6 +35,8 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def setBlockingState(command: BlockingStateCommand): RIO[Env, Unit]
 
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
+
   def waitForCurrentRecordsCompletion: UIO[Unit]
 }
 
@@ -84,12 +86,15 @@ object RecordConsumer {
         blockingStateResolver.setBlockingState(command)
       }
 
+      override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
+        consumer.endOffsets(partitions)
+
       override def waitForCurrentRecordsCompletion: UIO[Unit] = eventLoop.waitForCurrentRecordsCompletion
 
       override def state: UIO[RecordConsumerExposedState] = for {
-        dispatcherState <- eventLoop.state
+        elState <- eventLoop.state
         blockingStateMap <- blockingState.get
-      } yield RecordConsumerExposedState(dispatcherState, config.clientId, blockingStateMap)
+      } yield RecordConsumerExposedState(elState, config.clientId, blockingStateMap)
 
       override def topology: UIO[RecordConsumerTopology] =
         consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(config.group, subscription))
@@ -171,8 +176,13 @@ object RecordConsumerMetric {
 
 }
 
-case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, consumerId: String, blockingState: Map[BlockingTarget, BlockingState]) {
-  def topics = dispatcherState.topics
+case class RecordConsumerExposedState(eventLoopState: EventLoopExposedState, consumerId: String,
+                                      blockingState: Map[BlockingTarget, BlockingState]) {
+  /* List of consumed topics so far */
+  def topics = eventLoopState.dispatcherState.topics
+
+  /* The latest offset submitted for execution per topic-partition */
+  def eventLoopLatestOffsets = eventLoopState.latestOffsets
 }
 
 case class RecordConsumerTopology(group: Group, subscription: ConsumerSubscription)

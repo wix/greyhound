@@ -18,6 +18,7 @@ import scala.collection.JavaConverters._
 import scala.util.Random
 
 trait Consumer {
+
   def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
 
   def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
@@ -25,6 +26,8 @@ trait Consumer {
   def poll(timeout: Duration): RIO[Blocking with GreyhoundMetrics, Records]
 
   def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit]
+
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]]
 
   def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect]
 
@@ -38,6 +41,8 @@ trait Consumer {
     val partition = TopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }
+
+  def position(topicPartition: TopicPartition): Task[Offset]
 
   def assignment: Task[Set[TopicPartition]]
 }
@@ -75,6 +80,10 @@ object Consumer {
           c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
         }
 
+      override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] =
+        withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
+        .map(_.asScala.map { case (tp: KafkaTopicPartition, o: java.lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
+
       override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
       }
@@ -103,6 +112,9 @@ object Consumer {
         withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset)).refineOrDie {
           case e: IllegalStateException => e
         }
+
+      override def position(topicPartition: TopicPartition): Task[Offset] =
+        withConsumer(_.position(topicPartition.asKafka))
 
       override def assignment: Task[Set[TopicPartition]] = {
         withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
@@ -199,9 +211,8 @@ object UnsafeOffsetOperations {
     }
 
     override def position(partition: TopicPartition,
-                          timeout: Duration): Offset = {
+                          timeout: Duration): Offset =
       consumer.position(partition.asKafka, timeout)
-    }
 
     override def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit = {
       consumer.commitSync(kafkaOffsets(offsets), timeout)
