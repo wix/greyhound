@@ -88,7 +88,7 @@ object LocalBufferProducer {
               .as(msgs)
         )
         .tap(r => ZIO.whenCase(r.size) {
-          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(1.millis) // this waits until there are more messages in buffer
+          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(10.millis) // this waits until there are more messages in buffer
           case x if x <= 10 => sleep(10.millis)
         })
         .catchAllCause { e: Cause[Throwable] =>
