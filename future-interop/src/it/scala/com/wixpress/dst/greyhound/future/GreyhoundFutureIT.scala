@@ -16,7 +16,6 @@ import com.wixpress.dst.greyhound.future.ContextEncoder.aHeaderContextEncoder
 import com.wixpress.dst.greyhound.future.ErrorHandler.anErrorHandler
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer._
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
-import org.apache.kafka.common.errors.RecordTooLargeException
 import org.specs2.concurrent.ExecutionEnv
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.{AfterAll, BeforeAll, Scope}

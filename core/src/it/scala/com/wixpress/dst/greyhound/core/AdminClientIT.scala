@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.CleanupPolicy.Delete
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.testkit.ITEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv.{Env, TestResources, testResources}
 import org.apache.kafka.common.errors.InvalidTopicException
 import zio.duration.Duration.fromScala
-import zio.{Chunk, Ref, UIO, UManaged, ZIO}
+import zio.{Chunk, Ref, UIO, UManaged}
 
 import scala.concurrent.duration._
 

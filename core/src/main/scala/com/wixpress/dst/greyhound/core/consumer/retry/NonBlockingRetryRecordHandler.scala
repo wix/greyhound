@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.core.producer.ProducerR
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration._
-import zio.{Chunk, ZIO,UIO}
+import zio.{Chunk, ZIO}
 
 trait NonBlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any]
