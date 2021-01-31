@@ -6,7 +6,7 @@ To add a dependency on greyhound-future using **Sbt**, use the following:
 
 ```sbt
 libraryDependencies ++= Seq(
-  "com.wix" % "greyhound-future_2.12" % "0.1.5",
+  "com.wix" % "greyhound-future_2.12" % "0.1.2",
   // other dependencies separated by commas
 )
 ```
@@ -17,7 +17,7 @@ To add a dependency using **Maven**:
 <dependency>
   <groupId>com.wix</groupId>
   <artifactId>greyhound-future_2.12</artifactId>
-  <version>0.1.5</version>
+  <version>0.1.2</version>
 </dependency>
 ```
 
@@ -25,7 +25,7 @@ To add a dependency using **Gradle**:
 
 ```gradle
 dependencies {
-  implementation("com.wix.guava:greyhound-future_2.12:0.1.5")
+  implementation("com.wix.guava:greyhound-future_2.12:0.1.2")
   // other dependencies
 }
 ```
@@ -37,7 +37,7 @@ To add a dependency on greyhound-java using **Maven**, use the following:
 <dependency>
   <groupId>com.wix</groupId>
   <artifactId>greyhound-java</artifactId>
-  <version>0.1.5</version>
+  <version>0.1.2</version>
 </dependency>
 ```
 
@@ -45,7 +45,7 @@ To add a dependency using **Gradle**:
 
 ```gradle
 dependencies {
-  implementation("com.wix.guava:greyhound-java:0.1.5")
+  implementation("com.wix.guava:greyhound-java:0.1.2")
   // other dependencies
 }
 ```
@@ -55,7 +55,7 @@ To add a dependency on greyhound with zio using **Sbt**, use the following:
 
 ```sbt
 libraryDependencies ++= Seq(
-  "com.wix" % "greyhound-core_2.12" % "0.1.5",
+  "com.wix" % "greyhound-core_2.12" % "0.1.2",
   // other dependencies separated by commas
 )
 ```
@@ -66,7 +66,7 @@ To add a dependency using **Maven**:
 <dependency>
   <groupId>com.wix</groupId>
   <artifactId>greyhound-core_2.12</artifactId>
-  <version>0.1.5</version>
+  <version>0.1.2</version>
 </dependency>
 ```
 
@@ -74,7 +74,7 @@ To add a dependency using **Gradle**:
 
 ```gradle
 dependencies {
-  implementation("com.wix.guava:greyhound-core_2.12:0.1.5")
+  implementation("com.wix.guava:greyhound-core_2.12:0.1.2")
   // other dependencies
 }
 ```
