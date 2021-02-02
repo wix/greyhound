@@ -3,8 +3,8 @@ package com.wixpress.dst.greyhound.core.consumer
 import java.time.{Clock, Duration, ZoneId}
 import java.util.concurrent.atomic.AtomicReference
 
+import com.wixpress.dst.greyhound.core.TopicPartition
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CommittedMissingOffsets
-import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import org.specs2.mock.Mockito
 import org.specs2.mutable.SpecificationWithJUnit
