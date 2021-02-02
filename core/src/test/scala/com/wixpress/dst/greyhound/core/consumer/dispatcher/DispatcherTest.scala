@@ -1,12 +1,12 @@
 package com.wixpress.dst.greyhound.core.consumer.dispatcher
 
-import com.wixpress.dst.greyhound.core.Headers
+import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric.RecordHandled
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.{Dispatcher, SubmitResult}
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult.Rejected
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit._
 import org.specs2.specification.Scope

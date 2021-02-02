@@ -2,8 +2,8 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import java.util.concurrent.TimeUnit
 
-import com.wixpress.dst.greyhound.core.Group
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile

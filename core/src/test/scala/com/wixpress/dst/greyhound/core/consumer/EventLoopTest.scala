@@ -6,10 +6,10 @@ import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
-import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic}
+import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic, TopicPartition}
 import zio._
 import zio.blocking.Blocking
 import zio.duration._
