@@ -6,12 +6,12 @@ import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
-import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
+import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig, TopicPartition}
 import com.wixpress.dst.greyhound.testkit.ITEnv._
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio._

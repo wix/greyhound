@@ -2,11 +2,10 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
 
-import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.{TopicPartition, _}
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
-import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.duration.Duration

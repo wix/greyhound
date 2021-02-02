@@ -6,10 +6,10 @@ import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic, TopicPartition}
 import zio._
 import zio.clock.Clock
 import zio.duration.{Duration, _}
@@ -49,7 +49,7 @@ object Dispatcher {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
         for {
           _ <- report(SubmittingRecord(group, clientId, record))
-          partition = TopicPartition(record)
+          partition = RecordTopicPartition(record)
           worker <- workerFor(partition)
           submitted <- worker.submit(record)
         } yield if (submitted) Submitted else Rejected
