@@ -3,8 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer
 import java.time.Clock
 
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CommittedMissingOffsets
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset}
-import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.{URIO, ZIO}

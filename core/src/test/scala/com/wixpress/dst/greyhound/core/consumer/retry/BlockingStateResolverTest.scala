@@ -1,8 +1,8 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.Headers
+import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{bytes, offset, partition, randomTopicName}
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}

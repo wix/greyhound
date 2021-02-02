@@ -5,7 +5,7 @@ import java.{time, util}
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.serialization.Deserializer
@@ -38,7 +38,7 @@ trait Consumer {
   def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
   def pause(record: ConsumerRecord[_, _]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] = {
-    val partition = TopicPartition(record)
+    val partition = RecordTopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }
 

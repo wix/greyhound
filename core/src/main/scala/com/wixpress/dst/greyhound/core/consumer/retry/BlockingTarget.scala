@@ -1,7 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.Topic
-import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
+import com.wixpress.dst.greyhound.core.{Topic, TopicPartition}
 
 sealed trait BlockingTarget {
   def topic: Topic
