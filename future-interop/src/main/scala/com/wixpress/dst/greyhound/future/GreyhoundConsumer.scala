@@ -1,11 +1,9 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, SerializationError}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, SerializationError, RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumerConfig}
-import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.{ClientId, Deserializer, Group, NonEmptySet}
-import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handle
+import com.wixpress.dst.greyhound.future.GreyhoundConsumer.{Handler, Handle}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Chunk, Task, ZIO}
 
@@ -21,18 +19,17 @@ case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
                                    errorHandler: ErrorHandler[K, V] = ErrorHandler.NoOp[K, V],
                                    mutateConsumerConfig:  RecordConsumerConfig => RecordConsumerConfig = identity) {
 
-  def recordHandler: Handler[Env] =
+  def recordHandler: Handler =
     CoreRecordHandler(handle)
       .withErrorHandler { case (error, record) =>
-        ZIO.fromFuture(_ => errorHandler.onUserException(error, record))
-          .flatMap(_ => ZIO.fail(error))
+        ZIO.fromFuture(_ => errorHandler.onUserException(error, record)) *> ZIO.fail(error)
       }
       .withDeserializers(keyDeserializer, valueDeserializer)
       .withErrorHandler { case (error, record) =>
         error match {
           case Left(serializationError) =>
-            ZIO.fromFuture(_ => errorHandler.onSerializationError(serializationError, record)).catchAll(_ => ZIO.unit)
-          case _ => ZIO.unit
+            ZIO.fromFuture(_ => errorHandler.onSerializationError(serializationError, record)).ignore
+          case Right(ex) => ZIO.fail(ex)
         }
       }
 
@@ -41,6 +38,7 @@ case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
 }
 
 object GreyhoundConsumer {
+  type Handler = com.wixpress.dst.greyhound.core.consumer.domain.RecordHandler[Env, Throwable, Chunk[Byte], Chunk[Byte]]
   type Handle[K, V] = ConsumerRecord[K, V] => Task[Any]
 
   def aRecordHandler[K, V](handler: RecordHandler[K, V]): Handle[K, V] =
