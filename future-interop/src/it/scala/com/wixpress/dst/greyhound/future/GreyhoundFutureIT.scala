@@ -72,6 +72,48 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv)
     handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(1.minute)
   }
 
+  trait RetryContext extends Ctx {
+    val promise = Promise[ConsumerRecord[Int, String]]
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers)
+    val successfulAttempt = 3
+    val atomicInteger = new AtomicInteger(successfulAttempt)
+    val consumer = GreyhoundConsumer(
+      initialTopics = Set(topic),
+      group = "group-1",
+      clientId = "client-id-1",
+      handle = aRecordHandler {
+        new RecordHandler[Int, String] {
+          override def handle(record: ConsumerRecord[Int, String])(implicit ec: ExecutionContext): Future[Any] =
+            atomicInteger.decrementAndGet() match {
+              case i if i > 0 => Future.failed(new RuntimeException("Oops"))
+              case _ => Future.successful(promise.success(record.copy(value = "Promise fulfilled")))
+            }
+        }
+      },
+      keyDeserializer = Serdes.IntSerde,
+      valueDeserializer = Serdes.StringSerde)
+  }
+
+  "consume a message with nonblocking retry policy" in new RetryContext {
+    val result = for {
+      consumers <- GreyhoundConsumersBuilder(config)
+        .withConsumer(consumer.withNonBlockingRetry(5.millis, 5.millis))
+        .build
+      producer <- GreyhoundProducerBuilder(config).build
+      _ <- producer.produce(
+        record = ProducerRecord(topic, "Promise!", Some(123)),
+        keySerializer = Serdes.IntSerde,
+        valueSerializer = Serdes.StringSerde)
+      promiseResult <- promise.future
+      _ <- producer.shutdown
+      _ <- consumers.shutdown
+    } yield promiseResult must(
+      beRecordWithKey(123) and
+        beRecordWithValue("Promise fulfilled"))
+
+    result.awaitFor(1.minute)
+  }
+
   "propagate context from producer to consumer" in new Ctx {
     implicit val context = Context("some-context")
 
