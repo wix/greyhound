@@ -1,12 +1,14 @@
 package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, SerializationError, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.{ClientId, Deserializer, Group, NonEmptySet}
-import com.wixpress.dst.greyhound.future.GreyhoundConsumer.{Handler, Handle}
+import com.wixpress.dst.greyhound.future.GreyhoundConsumer.{Handle, Handler}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Chunk, Task, ZIO}
 
+import scala.concurrent.duration.Duration
 import scala.concurrent.{ExecutionContext, Future}
 
 case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
@@ -35,6 +37,12 @@ case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
 
   def withConsumerMutate(mutateConsumerConfig:  RecordConsumerConfig => RecordConsumerConfig) =
     copy(mutateConsumerConfig = mutateConsumerConfig)
+
+  def withRetryConfig(retryConfig: RetryConfig) =
+    withConsumerMutate(_.copy(retryConfig = Some(retryConfig)))
+
+  def withNonBlockingRetry(firstRetry: Duration, otherRetries: Duration*) =
+    withRetryConfig(RetryConfig.nonBlockingRetry(firstRetry, otherRetries: _*))
 }
 
 object GreyhoundConsumer {
