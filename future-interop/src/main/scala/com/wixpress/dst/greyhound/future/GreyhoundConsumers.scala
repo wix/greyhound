@@ -3,7 +3,6 @@ package com.wixpress.dst.greyhound.future
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumer, RecordConsumerConfig}
-import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
 import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Exit, ZIO, ZManaged}
@@ -19,17 +18,20 @@ trait GreyhoundConsumers extends Closeable {
 }
 
 case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
-                                     handlers: Map[Group, (OffsetReset, ClientId, NonEmptySet[Topic], Handler[Env])] = Map.empty) {
+                                     handlers: Map[(Group, ClientId), (OffsetReset, NonEmptySet[Topic], Handler[Env], RecordConsumerConfig => RecordConsumerConfig)] = Map.empty) {
 
-  def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder = {
-    copy(handlers = handlers + (consumer.group -> (consumer.offsetReset, consumer.clientId, consumer.initialTopics, consumer.recordHandler)))
-  }
+  def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder =
+    copy(handlers = handlers + ((consumer.group, consumer.clientId) -> (consumer.offsetReset, consumer.initialTopics, consumer.recordHandler, consumer.mutateConsumerConfig)))
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
       runtime <- ZIO.runtime[Env]
-      makeConsumer = ZManaged.foreach(handlers) { case (group, (offsetReset, clientId, initialTopics, handler)) =>
-        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, ConsumerSubscription.Topics(initialTopics),  offsetReset = offsetReset, clientId = clientId), handler)
+      makeConsumer = ZManaged.foreach(handlers) { case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
+        RecordConsumer.make(
+          handler = handler,
+          config = mutateConsumerConfig(
+            RecordConsumerConfig(config.bootstrapServers, group, ConsumerSubscription.Topics(initialTopics),
+              offsetReset = offsetReset, clientId = clientId)))
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire

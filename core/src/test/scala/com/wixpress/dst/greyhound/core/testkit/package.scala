@@ -1,27 +1,43 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import zio.Schedule.{doUntil, spaced}
+import com.wixpress.dst.greyhound.core.producer.ProducerRecord
+import zio.Schedule._
+import zio.{Chunk, Has, RIO, Ref, Schedule, UIO, ZIO}
 import zio.clock.Clock
 import zio.duration._
-import zio.{Has, RIO, Ref, UIO, ZIO}
 
 package object testkit {
   type TestMetrics = Has[TestMetrics.Service] with GreyhoundMetrics
 
   def eventuallyZ[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean): ZIO[R, Throwable, Unit] =
-    eventuallyTimeout(f)(predicate)(4.seconds)
+    eventuallyTimeoutFail(f)(predicate)(4.seconds)
 
-  def eventuallyTimeout[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Unit] =
+  def eventuallyTimeoutFail[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Unit] =
+    for {
+      timeoutRes <- eventuallyTimeout(f)(predicate)(timeout)
+      result = timeoutRes.map(_._2)
+      _ <- ZIO.when(timeoutRes.isEmpty)(ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result")))
+    } yield ()
+
+  def eventuallyTimeout[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Option[(Long, T)]] =
     for {
       resultRef <- Ref.make[Option[T]](None)
       timeoutRes <- f.flatMap(r =>
         resultRef.set(Some(r)) *> UIO(r))
-        .repeat(spaced(100.millis) && doUntil(predicate))
+        .repeat(spaced(100.millis) && Schedule.recurUntil(predicate))
         .timeout(timeout)
         .provideSomeLayer[R](Clock.live)
-      result <- resultRef.get
-      _ <- ZIO.when(timeoutRes.isEmpty)(ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result")))
-    } yield ()
+    } yield timeoutRes
 
+  implicit class StringOps(val str: String) {
+    def bytesChunk = Chunk.fromArray(str.getBytes("UTF8"))
+  }
+  implicit class ByteChunkOps(val chunk: Chunk[Byte]) {
+    def asString = new String(chunk.toArray, "UTF8")
+  }
+  implicit class ProducerRecordOps(val record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) {
+    def valueString = record.value.fold("")(_.asString)
+    def headerStr(key: String) = record.headers.headers.get(key).fold("")(_.asString)
+  }
 }

@@ -4,13 +4,14 @@ import java.util.concurrent.Executor
 
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
-import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
+import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.retry.{NonBlockingBackoffPolicy, RetryConfigForTopic, RetryConfig => CoreRetryConfig}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
+import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
+import com.wixpress.dst.greyhound.future.GreyhoundRuntime
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio._
 import zio.blocking.Blocking.Service.live.blockingExecutor
-import com.wixpress.dst.greyhound.core.zioutils.ZManagedSyntax._
 
 import scala.collection.mutable.ListBuffer
 
@@ -27,8 +28,9 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
     for {
       runtime <- ZIO.runtime[Env]
       executor = createExecutor
-      makeConsumer = ZManaged.foreach(handlers(executor)) { case (group, (offsetReset, initialTopics, handler)) =>
-        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, Topics(initialTopics), offsetReset = offsetReset), handler)
+      makeConsumer = ZManaged.foreach(handlers(executor, runtime)) { case (group, javaConsumerConfig) =>
+        import javaConsumerConfig._
+        RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, Topics(initialTopics), offsetReset = offsetReset, retryConfig = retryConfig, extraProperties = config.extraProperties), handler)
       }
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire
@@ -49,15 +51,15 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
   }
 
   private def createExecutor =
-      new Executor {
-        override def execute(command: Runnable): Unit =
-          blockingExecutor.submit(command)
-      }
+    new Executor {
+      override def execute(command: Runnable): Unit =
+        blockingExecutor.submit(command)
+    }
 
-  private def handlers(executor: Executor): Map[Group, (consumer.OffsetReset, NonEmptySet[Topic], Handler[Env])] =
-    consumers.foldLeft(Map.empty[Group, (core.consumer.OffsetReset, NonEmptySet[Topic], Handler[Env])]) { (acc, consumer) =>
+  private def handlers(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]): Map[Group, JavaConsumerConfig] =
+    consumers.foldLeft(Map.empty[Group, JavaConsumerConfig]) { (acc, consumer) =>
       val (offsetReset, group) = (convert(consumer.offsetReset), consumer.group)
-      acc + (group -> (offsetReset, Set(consumer.initialTopic), consumer.recordHandler(executor)))
+      acc + (group -> JavaConsumerConfig(offsetReset, Set(consumer.initialTopic), consumer.recordHandler(executor, runtime), convertRetryConfig(consumer.retryConfig)))
     }
 
   private def convert(offsetReset: OffsetReset): core.consumer.OffsetReset =
@@ -65,4 +67,18 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
       case OffsetReset.Earliest => core.consumer.OffsetReset.Earliest
       case OffsetReset.Latest => core.consumer.OffsetReset.Latest
     }
+
+  private def convertRetryConfig(retryConfig: Option[RetryConfig]): Option[CoreRetryConfig] = {
+    import scala.collection.JavaConverters._
+
+    retryConfig.map(config ⇒ {
+      val forTopic = RetryConfigForTopic(
+        () ⇒ config.blockingBackoffs().asScala,
+        NonBlockingBackoffPolicy(config.nonBlockingBackoffs.asScala))
+
+      CoreRetryConfig({ case _ => forTopic }, None)
+    })
+  }
 }
+
+case class JavaConsumerConfig(offsetReset: consumer.OffsetReset, initialTopics: NonEmptySet[Topic], handler: CoreRecordHandler[Any, Any, Chunk[Byte], Chunk[Byte]], retryConfig: Option[CoreRetryConfig])

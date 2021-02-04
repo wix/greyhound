@@ -3,11 +3,11 @@ package(default_visibility = ["//visibility:public"])
 load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "assemble_maven", "deploy_maven")
 
 java_library(
-    name = "greyhound-java",
+    name = "greyhound-java-core",
     srcs = [
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-java:{pom_version}","manual"],
+    tags = ["maven_coordinates=com.wix:greyhound-java-core:{pom_version}","manual"],
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
@@ -15,6 +15,59 @@ java_library(
         "@org_apache_kafka_kafka_clients",
     ],
 )
+
+scala_library(
+    name = "greyhound-java",
+    srcs = [
+        "//java-interop/src/main/java/com/wixpress/dst/greyhound/scala:sources",
+    ],
+    tags = ["maven_coordinates=com.wix:greyhound-java:{pom_version}","manual"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//java-interop:greyhound-java-core",
+        "//core:greyhound-core",
+        "//future-interop:greyhound-future",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)
+
+assemble_maven(
+    name = "assemble-maven-java-core",
+    developers = {
+        "1": [
+            "name=Natan Silnitsky",
+            "email=natans@wix.com",
+            "organization=Wix",
+        ],
+        "2": [
+            "name=Noam Berman",
+            "email=noambe@wix.com",
+            "organization=Wix",
+        ],
+        "3": [
+            "name=Dmitry Karlinsky",
+            "email=dmitryka@wix.com",
+            "organization=Wix",
+        ],
+    },
+    license = "mit",
+    package = "{maven_packages}",
+    project_description = "Greyhound - Rich Kafka Client with Java API",
+    project_name = "Greyhound Java Core",
+    project_url = "https://github.com/wix/greyhound",
+    scm_url = "https://github.com/wix/greyhound.git",
+    target = "//java-interop:greyhound-java-core",
+    version_file = "//central-sync:VERSION",
+    tags = ["manual"],
+)
+
+deploy_maven(
+    name = "deploy-maven-java-core",
+    deployment_properties = "//central-sync:deployment.properties",
+    target = ":assemble-maven-java-core",
+    tags = ["manual"],
+)
+
 
 assemble_maven(
     name = "assemble-maven",

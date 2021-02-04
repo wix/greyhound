@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import java.util.concurrent.TimeUnit
 
+import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
@@ -19,7 +20,8 @@ trait BlockingRetryRecordHandler[V, K, R] {
 }
 
 private[retry] object BlockingRetryRecordHandler {
-  def apply[R, E, V, K](handler: RecordHandler[R, E, K, V],
+  def apply[R, E, V, K](group: Group,
+                        handler: RecordHandler[R, E, K, V],
                         retryConfig: RetryConfig,
                         blockingState: Ref[Map[BlockingTarget, BlockingState]],
                         nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
@@ -34,7 +36,7 @@ private[retry] object BlockingRetryRecordHandler {
           shouldBlock <- blockingStateResolver.resolve(record)
           shouldPollAgain <- if (shouldBlock) {
             clock.sleep(100.milliseconds) *>
-            currentTime(TimeUnit.MILLISECONDS).map(end =>
+              currentTime(TimeUnit.MILLISECONDS).map(end =>
                 PollResult(pollAgain = end - start < interval.toMillis, blockHandling = true))
           } else
             UIO(PollResult(pollAgain = false, blockHandling = false))
@@ -45,7 +47,7 @@ private[retry] object BlockingRetryRecordHandler {
         for {
           start <- currentTime(TimeUnit.MILLISECONDS)
           continueBlocking <- if (interval.toMillis > 100L) {
-            pollBlockingStateWithSuspensions(interval, start).doWhile(result => result.pollAgain).map(_.blockHandling)
+            pollBlockingStateWithSuspensions(interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
           } else {
             for {
               shouldBlock <- blockingStateResolver.resolve(record)
@@ -57,7 +59,7 @@ private[retry] object BlockingRetryRecordHandler {
 
       def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics with Blocking, Nothing, LastHandleResult] = {
         (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll {
-          case ex: NonRetryableException =>
+          case ex: NonRetriableException =>
             report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause))
               .as(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
           case error => interval.map { interval =>
@@ -67,18 +69,17 @@ private[retry] object BlockingRetryRecordHandler {
         }
       }
 
-      def maybeBackToStateBlocking = {
+      def maybeBackToStateBlocking =
         blockingState.modify(state => state.get(TopicPartitionTarget(topicPartition)).map {
           case IgnoringOnce => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
-          case _:Blocked[V, K] => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
+          case _: Blocked[V, K] => ((), state.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
           case _ => ((), state)
         }.getOrElse(((), state)))
-      }
 
-      if (nonBlockingHandler.isHandlingRetryTopicMessage(record)) {
+      if (nonBlockingHandler.isHandlingRetryTopicMessage(group,record)) {
         UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       } else {
-        val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs().map(Some(_)) :+ None
+        val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs(record.topic)().map(Some(_)) :+ None
         for {
           result <- foreachWhile(durationsIncludingForInvocationWithNoErrorHandling) { interval =>
             handleAndMaybeBlockOnErrorFor(interval)

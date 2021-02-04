@@ -1,5 +1,6 @@
 load("@rules_jvm_external//:defs.bzl", "maven_install")
 load("@rules_jvm_external//:specs.bzl", "maven","parse")
+load("//:import_external_alias.bzl", "import_external_alias")
 
 
 def dependency(coordinates,exclusions=None):
@@ -13,7 +14,7 @@ def dependency(coordinates,exclusions=None):
             exclusions = exclusions,
         )
 
-scala_version = "2.12.10"
+scala_version = "2.12.12"
 
 deps = [
     dependency("ch.qos.logback:logback-classic:1.1.11"),
@@ -31,10 +32,11 @@ deps = [
     dependency("com.typesafe.scala-logging:scala-logging_2.12:3.8.0"),
     dependency("com.yammer.metrics:metrics-core:2.2.0"),
     dependency("commons-cli:commons-cli:1.4"),
-    dependency("dev.zio:zio_2.12:1.0.0-RC21"),
-    dependency("dev.zio:zio-stacktracer_2.12:1.0.0-RC21"),
-    dependency("dev.zio:zio-streams_2.12:1.0.0-RC21"),
-    dependency("dev.zio:zio-test_2.12:1.0.0-RC21"),
+    dependency("dev.zio:zio_2.12:1.0.3"),
+    dependency("dev.zio:zio-stacktracer_2.12:1.0.3"),
+    dependency("dev.zio:zio-streams_2.12:1.0.3"),
+    dependency("dev.zio:zio-test_2.12:1.0.3"),
+    dependency("dev.zio:zio-test-junit_2.12:1.0.3"),
     dependency("junit:junit:4.13"),
     dependency("net.sf.jopt-simple:jopt-simple:5.0.4"),
     dependency("org.apache.curator:curator-test:2.12.0"),
@@ -58,7 +60,9 @@ deps = [
     dependency("org.specs2:specs2-fp_2.12:4.8.3"),
     dependency("org.specs2:specs2-junit_2.12:4.8.3"),
     dependency("org.specs2:specs2-matcher_2.12:4.8.3"),
+    dependency("org.specs2:specs2-mock_2.12:4.8.3"),
     dependency("org.xerial.snappy:snappy-java:1.1.7.1"),
+    dependency("com.kubukoz:better-tostring_" + scala_version +":0.2.4"),
 ]
 
 def dependencies():
@@ -72,3 +76,10 @@ def dependencies():
         generate_compat_repositories = True,
 #        maven_install_json = "//:maven_install.json",
     )
+    # this is a compiler plugin with full scala version in its maven artifact name
+    # so we create an alias without the minor scala version
+    import_external_alias(
+       name = "com_kubukoz_better_tostring_2_12",
+       actual = "@maven//:com_kubukoz_better_tostring_" + scala_version.replace(".", "_"),
+    )
+

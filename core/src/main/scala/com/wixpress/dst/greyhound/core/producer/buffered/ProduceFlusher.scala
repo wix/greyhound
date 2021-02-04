@@ -36,20 +36,20 @@ object ProduceFiberAsyncRouter {
               batchSize: Int): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
-      queues <- ZIO.foreach(0 until maxConcurrency)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
-      _ <- ZIO.foreach(queues.values)(q =>
+      queues <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
+      _ <- ZIO.foreach_(queues.values)(q =>
         fetchAndProduce(producer)(retryInterval, batchSize)(q)
           .forever
           .forkDaemon)
     } yield new ProduceFlusher[R] {
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
-      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] = {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
         val queueNum = Math.abs(record.key.getOrElse(Random.nextString(10)).hashCode % maxConcurrency)
 
         Promise.make[ProducerError, RecordMetadata].tap(promise =>
           queues(queueNum).offer(ProduceRequest(record, promise, currentTimeMillis + giveUpAfter.toMillis)) *>
-            usedFibers.update(_ + queueNum))
+            usedFibers.update(_ + queueNum)).map(_.await)
       }
     }
 
@@ -71,18 +71,18 @@ object ProduceFiberAsyncRouter {
   private def discardOldRequests(reqs: Seq[ProduceRequest]) =
     ZIO.foreach(reqs.filter(timeoutPassed))(reportError)
 
-  private def succeedOrRetry[R](producer: ProducerR[R], level: Int, retryInterval: Duration)(results: List[Option[(ProduceRequest, Either[ProducerError, RecordMetadata])]]) = {
+  private def succeedOrRetry[R](producer: ProducerR[R], level: Int, retryInterval: Duration)(results: Seq[Option[(ProduceRequest, Either[ProducerError, RecordMetadata])]]) = {
     val failures = results.collect { case Some((req, _@Left(_))) => req }
     val successes = results.collect { case Some((req, _@Right(value))) => (req, value) }
 
-    ZIO.foreach(successes) {
+    ZIO.foreach_(successes) {
       case (req, res) => req.succeed(res)
     } *>
       ZIO.when(failures.nonEmpty)(
         produceUntilResolution(producer)(level + 1)(retryInterval)(failures).delay(retryInterval))
   }
 
-  private def removeFinalFailures(results: List[(ProduceRequest, Either[ProducerError, RecordMetadata])]) =
+  private def removeFinalFailures(results: Seq[(ProduceRequest, Either[ProducerError, RecordMetadata])]) =
     ZIO.foreach(results) { case (req, res) =>
       res match {
         case Left(e) if (timeoutPassed(req) || nonRetriable(e.getCause)) =>
@@ -93,10 +93,10 @@ object ProduceFiberAsyncRouter {
       }
     }
 
-  private def awaitOnPromises(promises: List[(ProduceRequest, Promise[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, List[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
-    ZIO.foreach(promises) { case (req: ProduceRequest, res: Promise[ProducerError, RecordMetadata]) => res.await
-      .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-      .either.map(e => (req, e))
+  private def awaitOnPromises(promises: Seq[(ProduceRequest, IO[ProducerError, RecordMetadata])]): URIO[GreyhoundMetrics with ZEnv, Seq[(ProduceRequest, Either[ProducerError, RecordMetadata])]] =
+    ZIO.foreach(promises) { case (req: ProduceRequest, res: IO[ProducerError, RecordMetadata]) =>
+      res.tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
+        .either.map(e => (req, e))
     }
 
   private def reportError(req: ProduceRequest) =
@@ -109,8 +109,8 @@ object ProduceFiberSyncRouter {
   def make[R](producer: ProducerR[R], maxConcurrency: Int, giveUpAfter: Duration, retryInterval: Duration): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
-      queues <- ZIO.foreach(0 until maxConcurrency)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
-      _ <- ZIO.foreach(queues.values)(
+      queues <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
+      _ <- ZIO.foreach_(queues.values)(
         _.take
           .flatMap((req: ProduceRequest) =>
             ZIO.whenCase(timeoutPassed(req)) {
@@ -121,7 +121,7 @@ object ProduceFiberSyncRouter {
               case false =>
                 producer.produce(req.record)
                   .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-                  .retry(Schedule.spaced(retryInterval) && Schedule.doUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
+                  .retry(Schedule.spaced(retryInterval) && Schedule.recurUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
                   .tapBoth(req.fail, req.succeed)
             }.ignore
           )
@@ -132,26 +132,28 @@ object ProduceFiberSyncRouter {
 
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
-      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, Promise[ProducerError, RecordMetadata]] = {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
         val queueNum = Math.abs(record.key.getOrElse(Random.nextString(10)).hashCode % maxConcurrency)
 
         Promise.make[ProducerError, RecordMetadata].tap(promise =>
           queues(queueNum).offer(ProduceRequest(record, promise, currentTimeMillis + giveUpAfter.toMillis)) *>
-            usedFibers.update(_ + queueNum))
+            usedFibers.update(_ + queueNum)
+        ).map(_.await)
       }
     }
 }
 
 object Common {
-  private [producer] def nonRetriable(e: Throwable): Boolean = e match {
+  private[producer] def nonRetriable(e: Throwable): Boolean = e match {
     case _: InvalidTopicException => true
     case _: RecordBatchTooLargeException => true
     case _: UnknownServerException => true
     case _: OffsetMetadataTooLarge => true
     case _: RecordTooLargeException => true
+    case _: IllegalArgumentException => true
     case _ => false
   }
 
-  private [producer] def timeoutPassed(req: ProduceRequest): Boolean =
+  private[producer] def timeoutPassed(req: ProduceRequest): Boolean =
     currentTimeMillis > req.giveUpTimestamp
 }

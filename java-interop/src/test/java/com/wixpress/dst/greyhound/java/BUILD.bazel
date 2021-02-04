@@ -9,10 +9,13 @@ java_library(
         ":sources",
     ],
     deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
+        "//java-interop/src/main/java/com/wixpress/dst/greyhound/scala",
         "//java-interop/src/test/java/com/wixpress/dst/greyhound/java/testkit",
         "@junit_junit",
         "@org_apache_kafka_kafka_clients",
+        "@org_scala_lang_scala_library",
     ],
 )
 

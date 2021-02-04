@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.producer.buffered.buffers
 
+import java.io.File
 import java.nio.file.{FileAlreadyExistsException, Files, Paths}
 import java.sql.{Connection, ResultSet, Statement}
 import java.util.Base64
@@ -26,6 +27,7 @@ object H2LocalBuffer {
       cp <- effectBlocking(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
       connection <- effectBlocking(cp.getConnection())
       currentSequenceNumber <- Ref.make(0)
+      closedRef <- Ref.make(false)
       _ <- initDatabase(connection, currentSequenceNumber)(localPath, keepDeadMessages)
     } yield new LocalBuffer {
       override def enqueue(message: PersistedRecord): ZIO[Clock with Blocking, LocalBufferError, PersistedMessageId] =
@@ -54,7 +56,7 @@ object H2LocalBuffer {
           .mapError(LocalBufferError.apply)
 
       override def close: ZIO[Blocking, LocalBufferError, Unit] =
-        ZIO.when(!connection.isClosed)(
+        closedRef.set(true) *> ZIO.when(!connection.isClosed)(
           effectBlocking(connection.close()) *> effectBlocking(cp.dispose()))
           .mapError(LocalBufferError.apply)
 
@@ -75,6 +77,14 @@ object H2LocalBuffer {
             )
         }
           .mapError(LocalBufferError.apply)
+
+      override def cleanup: ZIO[Blocking, LocalBufferError, Unit] =
+        (effectBlocking(connection.close()) *>
+          effectBlocking(new File(s"$localPath.mv.db").delete()))
+          .catchAll(e => ZIO.fail(LocalBufferError(e)))
+          .unit
+
+      override def isOpen: UIO[Boolean] = closedRef.get.map(!_)
     })
       .toManaged(m => m.close.ignore)
 
@@ -88,9 +98,9 @@ object H2LocalBuffer {
         _ <- ZIO.when(!rs.next)(ZIO.fail(null))
         produceKey <- Task(Try(Chunk.fromArray(rs.getBytes(3))).toOption)
         topic = rs.getString(2)
-        producePartition <- Task(rs.getInt(4)).map(p => if (p >= 0) Option(p) else None)
+        producePartition <- Task(rs.getInt(4)).map(p => if (p != -1) Option(p) else None)
         id <- Task(rs.getLong(1))
-        encodedPayload = Try(Chunk.fromArray(rs.getBytes(5))).toOption.orNull
+        encodedPayload = Try(Chunk.fromArray(rs.getBytes(5))).toOption
         header <- decodeHeaders(rs.getString(6))
         submitted <- UIO(rs.getLong(9))
       } yield PersistedRecord(id, SerializableTarget(topic, producePartition, produceKey), EncodedMessage(encodedPayload, header), submitted))
@@ -108,7 +118,7 @@ object H2LocalBuffer {
   private def executeInsert(connection: Connection, currentSequenceNumber: Ref[Int])(message: PersistedRecord): RIO[Clock with Blocking, Int] =
     for {
       insertStatement <- effectBlocking(connection.prepareStatement(InsertQuery))
-      payloadBytes = Option(message.encodedMsg.value).map(_.toArray).orNull
+      payloadBytes = message.encodedMsg.value.map(_.toArray).orNull
       base64Headers <- encodeHeaderToBase64(message)
       base64Key <- keyBytes(message)
       lastSeqNum <- currentSequenceNumber.updateAndGet(_ + 1)
@@ -138,10 +148,13 @@ object H2LocalBuffer {
   }
 
   private def decodeHeaders(headersString: String): ZIO[Any, Throwable, Headers] = {
-    ZIO.foreach(headersString.split(';').filter(_.nonEmpty).map(part => {
-      val key :: value :: Nil = part.split(":").toList
-      (key, value)
-    })) { case (base64Key, base64Value) =>
+    ZIO.foreach(headersString.split(';')
+      .filter(_.nonEmpty)
+      .filter(_.split(":").length == 2)
+      .map(part => {
+        val key :: value :: Nil = part.split(":").toList
+        (key, value)
+      }).toSeq) { case (base64Key, base64Value) =>
       Base64Adapter.decode(base64Key).map(b => new String(b.toArray, "UTF-8")) zip Base64Adapter.decode(base64Value)
     }.map(headers => Headers(headers.toMap))
   }

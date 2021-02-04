@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.Serdes.{IntSerde, StringSerde}
-import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerError, ProducerRecord, ProducerRetryPolicy, RecordMetadata}
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord, ProducerRetryPolicy, RecordMetadata}
 import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv
 import com.wixpress.dst.greyhound.testkit.ITEnv._
@@ -22,7 +22,7 @@ class ProducerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       TestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(2)
       kafkaIO <- producer.produceAsync(record(topic), StringSerde, IntSerde)
-      result <- kafkaIO.await
+      result <- kafkaIO
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }
 
@@ -31,6 +31,14 @@ class ProducerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       TestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(2)
       result <- producer.produce(record(topic), StringSerde, IntSerde)
+    } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
+  }
+
+  "produce null value (tombstone)" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(2)
+      result <- producer.produce(ProducerRecord[String, String](topic, null, partition = Some(1)), StringSerde, StringSerde)
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }
 

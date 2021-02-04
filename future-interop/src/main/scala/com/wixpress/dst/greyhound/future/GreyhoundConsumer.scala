@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, SerializationError}
-import com.wixpress.dst.greyhound.core.consumer.OffsetReset
+import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.{ClientId, Deserializer, Group, NonEmptySet}
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handle
@@ -18,7 +18,8 @@ case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
                                    keyDeserializer: Deserializer[K],
                                    valueDeserializer: Deserializer[V],
                                    offsetReset: OffsetReset = OffsetReset.Latest,
-                                   errorHandler: ErrorHandler[K, V] = ErrorHandler.NoOp[K, V]) {
+                                   errorHandler: ErrorHandler[K, V] = ErrorHandler.NoOp[K, V],
+                                   mutateConsumerConfig:  RecordConsumerConfig => RecordConsumerConfig = identity) {
 
   def recordHandler: Handler[Env] =
     CoreRecordHandler(handle)
@@ -34,6 +35,9 @@ case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
           case _ => ZIO.unit
         }
       }
+
+  def withConsumerMutate(mutateConsumerConfig:  RecordConsumerConfig => RecordConsumerConfig) =
+    copy(mutateConsumerConfig = mutateConsumerConfig)
 }
 
 object GreyhoundConsumer {

@@ -3,7 +3,11 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import com.wixpress.dst.greyhound.core.Topic
 import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
 
-sealed trait BlockingTarget
+sealed trait BlockingTarget {
+  def topic: Topic
+}
 
 case class TopicTarget(topic: Topic) extends BlockingTarget
-case class TopicPartitionTarget(topicPartition: TopicPartition) extends BlockingTarget
+case class TopicPartitionTarget(topicPartition: TopicPartition) extends BlockingTarget {
+  def topic = topicPartition.topic
+}

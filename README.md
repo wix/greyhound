@@ -1,9 +1,8 @@
 # Greyhound 
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12/badge.svg?kill_cache=1)](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12) [![CircleCI](https://circleci.com/gh/wix/greyhound.svg?style=shield)](https://circleci.com/gh/wix/greyhound)
-
+[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12/badge.svg?kill_cache=1)](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12) [![Github Actions](https://github.com/wix/greyhound/workflows/CI/badge.svg)](https://github.com/wix/greyhound/actions/)
 Scala/Java High-level SDK for [Apache Kafka](https://kafka.apache.org/).
 
-![Greyhound](./docs/logo.png)
+![Greyhound](docs/logo.png)
 
 ## Why Greyhound?
 
@@ -11,6 +10,8 @@ Kafka is shipped with a Java SDK which allows developers to interact with a Kafk
 However, this SDK consists of somewhat low-level APIs which are difficult to use correctly.
 Greyhound seeks to provide a higher-level interface to Kafka and to express richer
 semantics such as parallel message handling or retry policies with ease.
+
+You can read more about it on this blog post - “[Building a High-level SDK for Kafka: Greyhound Unleashed](https://www.wix.engineering/post/building-a-high-level-sdk-for-kafka-greyhound-unleashed)”
 <br><br>
 *The Open-sourced version of Greyhound is still in stages of initial rollout, so APIs might not be fully stable yet.*
 
@@ -53,7 +54,7 @@ semantics such as parallel message handling or retry policies with ease.
 ### Add greyhound to your build
 All Greyhound modules can be found in [Maven Central Repository](https://search.maven.org/search?q=greyhound).
 
-See [examples](./docs/build.md) of how to add greyhound modules to your build (Maven, Gradle, SBT, etc...).
+See [examples](docs/build.md) of how to add greyhound modules to your build (Maven, Gradle, SBT, etc...).
 
 ### Basics
 
@@ -137,8 +138,7 @@ val builder = GreyhoundConsumersBuilder(config)
 
 ### Java API
 
-Greyhound also offers a Java API - example usage can be found in the
-[tests](./java-interop/src/test/java/com/wixpress/dst/greyhound/java/GreyhoundBuilderTest.java). 
+Greyhound also offers a Java API - a docker based [quick-start Java App](getting-started/README.md) that demonstrates using Greyhound is available to play with. 
 
 ### ZIO API
 
@@ -477,5 +477,6 @@ ManagedKafka.make(ManagedKafkaConfig(kafkaPort = 9092, zooKeeperPort = 2181)).us
 
 This will start a real Kafka broker and Zookeeper instance on defined ports. Use those ports to access Kafka within the managed
 scope.
- 
+
+
 

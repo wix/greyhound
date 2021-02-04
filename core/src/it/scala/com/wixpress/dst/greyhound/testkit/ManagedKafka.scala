@@ -28,17 +28,17 @@ object ManagedKafka {
   def make(config: ManagedKafkaConfig): RManaged[Blocking with GreyhoundMetrics, ManagedKafka] = for {
     _ <- embeddedZooKeeper(config.zooKeeperPort)
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
-    _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir))
+    _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir, config.saslAttributes))
     admin <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
 
     override val bootstrapServers: String = s"localhost:${config.kafkaPort}"
 
     override def createTopic(config: TopicConfig): RIO[Blocking, Unit] =
-        adminClient.createTopics(Set(config)).unit
+      adminClient.createTopics(Set(config)).unit
 
     override def createTopics(configs: TopicConfig*): RIO[Blocking, Unit] =
-        adminClient.createTopics(configs.toSet).unit
+      adminClient.createTopics(configs.toSet).unit
 
     override def adminClient: AdminClient = admin
   }
@@ -74,16 +74,17 @@ object ManagedKafka {
 
 }
 
-case class ManagedKafkaConfig(kafkaPort: Int, zooKeeperPort: Int)
+case class ManagedKafkaConfig(kafkaPort: Int, zooKeeperPort: Int, saslAttributes: Map[String, String])
 
 object ManagedKafkaConfig {
-  val Default: ManagedKafkaConfig = ManagedKafkaConfig(6667, 2181)
+  val Default: ManagedKafkaConfig = ManagedKafkaConfig(6667, 2181, Map.empty)
 }
 
 case class KafkaServerConfig(port: Int,
                              zooKeeperPort: Int,
                              brokerId: Int,
-                             logDir: Directory) {
+                             logDir: Directory,
+                             saslAttributes: Map[String, String]) {
 
   def toKafkaConfig: KafkaConfig = KafkaConfig.fromProps {
     val props = new Properties
@@ -109,6 +110,12 @@ case class KafkaServerConfig(port: Int,
     props.setProperty("transaction.max.timeout.ms", "15000")
     props.setProperty("reserved.broker.max.id", "99999999")
     props.setProperty("auto.create.topics.enable", "false")
+    if (saslAttributes.nonEmpty) {
+      saslAttributes.foreach(attribs => {
+        props.setProperty(attribs._1, attribs._2)
+      })
+    }
+
     props
   }
 

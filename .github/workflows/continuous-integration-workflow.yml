@@ -1,0 +1,47 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  
+  build:
+    name: test //...
+    # This job runs on Linux
+    runs-on: ubuntu-18.04
+    container:
+      image: l.gcr.io/google/bazel:3.5.0
+    steps:
+      - name: install bazelisk
+        run: |
+            curl -L --output /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64
+            chmod +x /usr/local/bin/bazel
+            which bazel
+      - uses: actions/checkout@v2
+
+      - name: bazel cache
+        uses: actions/cache@v2
+        with:
+          path: /github/home/.bazel_caches
+          key: ${{ github.ref }}
+          restore-keys: |
+            ${{ github.ref }}
+            refs/heads/master
+      - name: run bazel
+        run: |
+            mkdir -p /github/home/.bazel_caches
+            bazel --bazelrc=.bazelrc.remote test --repository_cache=/github/home/.bazel_caches --test_verbose_timeout_warnings --flaky_test_attempts=3 -k //...
+      - name: copy test logs
+        if: ${{ always() }}
+        run: |
+            pwd
+            ls -la bazel-testlogs/
+            mkdir -p bazel-testlogs-copy
+            cp -r bazel-testlogs/ bazel-testlogs-copy/
+      - name: upload test logs
+        uses: actions/upload-artifact@v2
+        if: ${{ always() }}
+        with:
+          name: test-logs
+          path: bazel-testlogs-copy/
+  
+            

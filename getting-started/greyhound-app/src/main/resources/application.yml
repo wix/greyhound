@@ -1,0 +1,23 @@
+server:
+  port: 8080
+
+#debug: true #uncomment to see debug application logs
+
+logging:
+  level:
+    ROOT: ERROR
+
+spring:
+  application:
+    name: greyhoundApp
+
+ribbon:
+  ServerListRefreshInterval: 1000
+
+endpoints:
+  health:
+    sensitive: false
+  restart:
+    enabled: true
+  shutdown:
+    enabled: true

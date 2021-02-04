@@ -1,23 +1,25 @@
 package com.wixpress.dst.greyhound.core
 
+import java.util.concurrent.{TimeUnit, TimeoutException}
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
 
-import com.wixpress.dst.greyhound.core.testkit.{eventuallyZ, eventuallyTimeout}
 import com.wixpress.dst.greyhound.core.Serdes._
-import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
-import com.wixpress.dst.greyhound.core.consumer.OffsetReset.Earliest
+import com.wixpress.dst.greyhound.core.consumer.OffsetReset.{Earliest, Latest}
 import com.wixpress.dst.greyhound.core.consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
-import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
-import com.wixpress.dst.greyhound.testkit.ITEnv._
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, CountDownLatch, eventuallyTimeoutFail, eventuallyZ}
+import com.wixpress.dst.greyhound.core.zioutils.Gate
+import com.wixpress.dst.greyhound.testkit.ITEnv.{clientId, _}
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
 import zio.clock.{Clock, sleep}
 import zio.console.Console
 import zio.duration._
+import zio.stm.{STM, TRef}
 import zio.{console, _}
 
 class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
@@ -30,7 +32,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   val resources = testResources()
 
-  "produce, consume and rebalance" in {
+  "produce, consume and rebalance - " in {
     for {
       TestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
@@ -50,15 +52,68 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           sleep(3.seconds) *>
           consumer.resubscribe(ConsumerSubscription.topics(topic, topic2)) *>
           sleep(500.millis) *> // give the consumer some time to start polling topic2
-          producer.produce(record.copy(topic = topic2, value = "BAR"), StringSerde, StringSerde) *>
+          producer.produce(record.copy(topic = topic2, value = Some("BAR")), StringSerde, StringSerde) *>
           (queue.take zip queue.take)
             .timeout(20.seconds)
             .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
       }
-      msgs <- ZIO.fromOption(messages).mapError(_ => TimedOutWaitingForMessages)
+      msgs <- ZIO.fromOption(messages).orElseFail(TimedOutWaitingForMessages)
     } yield {
       msgs._1 must (beRecordWithKey("foo") and beRecordWithValue("bar")) and (
         msgs._2 must (beRecordWithKey("foo") and beRecordWithValue("BAR")))
+    }
+  }
+
+  "be able to resubscribe to same topics" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
+      group <- randomGroup
+
+      queue <- Queue.unbounded[ConsumerRecord[String, String]]
+      handler = RecordHandler((cr: ConsumerRecord[String, String]) => UIO(println(s"***** Consumed: $cr")) *> queue.offer(cr))
+        .withDeserializers(StringSerde, StringSerde)
+        .ignore
+      cId <- clientId
+      config = configFor(kafka, group, topic, mutateEventLoop = _.copy(drainTimeout = 1.second)).copy(clientId = cId)
+      record = ProducerRecord(topic, "bar", Some("foo"))
+
+      messages <- RecordConsumer.make(config, handler).use { consumer =>
+        producer.produce(record, StringSerde, StringSerde) *>
+          sleep(3.seconds) *>
+          consumer.resubscribe(ConsumerSubscription.topics(topic)) *>
+          consumer.resubscribe(ConsumerSubscription.topics(topic)) *>
+          producer.produce(record.copy(topic = topic, value = Some("BAR")), StringSerde, StringSerde) *>
+          (queue.take zip queue.take)
+            .timeout(20.seconds)
+            .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
+      }
+      msgs <- ZIO.fromOption(messages).orElseFail(TimedOutWaitingForMessages)
+    } yield {
+      msgs._1 must (beRecordWithKey("foo") and beRecordWithValue("bar")) and (
+        msgs._2 must (beRecordWithKey("foo") and beRecordWithValue("BAR")))
+    }
+  }
+
+  "produce consume null values (tombstones)" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = s"topic1-single1")
+      group <- randomGroup
+
+      queue <- Queue.unbounded[ConsumerRecord[String, String]]
+      handler = RecordHandler((cr: ConsumerRecord[String, String]) => UIO(println(s"***** Consumed: $cr")) *> queue.offer(cr))
+        .withDeserializers(StringSerde, StringSerde)
+        .ignore
+      cId <- clientId
+      config = configFor(kafka, group, topic).copy(clientId = cId)
+      record = ProducerRecord.tombstone(topic, Some("foo"))
+      message <- RecordConsumer.make(config, handler).use_ {
+        producer.produce(record, StringSerde, StringSerde) *>
+          queue.take.timeoutFail(TimedOutWaitingForMessages)(10.seconds)
+      }
+    } yield {
+      message must (beRecordWithKey("foo") and beRecordWithValue(null))
     }
   }
 
@@ -85,7 +140,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
         val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
         for {
-          _ <- ZIO.foreachPar(0 until messagesPerPartition) { _ =>
+          _ <- ZIO.foreachPar_(0 until messagesPerPartition) { _ =>
             producer.produce(recordPartition0) zipPar producer.produce(recordPartition1)
           }
           handledAllFromPartition0 <- handledPartition0.await.timeout(10.seconds)
@@ -93,6 +148,39 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           handledAllFromPartition1 <- handledPartition1.await.timeout(10.seconds)
         } yield {
           (handledAllFromPartition0 must beSome) and (handledAllFromPartition1 must beSome)
+        }
+      }
+    } yield test
+  }
+
+  "delay resuming a paused partition" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      _ <- console.putStrLn(">>>> starting test: delay resuming a paused partition")
+
+      topic <- kafka.createRandomTopic(partitions = 1, prefix = "core-not-lose")
+      group <- randomGroup
+
+      messagesPerPartition = 500 // Exceeds the queue capacity
+      delayPartition <- Promise.make[Nothing, Unit]
+      handledPartition <- CountDownLatch.make(messagesPerPartition)
+      handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        delayPartition.await *> handledPartition.countDown
+      }
+      start <- clock.currentTime(TimeUnit.MILLISECONDS)
+      test <- RecordConsumer.make(configFor(kafka, group, topic, mutateEventLoop = _.copy(
+        delayResumeOfPausedPartition = 3000)), handler).use_ {
+        val recordPartition = ProducerRecord(topic, Chunk.empty, partition = Some(0))
+        for {
+          _ <- ZIO.foreachPar_(0 until messagesPerPartition) { _ =>
+            producer.produce(recordPartition)
+          }
+          _ <- delayPartition.succeed(()).delay(1.seconds).fork
+          handledAllFromPartition <- handledPartition.await.timeout(10.seconds)
+          end <- clock.currentTime(TimeUnit.MILLISECONDS)
+
+        } yield {
+          (handledAllFromPartition aka "handledAllFromPartition" must beSome) and (end - start aka "complete handling duration" must beGreaterThan(3000L))
         }
       }
     } yield test
@@ -111,22 +199,24 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       restOfMessages = numberOfMessages - someMessages
       handledSomeMessages <- CountDownLatch.make(someMessages)
       handledAllMessages <- CountDownLatch.make(numberOfMessages)
+      handleCounter <- Ref.make[Int](0)
       handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-        handledSomeMessages.countDown zipParRight handledAllMessages.countDown
+        handleCounter.update(_ + 1) *> handledSomeMessages.countDown zipParRight handledAllMessages.countDown
       }
 
       test <- RecordConsumer.make(configFor(kafka, group, topic).copy(offsetReset = OffsetReset.Earliest), handler).use { consumer =>
         val record = ProducerRecord(topic, Chunk.empty)
         for {
-          _ <- ZIO.foreachPar(0 until someMessages)(_ => producer.produce(record))
+          _ <- ZIO.foreachPar_(0 until someMessages)(_ => producer.produce(record))
           _ <- handledSomeMessages.await
           _ <- consumer.pause
-          _ <- ZIO.foreachPar(0 until restOfMessages)(_ => producer.produce(record))
+          _ <- ZIO.foreachPar_(0 until restOfMessages)(_ => producer.produce(record))
           a <- handledAllMessages.await.timeout(5.seconds)
+          handledAfterPause <- handleCounter.get
           _ <- consumer.resume
           b <- handledAllMessages.await.timeout(5.seconds)
         } yield {
-          (a must beNone) and (b must beSome)
+          (handledAfterPause === someMessages) and (a must beNone) and (b must beSome)
         }
       }
     } yield test
@@ -201,15 +291,15 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       test <- createConsumerTask(0).use_ {
         val record = ProducerRecord(topic, Chunk.empty, partition = Some(0))
         for {
-          _ <- ZIO.foreachPar(0 until partitions) { p =>
-            ZIO.foreach(0 until messagesPerPartition)(_ =>
+          _ <- ZIO.foreachPar_(0 until partitions) { p =>
+            ZIO.foreach_(0 until messagesPerPartition)(_ =>
               producer.produceAsync(record.copy(partition = Some(p)))
             )
           }
           _ <- createConsumerTask(1).useForever.fork // rebalance
           _ <- createConsumerTask(2).useForever.fork // rebalance
           expected = (0 until partitions).map(p => (p, 0L until messagesPerPartition)).toMap
-          _ <- eventuallyTimeout(probe.get)(m => m.mapValues(_.lastOption).values.toSet == Set(Option(messagesPerPartition - 1L)) && m.size == partitions)(120.seconds)
+          _ <- eventuallyTimeoutFail(probe.get)(m => m.mapValues(_.lastOption).values.toSet == Set(Option(messagesPerPartition - 1L)) && m.size == partitions)(120.seconds)
           finalResult <- probe.get
           _ <- console.putStrLn(finalResult.mapValues(_.size).mkString(","))
         } yield finalResult === expected
@@ -242,11 +332,75 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield ok
   }
 
+  "consumer from a new partition is interrupted before commit (offsetReset = Latest)" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(1)
+      group <- randomGroup
+      handlingStarted <- Promise.make[Nothing, Unit]
+      hangForever <- Promise.make[Nothing, Unit]
+      hangingHandler = RecordHandler { record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+        handlingStarted.complete(ZIO.unit) *>
+          hangForever.await
+      }
+      record <- aProducerRecord(topic)
+      recordValue = record.value.get
+      _ <- makeConsumer(kafka, topic, group, hangingHandler, 0, _.copy(drainTimeout = 200.millis)).use { consumer =>
+        producer.produce(record, StringSerde, StringSerde) *>
+          handlingStarted.await *>
+          //unsubscribe to make sure partitions are released
+          consumer.resubscribe(ConsumerSubscription.topics())
+      }.disconnect.timeoutFail(new TimeoutException("timed out waiting for consumer 0"))(10.seconds)
+      consumed <- AwaitableRef.make(Seq.empty[String])
+      handler = RecordHandler { record: ConsumerRecord[String, String] =>
+        consumed.update(_ :+ record.value)
+      }.withDeserializers(StringSerde, StringSerde)
 
-  private def makeConsumer(kafka: ManagedKafka, topic: String, group: String,
-                           handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int,
-                           mutateEventLoop: EventLoopConfig => EventLoopConfig = identity): ZManaged[RecordConsumer.Env, Throwable, RecordConsumer[Console with Clock with RecordConsumer.Env]] =
-    RecordConsumer.make(configFor(kafka, group, topic, mutateEventLoop).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest), handler)
+      consumedValues <- makeConsumer(kafka, topic, group, handler, 1, modifyConfig = _.copy(offsetReset = Latest)).use { _ =>
+        consumed.await(_.nonEmpty, 5.seconds)
+      }.disconnect.timeoutFail(new TimeoutException("timed out waiting for consumer 1"))(10.seconds)
+    } yield {
+      consumedValues must contain(recordValue)
+    }
+  }
+
+  "block until current tasks complete" in {
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = "block-until")
+      group <- randomGroup
+
+      waitForTasksDuration <- TRef.make[Duration](0.millis).commit
+      innerGate <- Gate.make(initiallyAllow = false)
+      outerGate <- Gate.make(initiallyAllow = false)
+      handler = RecordHandler((_: ConsumerRecord[String, String]) =>
+        outerGate.toggle(true) *> innerGate.await())
+        .withDeserializers(StringSerde, StringSerde).ignore
+      config = configFor(kafka, group, topic)
+      record = ProducerRecord(topic, "bar", Some("foo"))
+
+      test <- RecordConsumer.make(config, handler).use { consumer =>
+        for {
+          _ <- ZIO.foreach((0 until 100).toSet)(_ => producer.produce(record, StringSerde, StringSerde)) *>
+            outerGate.await() /* handler waiting on innerGate now */ *>
+            consumer.waitForCurrentRecordsCompletion.timed.map(_._1) /* after 'delay' the consumer's innerGate opens and handler completes */
+              .flatMap(d => waitForTasksDuration.set(d).commit)
+              .fork
+          delay = 1.second
+          tasksDurationFiber <- waitForTasksDuration.get.tap(d => STM.check(d > 0.millis)).commit.fork
+          _ <- innerGate.toggle(true).delay(delay) /*and now handler will complete */
+          tasksDuration <- tasksDurationFiber.join
+        } yield tasksDuration must between(delay, delay * 3)
+      }
+    } yield test
+  }
+
+  private def makeConsumer[E](kafka: ManagedKafka, topic: String, group: String,
+                              handler: RecordHandler[Console with Clock, E, Chunk[Byte], Chunk[Byte]], i: Int,
+                              mutateEventLoop: EventLoopConfig => EventLoopConfig = identity,
+                              modifyConfig: RecordConsumerConfig => RecordConsumerConfig = identity
+                             ): ZManaged[RecordConsumer.Env, Throwable, RecordConsumer[Console with Clock with RecordConsumer.Env]] =
+    RecordConsumer.make(modifyConfig(configFor(kafka, group, topic, mutateEventLoop).copy(clientId = s"client-$i", offsetReset = OffsetReset.Earliest)), handler)
 
   private def makeConsumer(kafka: ManagedKafka, pattern: Pattern, group: String,
                            handler: RecordHandler[Console with Clock, Nothing, Chunk[Byte], Chunk[Byte]], i: Int) =
@@ -264,6 +418,11 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   private def fastConsumerMetadataFetching =
     Map("metadata.max.age.ms" -> "0")
+
+  private def aProducerRecord(topic: String) = for {
+    key <- randomId
+    payload <- randomId
+  } yield ProducerRecord(topic, payload, Some(key))
 
 }
 

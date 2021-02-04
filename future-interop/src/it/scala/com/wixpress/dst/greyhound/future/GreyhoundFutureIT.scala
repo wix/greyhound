@@ -1,13 +1,16 @@
 package com.wixpress.dst.greyhound.future
 
+import java.util.concurrent.atomic.AtomicInteger
+
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.AdminClientConfig
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric.{StartingEventLoop, StoppingEventLoop}
+import com.wixpress.dst.greyhound.core.consumer.OffsetReset
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
-import com.wixpress.dst.greyhound.future.ConsumerIT._
+import com.wixpress.dst.greyhound.future.GreyhoundFutureIT._
 import com.wixpress.dst.greyhound.future.ContextDecoder.aHeaderContextDecoder
 import com.wixpress.dst.greyhound.future.ContextEncoder.aHeaderContextEncoder
 import com.wixpress.dst.greyhound.future.ErrorHandler.anErrorHandler
@@ -21,9 +24,9 @@ import zio.{Task, UIO, URIO, Promise => ZPromise}
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
-import scala.util.Random
+import scala.util.{Random, Try}
 
-class ConsumerIT(implicit ee: ExecutionEnv)
+class GreyhoundFutureIT(implicit ee: ExecutionEnv)
   extends SpecificationWithJUnit
     with BeforeAll
     with AfterAll {
@@ -184,6 +187,67 @@ class ConsumerIT(implicit ee: ExecutionEnv)
     err === "Expected_Error"
   }
 
+  "override consumer properties" in new Ctx {
+    val handlerInvocations = new AtomicInteger(0)
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers)
+    val accumulator: Handle[Partition, String] = aRecordHandler {
+      new RecordHandler[Partition, String] {
+        override def handle(record: ConsumerRecord[Partition, String])(implicit ec: ExecutionContext): Future[Any] =
+          Future.successful(handlerInvocations.incrementAndGet)
+      }
+    }
+
+    val consumer = GreyhoundConsumer(
+      initialTopics = Set(topic),
+      group = "groupXXX",
+      clientId = "clientIdX",
+      handle = accumulator,
+      offsetReset = OffsetReset.Earliest,
+      keyDeserializer = Serdes.IntSerde,
+      valueDeserializer = Serdes.StringSerde)
+
+    val sameSpecWithOverridenGroupInProperties =
+      consumer
+        .copy(clientId = "clientIdY")
+        .withConsumerMutate(_.copy(extraProperties = Map("group.id" -> "different-group")))
+
+    val consumersBuilder = GreyhoundConsumersBuilder(config)
+      .withConsumer(consumer)
+      .withConsumer(sameSpecWithOverridenGroupInProperties)
+
+    val (consumers, producer) = Await.result(for {
+      consumers <- consumersBuilder.build
+      producer <- GreyhoundProducerBuilder(config).build
+      _ <- producer.produce(
+        record = ProducerRecord(topic, "hello world", Some(123)),
+        keySerializer = Serdes.IntSerde,
+        valueSerializer = Serdes.StringSerde)
+    } yield (consumers, producer), 60.seconds)
+
+    /*Since it's 2 consumers with different groups, handler is invoked twice */
+    eventually(handlerInvocations.get === 2)
+
+    consumers.shutdown
+    producer.shutdown
+    ok
+  }
+
+  "override producer properties" in new Ctx {
+    val config = GreyhoundConfig(environment.kafka.bootstrapServers)
+    val produceFail = Try(Await.result(for {
+      producer <- GreyhoundProducerBuilder(config,
+        mutateProducer = _.withProperties(Map("max.request.size" -> "1"))).build
+      _ <- producer.produce(
+        record = ProducerRecord(topic, "hello world", Some(123)),
+        keySerializer = Serdes.IntSerde,
+        valueSerializer = Serdes.StringSerde)
+    } yield (), 60.seconds))
+
+
+    produceFail.failed.get.getCause.getClass.getSimpleName === "RecordTooLargeException"
+  }
+
+
   class Ctx extends Scope {
     val topic: Topic = s"some-topic-${Random.alphanumeric.take(5).mkString}"
     AdminClient.create(AdminClientConfig(environment.kafka.bootstrapServers)).createTopic(
@@ -196,7 +260,7 @@ class ConsumerIT(implicit ee: ExecutionEnv)
 
 }
 
-object ConsumerIT {
+object GreyhoundFutureIT {
   val runtime = GreyhoundRuntime.Live
 }
 

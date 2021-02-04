@@ -4,8 +4,10 @@ import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CreatingConsumer
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
-import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.UncaughtHandlerError
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.{ResubscribeError, UncaughtHandlerError}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.{patternRetryTopic, retryPattern}
@@ -18,19 +20,24 @@ import zio.duration._
 
 import scala.util.Random
 
-trait RecordConsumer[-R] extends Resource[R] {
+trait RecordConsumerProperties[+STATE] {
   def group: Group
 
   def clientId: ClientId
 
-  def state: UIO[RecordConsumerExposedState]
+  def state: Task[STATE]
 
   def topology: UIO[RecordConsumerTopology]
+}
 
+trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[RecordConsumerExposedState] {
   def resubscribe[R1](subscription: ConsumerSubscription, listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
 
   def setBlockingState(command: BlockingStateCommand): RIO[Env, Unit]
 
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
+
+  def waitForCurrentRecordsCompletion: UIO[Unit]
 }
 
 object RecordConsumer {
@@ -42,15 +49,17 @@ object RecordConsumer {
    * from Kafka and invoke the appropriate handlers. Handling is concurrent between
    * partitions; order is guaranteed to be maintained within the same partition.
    */
-  def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env, Throwable, RecordConsumer[R with Env]] =
+  def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     for {
+      _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers)).toManaged_
+      _ <- validateRetryPolicy(config)
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
       consumer <- Consumer.make(
-        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties))
+        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
-        maybeAddRetryTopics(config, nonBlockingRetryHelper))
-      _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers)).use(client =>
+        maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
+      _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
@@ -77,13 +86,18 @@ object RecordConsumer {
         blockingStateResolver.setBlockingState(command)
       }
 
+      override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
+        consumer.endOffsets(partitions)
+
+      override def waitForCurrentRecordsCompletion: UIO[Unit] = eventLoop.waitForCurrentRecordsCompletion
+
       override def state: UIO[RecordConsumerExposedState] = for {
-        dispatcherState <-  eventLoop.state
+        elState <- eventLoop.state
         blockingStateMap <- blockingState.get
-      } yield RecordConsumerExposedState(dispatcherState, config.clientId, blockingStateMap)
+      } yield RecordConsumerExposedState(elState, config.clientId, blockingStateMap)
 
       override def topology: UIO[RecordConsumerTopology] =
-        consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(subscription))
+        consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(config.group, subscription))
 
       override def group: Group = config.group
 
@@ -91,11 +105,9 @@ object RecordConsumer {
         for {
           assigned <- Ref.make[AssignedPartitions](Set.empty)
           promise <- Promise.make[Nothing, AssignedPartitions]
-          rebalanceListener = listener *> new RebalanceListener[R1] {
-            override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, Any] =
-              ZIO.unit
-
-            //todo: we need to call EventLoop's listener here! otherwise we don't stop fibers on resubscribe
+          rebalanceListener = eventLoop.rebalanceListener *> listener *> new RebalanceListener[R1] {
+            override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
+              DelayedRebalanceEffect.zioUnit
 
             override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] = for {
               allAssigned <- assigned.updateAndGet(_ => partitions)
@@ -105,19 +117,23 @@ object RecordConsumer {
           }
 
           _ <- subscribe[R1](subscription, rebalanceListener)(consumer)
-          result <- promise.await
+          resubscribeTimeout = config.eventLoopConfig.drainTimeout
+          result <- promise.await.disconnect.timeoutFail(
+            ResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
+            .catchAll(ex => report(ResubscribeError(ex, group, clientId)) *> UIO(Set.empty[TopicPartition]))
         } yield result
 
       override def clientId: ClientId = config.clientId
     }
 
-  private def maybeAddRetryTopics[E, R](config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
+  private def maybeAddRetryTopics[E, R](retryConfig: RetryConfig, config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
     config.initialSubscription match {
       case Topics(topics) =>
         val retryTopics = topics.flatMap(helper.retryTopicsFor)
         (Topics(topics ++ retryTopics), retryTopics)
       case TopicPattern(pattern, _) => (TopicPattern(Pattern.compile(s"${pattern.pattern}|${retryPattern(config.group)}")),
-        (0 until helper.retrySteps).map(step => patternRetryTopic(config.group, step)).toSet)
+        (0 until retryConfig.nonBlockingBackoffs("").length)
+          .map(step => patternRetryTopic(config.group, step)).toSet)
     }
   }
 
@@ -127,13 +143,23 @@ object RecordConsumer {
                                         nonBlockingRetryHelper: NonBlockingRetryHelper) =
     config.retryConfig match {
       case Some(retryConfig) =>
-        Producer.makeR[R](ProducerConfig(config.bootstrapServers, retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds))).map(producer =>
-          ReportingProducer(producer))
-          .map(producer => RetryRecordHandler.withRetries(handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
+        Producer.makeR[R](ProducerConfig(config.bootstrapServers,
+          retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties))
+          .map(producer => ReportingProducer(producer))
+          .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
           report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))
     }
+
+  private def validateRetryPolicy(config: RecordConsumerConfig) =
+    (config.initialSubscription match {
+      case _: ConsumerSubscription.TopicPattern =>
+        ZIO.unit
+      case _: ConsumerSubscription.Topics =>
+        ZIO.when(config.retryConfig.exists(_.forPatternSubscription.exists(_.nonEmpty)))(ZIO.fail(InvalidRetryConfigForPatternSubscription))
+    }).toManaged_
+
 }
 
 sealed trait RecordConsumerMetric extends GreyhoundMetric {
@@ -146,13 +172,20 @@ object RecordConsumerMetric {
 
   case class UncaughtHandlerError[E](error: E, topic: Topic, partition: Partition, offset: Offset, group: Group, clientId: ClientId) extends RecordConsumerMetric
 
+  case class ResubscribeError[E](error: E, group: Group, clientId: ClientId) extends RecordConsumerMetric
+
 }
 
-case class RecordConsumerExposedState(dispatcherState: DispatcherExposedState, consumerId: String, blockingState: Map[BlockingTarget, BlockingState]) {
-  def topics = dispatcherState.topics
+case class RecordConsumerExposedState(eventLoopState: EventLoopExposedState, consumerId: String,
+                                      blockingState: Map[BlockingTarget, BlockingState]) {
+  /* List of consumed topics so far */
+  def topics = eventLoopState.dispatcherState.topics
+
+  /* The latest offset submitted for execution per topic-partition */
+  def eventLoopLatestOffsets = eventLoopState.latestOffsets
 }
 
-case class RecordConsumerTopology(subscription: ConsumerSubscription)
+case class RecordConsumerTopology(group: Group, subscription: ConsumerSubscription)
 
 case class RecordConsumerConfig(bootstrapServers: String,
                                 group: Group,
@@ -161,8 +194,22 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 clientId: String = RecordConsumerConfig.makeClientId,
                                 eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
-                                extraProperties: Map[String, String] = Map.empty)
+                                extraProperties: Map[String, String] = Map.empty,
+                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty) extends CommonGreyhoundConfig {
+
+  override def kafkaProps: Map[String, String] = extraProperties
+}
 
 object RecordConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
+}
+
+case class ResubscribeTimeout(resubscribeTimeout: duration.Duration, subscription: ConsumerSubscription) extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")
+
+abstract class ConsumerConfigFailedValidation(val msg: String) extends RuntimeException(msg)
+
+object ConsumerConfigFailedValidation {
+
+  case object InvalidRetryConfigForPatternSubscription extends ConsumerConfigFailedValidation("A consumer with a pattern subscription cannot be created with a custom retry policy. Use ZRetryConfig.retryForPattern(..)")
+
 }

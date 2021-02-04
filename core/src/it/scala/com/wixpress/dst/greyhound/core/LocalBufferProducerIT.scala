@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.core.producer.buffered.buffers.{H2LocalBuffer,
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducer
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferFlushTimeout, LocalBufferProduceAttemptFailed}
 import com.wixpress.dst.greyhound.core.producer._
-import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeout, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.testkit.ITEnv.ManagedKafkaOps
 import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka, ManagedKafkaConfig}
 import org.apache.kafka.common.errors.RecordTooLargeException
@@ -76,7 +76,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
                 record = ProducerRecord(topic, 0)
                 _ <- RecordConsumer.make(configFor(kafka, "group234", topic), handler).use_ {
                   produceMultiple(keyCount, recordPerKey)(localBufferProducer, record) *>
-                    eventuallyTimeout(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(40.seconds)
+                    eventuallyTimeoutFail(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(40.seconds)
                 }.timed.tap { case (d, _) => console.putStrLn(s"Finished in ${d.toMillis} ms") }
                 state <- localBufferProducer.currentState
                 queryCountAfterComplete = state.localBufferQueryCount
@@ -95,7 +95,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     def produceIO[R](topic: Topic, producer: LocalBufferProducer[R]) =
       producer.produce(ProducerRecord(topic, 0), StringSerde, IntSerde)
         .tap(res => UIO(println("produced to local id: " + res.localMessageId)))
-        .flatMap(_.kafkaResult.await)
+        .flatMap(_.kafkaResult)
         .timeoutFail(LocalBufferError(TimeoutProducingRecord))(10.seconds)
 
     for {
@@ -124,7 +124,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
             localBufferBatchSize = localBufferBatchSize).use { localBufferProducer =>
             for {
               _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).repeat(Schedule.recurs(200))
-              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).flatMap(_.kafkaResult.await).timeout(10.second)
+              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).flatMap(_.kafkaResult).timeout(10.second)
               timeouts <- TestMetrics.reported.map(_.collect { case e@LocalBufferProduceAttemptFailed(TimeoutError(_), false) => e })
               state <- localBufferProducer.currentState
             } yield (timeouts.size, state)
@@ -167,16 +167,19 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       BufferTestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(1, params = Map("max.message.bytes" -> "100"))
       record = ProducerRecord(topic, value = Random.alphanumeric.take(300).mkString)
+      record2 = ProducerRecord(topic, value = Random.alphanumeric.take(10).mkString, partition = Some(-100))
       test <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
         for {
-          producerError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.await.flip)
+          producerError1 <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
+          producerError2 <- localBufferProducer.produce(record2, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
           metrics <- TestMetrics.reported
-          reportedNonRetriableErrors = metrics.collect { case s@LocalBufferProduceAttemptFailed(KafkaError(_), true) => s }
+          reportedNonRetriableErrors = metrics.collect { case s@LocalBufferProduceAttemptFailed(_, true) => s }
           state <- localBufferProducer.currentState
         } yield
-          (reportedNonRetriableErrors.size === 1) and
-            (state.failedRecords === 1) and
-            (producerError.getCause.getClass === classOf[RecordTooLargeException])
+          (reportedNonRetriableErrors.size === 2) and
+            (state.failedRecords === 2) and
+            (producerError1.getCause.getClass === classOf[RecordTooLargeException]) and
+            (producerError2.getCause.getClass === classOf[IllegalArgumentException])
       }
     } yield test
   }
@@ -202,7 +205,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
           record = ProducerRecord(topic, value = "0")
           test <- makeProducer(producer, strategy(maxConcurrency = 1), giveUpAfter = 10.millis).use { localBufferProducer =>
             for {
-              produceError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.await).repeat(recurs(1000)).either
+              produceError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult).repeat(recurs(1000)).either
               _ <- localBufferProducer.close
               produceAfterShutdown <- localBufferProducer.produce(record, IntSerde, StringSerde).flip
             } yield (produceError.left.get.getClass === classOf[TimeoutError]) and (produceAfterShutdown.cause.getClass === classOf[ProducerClosed])
@@ -218,18 +221,18 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       topic <- kafka.createRandomTopic(1)
       record = ProducerRecord(topic, value = "0")
       results <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
-        ZIO.foreach(0 until 1000)(i =>
+        ZIO.foreach(0 until 1000 : Seq[Int])(i =>
           localBufferProducer.produce(record.copy(key = Some(i)), IntSerde, StringSerde)
         )
       }
       // producer is shutdown out of managed scope - checking that the promises are still fulfilled eventually
-      recordsProduced <- ZIO.foreach(results)(_.kafkaResult.await).timeoutFail(new RuntimeException("TIMEOUT!"))(15.seconds)
+      recordsProduced <- ZIO.foreach(results)(_.kafkaResult).timeoutFail(new RuntimeException("TIMEOUT!"))(15.seconds)
     } yield recordsProduced.size === 1000
   }
 
   def produceMultiple[R](keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer[GreyhoundMetrics with Clock with R], record: ProducerRecord[String, Int]) =
-    ZIO.foreach(0 until (keyCount * recordPerKey)) { i =>
-      localBufferProducer.produce(record.copy(value = i, key = Some((i % keyCount).toString)), StringSerde, IntSerde)
+    ZIO.foreach(0 until (keyCount * recordPerKey) : Seq[Int]) { i =>
+      localBufferProducer.produce(record.copy(value = Some(i), key = Some((i % keyCount).toString)), StringSerde, IntSerde)
     }
 
   def expectedMap(recordPerKey: Int, keyCount: Int): Map[String, Seq[Int]] =
@@ -303,7 +306,7 @@ class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
             _ <- buffer.close
             record = ProducerRecord(topic, "bar", Some("foo"))
             produceIO = localBufferProducer.produce(record, StringSerde, StringSerde)
-              .flatMap(_.kafkaResult.await).timeoutFail(LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed)(5.seconds)
+              .flatMap(_.kafkaResult).timeoutFail(LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed)(5.seconds)
             _ <- (produceIO *> produceIO) /*maxMessagesOnDisk=1 ==> second produce will fail if we don't dequeue count from memory */
               .map(_.topic === topic)
           } yield ok
