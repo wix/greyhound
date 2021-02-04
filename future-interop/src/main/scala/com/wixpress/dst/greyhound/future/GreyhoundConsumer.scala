@@ -43,6 +43,9 @@ case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
 
   def withNonBlockingRetry(firstRetry: Duration, otherRetries: Duration*) =
     withRetryConfig(RetryConfig.nonBlockingRetry(firstRetry, otherRetries: _*))
+
+  def withBlockingRetry(firstRetry: Duration, otherRetries: Duration*) =
+    withRetryConfig(RetryConfig.finiteBlockingRetry(firstRetry, otherRetries: _*))
 }
 
 object GreyhoundConsumer {

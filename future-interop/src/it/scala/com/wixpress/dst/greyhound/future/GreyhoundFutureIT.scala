@@ -114,6 +114,26 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv)
     result.awaitFor(1.minute)
   }
 
+  "consume a message with blocking retry policy" in new RetryContext {
+    val result = for {
+      consumers <- GreyhoundConsumersBuilder(config)
+        .withConsumer(consumer.withBlockingRetry(5.millis, 5.millis))
+        .build
+      producer <- GreyhoundProducerBuilder(config).build
+      _ <- producer.produce(
+        record = ProducerRecord(topic, "Promise!", Some(123)),
+        keySerializer = Serdes.IntSerde,
+        valueSerializer = Serdes.StringSerde)
+      promiseResult <- promise.future
+      _ <- producer.shutdown
+      _ <- consumers.shutdown
+    } yield promiseResult must(
+      beRecordWithKey(123) and
+        beRecordWithValue("Promise fulfilled"))
+
+    result.awaitFor(1.minute)
+  }
+
   "propagate context from producer to consumer" in new Ctx {
     implicit val context = Context("some-context")
 
