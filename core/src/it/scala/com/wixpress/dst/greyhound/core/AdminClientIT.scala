@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.CleanupPolicy.Delete
+import com.wixpress.dst.greyhound.core.admin.{GroupState, PartitionOffset}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
@@ -105,34 +106,64 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
     }
 
-    "fetch group topics after partitions assigned" in {
+    "fetch group offsets" in {
       val topic = aTopicConfig()
       for {
         TestResources(kafka, producer) <- getShared
         _ <- kafka.adminClient.createTopics(Set(topic))
-        groupTopicsRef <- Ref.make[Map[String, Set[Topic]]](Map.empty)
+        groupOffsetsRef <- Ref.make[Map[GroupTopicPartition, PartitionOffset]](Map.empty)
         calledGroupsTopicsAfterAssignment <- CountDownLatch.make(1)
-        group = "group1"
+        group = s"group1-${System.currentTimeMillis}"
         handler = RecordHandler{_: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => {
-          kafka.adminClient.groupTopics(Set(group)).flatMap(r => groupTopicsRef.set(r)) *>
+          kafka.adminClient.groupOffsets(Set(group)).flatMap(r => groupOffsetsRef.set(r)) *>
             calledGroupsTopicsAfterAssignment.countDown
         }}
-        (awaitResult, groupTopics) <- RecordConsumer.make( RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))),
+        (awaitResult, groupOffsets) <- RecordConsumer.make( RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))),
           handler).use{ _ =>
           for {
             recordPartition <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
             _ <- producer.produce(recordPartition)
             awaitResult <- calledGroupsTopicsAfterAssignment.await.timeout(fromScala(10.seconds))
-            groupTopics <- groupTopicsRef.get
-          } yield (awaitResult, groupTopics)
+            groupOffsets <- groupOffsetsRef.get
+          } yield (awaitResult, groupOffsets)
         }
       } yield {
         (awaitResult aka "awaitResult" must not(beNone)) and
-        (groupTopics === Map(group -> Set(topic.name)))
+          (groupOffsets === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L)))
+      }
+    }
+
+    "fetch group state when consumer started and when consumer is shut down" in {
+      val partitionsCount = 2
+      val topic = aTopicConfig(partitions = partitionsCount)
+      for {
+        TestResources(kafka, producer) <- getShared
+        _ <- kafka.adminClient.createTopics(Set(topic))
+        groupStateRef <- Ref.make[Option[GroupState]](None)
+        calledGroupsStateAfterAssignment <- CountDownLatch.make(1)
+        group = "group1"
+        handler = RecordHandler{_: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => {
+          kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *>
+            calledGroupsStateAfterAssignment.countDown
+        }}
+        (awaitResult, stateWhenStarted) <- RecordConsumer.make( RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))),
+          handler).use{ _ =>
+          for {
+            recordPartition <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
+            _ <- producer.produce(recordPartition)
+            awaitResult <- calledGroupsStateAfterAssignment.await.timeout(fromScala(10.seconds))
+            stateWhenStarted <- groupStateRef.get
+          } yield (awaitResult, stateWhenStarted)
+        }
+        stateAfterShutdown <- kafka.adminClient.groupState(Set(group)).map(_.get(group))
+      } yield {
+        (awaitResult aka "awaitResult" must not(beNone)) and
+          (stateWhenStarted === Some(GroupState(partitionsCount, Set(topic.name)))) and
+          (stateAfterShutdown === Some(GroupState(0, Set())))
       }
     }
   }
 
-  private def aTopicConfig(name: String = s"topic-${System.currentTimeMillis}") =
-    TopicConfig(name, 1, 1, Delete(1.hour.toMillis))
+  private def aTopicConfig(name: String = s"topic-${System.currentTimeMillis}", partitions: Int = 1) =
+    TopicConfig(name, partitions, 1, Delete(1.hour.toMillis))
 }
