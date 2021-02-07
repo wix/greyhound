@@ -2,15 +2,16 @@ package com.wixpress.dst.greyhound.core.admin
 
 import java.util.concurrent.TimeUnit.SECONDS
 
+import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Topic, TopicConfig}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GroupTopicPartition, Topic, TopicConfig}
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
-import zio.blocking.{Blocking, effectBlocking}
 import zio._
+import zio.blocking.{Blocking, effectBlocking}
 
 import scala.collection.JavaConverters._
 
@@ -27,13 +28,21 @@ trait AdminClient {
 
   def listGroups(): RIO[Blocking, Set[String]]
 
-  def groupTopics(groups: Set[String]): RIO[Blocking, Map[String, Set[Topic]]]
+  def groupOffsets(groups: Set[String]): RIO[Blocking, Map[GroupTopicPartition, PartitionOffset]]
+
+  def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]]
 }
 
 case class TopicPropertiesResult(partitions: Int, properties: Map[String, String])
 
 object TopicPropertiesResult {
   def empty = TopicPropertiesResult(0, Map.empty)
+}
+
+case class PartitionOffset(offset: Long)
+
+case class GroupState(topicPartitionCount: Int, topics: Set[Topic]) {
+  def isActive = topicPartitionCount > 0
 }
 
 object AdminClient {
@@ -88,14 +97,28 @@ object AdminClient {
           groups <- result.valid().asZio
         } yield groups.asScala.map(_.groupId()).toSet
 
-        override def groupTopics(groups: Set[String]): RIO[Blocking, Map[String, Set[Topic]]] = for {
-          result <- effectBlocking(client.describeConsumerGroups(groups.asJava))
-          groupEffects = result.describedGroups().asScala.mapValues(_.asZio)
-          groupsList <- ZIO.collectAll(groupEffects.values)
-          membersMap = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala))
-          topicPartitionsMap = membersMap.mapValues(_.flatMap(_.assignment().topicPartitions().asScala))
-          topicsMap = topicPartitionsMap.mapValues(l => l.map(_.topic()).toSet)
-        } yield topicsMap
+        override def groupOffsets(groups: Set[String]): RIO[Blocking, Map[GroupTopicPartition, PartitionOffset]] =
+          for {
+            result <- ZIO.foreach(groups)(group => effectBlocking(group -> client.listConsumerGroupOffsets(group)))
+            // TODO: remove ._1 , ._2
+            rawOffsetsEffects = result.toMap.mapValues(_.partitionsToOffsetAndMetadata().asZio)
+            offsetsEffects = rawOffsetsEffects.map(offset => offset._2.map(f => f.asScala.map(p => p.copy(GroupTopicPartition(offset._1, core.TopicPartition(p._1)),PartitionOffset(p._2.offset())))))
+            offsetsMapSets <- ZIO.collectAll(offsetsEffects)
+            groupOffsets = offsetsMapSets.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++y)
+          } yield groupOffsets
+
+        override def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]] =
+          for {
+            result <- effectBlocking(client.describeConsumerGroups(groups.asJava))
+            groupEffects = result.describedGroups().asScala.mapValues(_.asZio)
+            groupsList <- ZIO.collectAll(groupEffects.values)
+            membersMap = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala))
+            groupState = membersMap.mapValues(members => {
+              val topicPartitionsMap = members.flatMap(_.assignment().topicPartitions().asScala)
+              GroupState(topicPartitionsMap.size, topicPartitionsMap.map(_.topic()).toSet)
+            }
+            )
+          } yield groupState
       }
     }
   }
