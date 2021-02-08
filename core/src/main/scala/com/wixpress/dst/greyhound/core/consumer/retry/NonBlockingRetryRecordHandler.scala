@@ -25,7 +25,7 @@ private[retry] object NonBlockingRetryRecordHandler {
                         subscription: ConsumerSubscription,
                         evK: K <:< Chunk[Byte],
                         evV: V <:< Chunk[Byte],
-                        nonBlockingRetryHelper: NonBlockingRetryHelper): NonBlockingRetryRecordHandler[V, K, R] = new NonBlockingRetryRecordHandler[V, K, R]{
+                        nonBlockingRetryHelper: NonBlockingRetryHelper): NonBlockingRetryRecordHandler[V, K, R] = new NonBlockingRetryRecordHandler[V, K, R] {
     override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with R, Nothing, Any] = {
       nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
         ZIO.foreach_(retryAttempt)(_.sleep) *> handler.handle(record).catchAll {
