@@ -22,6 +22,7 @@ import zio.test.environment.{TestClock, TestRandom}
 
 class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
 
+
   override def env =
     for {
       env <- test.environment.testEnvironment.build
