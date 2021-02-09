@@ -15,7 +15,9 @@ import zio.duration._
 trait EventLoop[-R] extends Resource[R] {
   self =>
   def state: UIO[EventLoopExposedState]
-  def waitForCurrentRecordsCompletion: UIO[Unit]
+
+  def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
+
   def rebalanceListener: RebalanceListener[Any]
 }
 
@@ -32,7 +34,7 @@ object EventLoop {
       _ <- report(StartingEventLoop(clientId, group))
       offsets <- Offsets.make
       handle = handler.andThen(offsets.update).handle(_)
-      dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark, config.delayResumeOfPausedPartition)
+      dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark, config.drainTimeout, config.delayResumeOfPausedPartition)
       positionsRef <- Ref.make(Map.empty[TopicPartition, Offset])
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned <- Promise.make[Nothing, Unit]
@@ -76,7 +78,7 @@ object EventLoop {
 
           override def rebalanceListener: RebalanceListener[Any] = listener
 
-          override def waitForCurrentRecordsCompletion: UIO[Unit] = dispatcher.waitForCurrentRecordsCompletion
+          override def waitForCurrentRecordsCompletion: URIO[Clock, Unit] = dispatcher.waitForCurrentRecordsCompletion
         }
     }
   }
@@ -238,7 +240,7 @@ object EventLoopState {
 }
 
 case class EventLoopExposedState(latestOffsets: Map[TopicPartition, Offset], dispatcherState: DispatcherExposedState) {
-    def withDispatcherState(state: Dispatcher.DispatcherState) =
-      copy(dispatcherState = dispatcherState.copy(state =state))
+  def withDispatcherState(state: Dispatcher.DispatcherState) =
+    copy(dispatcherState = dispatcherState.copy(state = state))
 }
 

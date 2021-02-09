@@ -16,6 +16,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import zio._
+import zio.clock.Clock
 import zio.duration._
 
 import scala.util.Random
@@ -37,7 +38,7 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
-  def waitForCurrentRecordsCompletion: UIO[Unit]
+  def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
 }
 
 object RecordConsumer {
@@ -89,7 +90,7 @@ object RecordConsumer {
       override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
         consumer.endOffsets(partitions)
 
-      override def waitForCurrentRecordsCompletion: UIO[Unit] = eventLoop.waitForCurrentRecordsCompletion
+      override def waitForCurrentRecordsCompletion: URIO[Clock, Unit] = eventLoop.waitForCurrentRecordsCompletion
 
       override def state: UIO[RecordConsumerExposedState] = for {
         elState <- eventLoop.state
