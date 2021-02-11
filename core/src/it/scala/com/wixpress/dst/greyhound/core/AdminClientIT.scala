@@ -158,8 +158,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         stateAfterShutdown <- kafka.adminClient.groupState(Set(group)).map(_.get(group))
       } yield {
         (awaitResult aka "awaitResult" must not(beNone)) and
-          (stateWhenStarted === Some(GroupState(partitionsCount, Set(topic.name)))) and
-          (stateAfterShutdown === Some(GroupState(0, Set())))
+          (stateWhenStarted === Some(GroupState(Set(TopicPartition(topic.name, 0), TopicPartition(topic.name, 1))))) and
+          (stateAfterShutdown === Some(GroupState(Set.empty)))
       }
     }
   }
