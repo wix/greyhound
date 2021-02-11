@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit.SECONDS
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GroupTopicPartition, Topic, TopicConfig}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
@@ -41,9 +41,7 @@ object TopicPropertiesResult {
 
 case class PartitionOffset(offset: Long)
 
-case class GroupState(topicPartitionCount: Int, topics: Set[Topic]) {
-  def isActive = topicPartitionCount > 0
-}
+case class GroupState(activeTopicsPartitions: Set[TopicPartition])
 
 object AdminClient {
   def make(config: AdminClientConfig): RManaged[Blocking, AdminClient] = {
@@ -115,7 +113,7 @@ object AdminClient {
             membersMap = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala))
             groupState = membersMap.mapValues(members => {
               val topicPartitionsMap = members.flatMap(_.assignment().topicPartitions().asScala)
-              GroupState(topicPartitionsMap.size, topicPartitionsMap.map(_.topic()).toSet)
+              GroupState(topicPartitionsMap.map(TopicPartition(_)).toSet)
             }
             )
           } yield groupState
