@@ -11,7 +11,8 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
                         config: ProducerConfig,
                         beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] = UIO(_),
                         beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = UIO(_),
-                        override val attributes: Map[String, String] = Map.empty
+                        override val attributes: Map[String, String] = Map.empty,
+                        onShutDown: UIO[Unit] = ZIO.unit
                        ) extends Producer {
 
   def failing: FakeProducer = copy(config = ProducerConfig.Failing)
@@ -38,17 +39,20 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
           Promise.make[ProducerError, RecordMetadata]
             .tap(_.fail(error)).map(_.await))
     }
+
+  override def shutdown: UIO[Unit] = onShutDown
 }
 
 object FakeProducer {
   def make: UIO[FakeProducer] = make()
   def make(beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] = UIO(_),
            beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = UIO(_),
-           attributes: Map[String, String] = Map.empty
+           attributes: Map[String, String] = Map.empty,
+           onShutdown: UIO[Unit] = ZIO.unit
           ): UIO[FakeProducer] = for {
     records <- Queue.unbounded[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
     offset <- Ref.make(Map.empty[TopicPartition, Offset])
-  } yield FakeProducer(records, offset, ProducerConfig.Standard, beforeProduce, beforeComplete, attributes)
+  } yield FakeProducer(records, offset, ProducerConfig.Standard, beforeProduce, beforeComplete, attributes, onShutdown)
 }
 
 sealed trait ProducerConfig
