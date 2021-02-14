@@ -53,7 +53,7 @@ object EventLoop {
         _ <- report(StoppingEventLoop(clientId, group))
         _ <- running.set(false)
         drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
-        _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
+        _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis)))
         _ <- commitOffsets(consumer, offsets)
       } yield ()
     }.map {
@@ -121,7 +121,7 @@ object EventLoop {
         override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[ZEnv with GreyhoundMetrics, DelayedRebalanceEffect] = {
           pausedPartitionsRef.set(Set.empty) *>
             dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
-              ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group)))
+              ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis)))
             } *>
             commitOffsetsOnRebalance(consumer, offsets)
         }
@@ -215,7 +215,7 @@ object EventLoopMetric {
 
   case class StoppingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
 
-  case class DrainTimeoutExceeded(clientId: ClientId, group: Group) extends EventLoopMetric
+  case class DrainTimeoutExceeded(clientId: ClientId, group: Group, timeoutMs: Long) extends EventLoopMetric
 
   case class HighWatermarkReached(partition: TopicPartition, onOffset: Offset) extends EventLoopMetric
 
