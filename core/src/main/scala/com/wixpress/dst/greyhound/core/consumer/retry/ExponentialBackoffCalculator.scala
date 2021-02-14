@@ -34,7 +34,7 @@ object ExponentialBackoffCalculator {
   def exponentialBackoffs(initialInterval: ZDuration,
                           maxMultiplications: Int,
                           backOffMultiplier: Float,
-                          infiniteRetryMaxInteval: Boolean): Seq[ZDuration] = {
+                          infiniteRetryMaxInterval: Boolean): Seq[ZDuration] = {
     val absBackOffMultiplier = abs(backOffMultiplier)
     val safeMaxMultiplications = max(0, maxMultiplications)
 
@@ -50,7 +50,7 @@ object ExponentialBackoffCalculator {
       else
         calclatedDuration
     })
-    if (!infiniteRetryMaxInteval)
+    if (!infiniteRetryMaxInterval)
       infiniteDurations.take(maxMultiplications)
     else
       infiniteDurations
