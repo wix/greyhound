@@ -31,6 +31,8 @@ trait AdminClient {
   def groupOffsets(groups: Set[String]): RIO[Blocking, Map[GroupTopicPartition, PartitionOffset]]
 
   def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]]
+
+  def deleteTopic(topic: Topic): RIO[Blocking, Unit]
 }
 
 case class TopicPropertiesResult(partitions: Int, properties: Map[String, String])
@@ -117,6 +119,11 @@ object AdminClient {
             }
             )
           } yield groupState
+
+        override def deleteTopic(topic: Topic): RIO[Blocking, Unit] = {
+          effectBlocking(client.deleteTopics(Set(topic).asJava).all())
+            .flatMap(_.asZio).unit
+        }
       }
     }
   }
