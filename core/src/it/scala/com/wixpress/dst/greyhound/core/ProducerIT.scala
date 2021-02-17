@@ -3,8 +3,8 @@ package com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.Serdes.{IntSerde, StringSerde}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord, ProducerRetryPolicy, RecordMetadata}
 import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
-import com.wixpress.dst.greyhound.testkit.ITEnv
-import com.wixpress.dst.greyhound.testkit.ITEnv._
+import com.wixpress.dst.greyhound.testenv.ITEnv
+import com.wixpress.dst.greyhound.testenv.ITEnv._
 import zio._
 import zio.duration._
 

@@ -7,8 +7,8 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHa
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch}
-import com.wixpress.dst.greyhound.testkit.ITEnv
-import com.wixpress.dst.greyhound.testkit.ITEnv.{Env, TestResources, testResources}
+import com.wixpress.dst.greyhound.testenv.ITEnv
+import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
 import org.apache.kafka.common.errors.InvalidTopicException
 import zio.duration.Duration.fromScala
 import zio.{Chunk, Ref, UIO, UManaged}
