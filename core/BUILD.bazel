@@ -63,3 +63,60 @@ deploy_maven(
     tags = ["manual"],
     target = ":assemble-maven",
 )
+
+scala_library(
+    name = "greyhound-testkit",
+    srcs = [
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testkit:sources",
+    ],
+    tags = [
+        "manual",
+        "maven_coordinates=com.wix:greyhound-testkit_2.12:{pom_version}",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//core:greyhound-core",
+        "@dev_zio_zio_2_12",
+        "@org_apache_curator_curator_test",
+        "@org_apache_kafka_kafka_2_12",
+        "@org_apache_kafka_kafka_clients",
+        "@org_slf4j_slf4j_api",
+    ],
+)
+
+assemble_maven(
+    name = "assemble-maven-testkit",
+    developers = {
+        "1": [
+            "name=Natan Silnitsky",
+            "email=natans@wix.com",
+            "organization=Wix",
+        ],
+        "2": [
+            "name=Noam Berman",
+            "email=noambe@wix.com",
+            "organization=Wix",
+        ],
+        "3": [
+            "name=Dmitry Karlinsky",
+            "email=dmitryka@wix.com",
+            "organization=Wix",
+        ],
+    },
+    license = "mit",
+    package = "{maven_packages}",
+    project_description = "Greyhound - Rich Kafka Client with ZIO API",
+    project_name = "Greyhound Testkit",
+    project_url = "https://github.com/wix/greyhound",
+    scm_url = "https://github.com/wix/greyhound.git",
+    tags = ["manual"],
+    target = "//core:greyhound-testkit",
+    version_file = "//central-sync:VERSION",
+)
+
+deploy_maven(
+    name = "deploy-maven-testkit",
+    deployment_properties = "//central-sync:deployment.properties",
+    tags = ["manual"],
+    target = ":assemble-maven-testkit",
+)

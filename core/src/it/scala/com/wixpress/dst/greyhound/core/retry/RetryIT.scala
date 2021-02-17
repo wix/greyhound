@@ -12,8 +12,9 @@ import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig, TopicPartition}
-import com.wixpress.dst.greyhound.testkit.ITEnv._
-import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
+import com.wixpress.dst.greyhound.testenv.ITEnv
+import com.wixpress.dst.greyhound.testenv.ITEnv._
+import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import zio._
 import zio.duration._
 

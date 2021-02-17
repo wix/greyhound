@@ -1,18 +1,20 @@
 package(default_visibility = ["//visibility:public"])
 
-# visibility is extended to allow packaging a jar to deploy to maven central
-sources(["//core:__subpackages__"])
+sources()
 
 scala_library(
-    name = "testkit",
+    name = "testenv",
     srcs = [
-        ":sources",
+      ":sources",
     ],
+    testonly = 1,
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
-#        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_test_2_12",
         "@org_apache_curator_curator_test",
