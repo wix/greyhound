@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
+import com.wixpress.dst.greyhound.core.consumer.EventLoopState.{Paused, Running, ShuttingDown}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
@@ -41,7 +42,7 @@ object EventLoop {
       // TODO how to handle errors in subscribe?
       rebalanceListener = listener(pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
       _ <- subscribe(initialSubscription, rebalanceListener)(consumer)
-      running <- Ref.make(true)
+      running <- Ref.make[EventLoopState](Running)
       fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, positionsRef, offsets, config, clientId, group)
         .repeatWhile(_ == true).forkDaemon
       _ <- partitionsAssigned.await
@@ -51,19 +52,19 @@ object EventLoop {
     start.toManaged {
       case (dispatcher, fiber, offsets, _, running, _) => for {
         _ <- report(StoppingEventLoop(clientId, group))
-        _ <- running.set(false)
+        _ <- running.set(ShuttingDown)
         drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
         _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis)))
         _ <- commitOffsets(consumer, offsets)
       } yield ()
     }.map {
-      case (dispatcher, fiber, _, positionsRef, _, listener) =>
+      case (dispatcher, fiber, _, positionsRef, running, listener) =>
         new EventLoop[GreyhoundMetrics with Blocking] {
           override def pause: URIO[GreyhoundMetrics with Blocking, Unit] =
-            report(PausingEventLoop(clientId, group)) *> dispatcher.pause
+            report(PausingEventLoop(clientId, group)) *> running.set(Paused) *> dispatcher.pause
 
           override def resume: URIO[GreyhoundMetrics with Blocking, Unit] =
-            report(ResumingEventLoop(clientId, group)) *> dispatcher.resume
+            report(ResumingEventLoop(clientId, group)) *> running.set(Running) *> dispatcher.resume
 
           override def isAlive: UIO[Boolean] = fiber.poll.map {
             case Some(Exit.Failure(_)) => false
@@ -90,7 +91,7 @@ object EventLoop {
     ).catchAll(t => report(FailedToUpdatePositions(t, clientId)))
 
 
-  private def pollOnce[R2](running: Ref[Boolean],
+  private def pollOnce[R2](running: Ref[EventLoopState],
                            consumer: Consumer,
                            dispatcher: Dispatcher[R2],
                            paused: Ref[Set[TopicPartition]],
@@ -100,7 +101,7 @@ object EventLoop {
                            clientId: ClientId,
                            group: Group): URIO[R2 with Env, Boolean] =
     running.get.flatMap {
-      case true =>
+      case Running =>
         for {
           _ <- resumePartitions(consumer, clientId, group, dispatcher, paused)
           records <- pollAndHandle(consumer, dispatcher, paused, config)
@@ -108,7 +109,8 @@ object EventLoop {
           _ <- commitOffsets(consumer, offsets)
         } yield true
 
-      case false => UIO(false)
+      case ShuttingDown => UIO(false)
+      case Paused => ZIO.sleep(100.millis).as(true)
     }
 
   private def listener(pausedPartitionsRef: Ref[Set[TopicPartition]],
@@ -243,4 +245,3 @@ case class EventLoopExposedState(latestOffsets: Map[TopicPartition, Offset], dis
   def withDispatcherState(state: Dispatcher.DispatcherState) =
     copy(dispatcherState = dispatcherState.copy(state = state))
 }
-
