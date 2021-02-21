@@ -14,6 +14,7 @@ import zio._
 import zio.blocking.{Blocking, effectBlocking}
 
 import scala.collection.JavaConverters._
+import scala.util.Try
 
 trait AdminClient {
   def listTopics(): RIO[Blocking, Set[String]]
@@ -35,10 +36,10 @@ trait AdminClient {
   def deleteTopic(topic: Topic): RIO[Blocking, Unit]
 }
 
-case class TopicPropertiesResult(partitions: Int, properties: Map[String, String])
+case class TopicPropertiesResult(partitions: Int, properties: Map[String, String], replications: Int)
 
 object TopicPropertiesResult {
-  def empty = TopicPropertiesResult(0, Map.empty)
+  def empty = TopicPropertiesResult(0, Map.empty, 0)
 }
 
 case class PartitionOffset(offset: Long)
@@ -77,9 +78,10 @@ object AdminClient {
 
         override def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
           (describeConfigs(client, topics) zipPar describePartitions(client, topics)).map {
-            case (propertiesMap, partitionsMap) =>
-              partitionsMap.map { case (topic, partitions) =>
-                (topic, TopicPropertiesResult(partitions, propertiesMap.getOrElse(topic, Map.empty))) }
+            case (propertiesMap, partitionsAndReplicationPerTopic) =>
+              partitionsAndReplicationPerTopic.map { case (topic, (replication, partitions)) =>
+                (topic, TopicPropertiesResult(partitions, propertiesMap.getOrElse(topic, Map.empty), replication))
+              }
           }
 
 
@@ -102,9 +104,9 @@ object AdminClient {
             result <- ZIO.foreach(groups)(group => effectBlocking(group -> client.listConsumerGroupOffsets(group)))
             // TODO: remove ._1 , ._2
             rawOffsetsEffects = result.toMap.mapValues(_.partitionsToOffsetAndMetadata().asZio)
-            offsetsEffects = rawOffsetsEffects.map(offset => offset._2.map(f => f.asScala.map(p => p.copy(GroupTopicPartition(offset._1, core.TopicPartition(p._1)),PartitionOffset(p._2.offset())))))
+            offsetsEffects = rawOffsetsEffects.map(offset => offset._2.map(f => f.asScala.map(p => p.copy(GroupTopicPartition(offset._1, core.TopicPartition(p._1)), PartitionOffset(p._2.offset())))))
             offsetsMapSets <- ZIO.collectAll(offsetsEffects)
-            groupOffsets = offsetsMapSets.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++y)
+            groupOffsets = offsetsMapSets.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++ y)
           } yield groupOffsets
 
         override def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]] =
@@ -134,9 +136,11 @@ object AdminClient {
         (resource.name, config.entries().asScala.map(entry => (entry.name -> entry.value)).toMap)
       }.toMap)
 
-  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, Int]] =
+  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, (Int, Int)]] =
     effectBlocking(client.describeTopics(topics.asJavaCollection)).map(result =>
-      result.all().get(30, SECONDS).asScala.mapValues(_.partitions().size()).toMap)
+      result.all().get(30, SECONDS).asScala.mapValues(desc =>
+        (Try(desc.partitions().asScala.minBy(_.replicas().size)).map(_.replicas().size()).getOrElse(0),
+          desc.partitions().size())).toMap)
 
   def isTopicExistsError(e: Throwable): Boolean = e.isInstanceOf[TopicExistsException] ||
     Option(e.getCause).exists(_.isInstanceOf[TopicExistsException])
