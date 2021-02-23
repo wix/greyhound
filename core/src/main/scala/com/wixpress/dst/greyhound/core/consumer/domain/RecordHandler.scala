@@ -128,6 +128,12 @@ trait RecordHandler[-R, +E, K, V] {
     }
   }
 
+  /**
+   * creates a RecordHandler that will run the given function before running this handlers' `handle`
+   */
+  def <* [R1 <: R](f: ConsumerRecord[K, V] => URIO[R1, Unit]): RecordHandler[R1, E, K, V] = (record: ConsumerRecord[K, V]) => {
+    f(record) *> self.handle(record)
+  }
 }
 
 case class SerializationError(cause: Throwable) extends RuntimeException(cause)
