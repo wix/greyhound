@@ -77,7 +77,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
           "retry-backoff" -> backoff)
         _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0l, 0l, 0L)).fork
         _ <- TestClock.adjust(1.second)
-        end <- executionTime.await.timeoutFail(TimeoutWaitingForAssertion)(5.seconds)
+        end <- executionTime.await.disconnect.timeoutFail(TimeoutWaitingForAssertion)(5.seconds)
       } yield end must equalTo(begin.plusSeconds(1))
     }
 
