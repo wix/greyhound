@@ -42,10 +42,11 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
       for {
         TestResources(kafka, _) <- getShared
+        before <- kafka.adminClient.topicExists(topic1.name)
         _ <- kafka.adminClient.createTopics(Set(topic1))
-        result <- kafka.adminClient.topicExists(topic1.name)
+        after <- kafka.adminClient.topicExists(topic1.name)
       } yield {
-        result === true
+        after === true and before === false
       }
     }
 
