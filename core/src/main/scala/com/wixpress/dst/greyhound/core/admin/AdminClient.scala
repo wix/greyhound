@@ -132,13 +132,13 @@ object AdminClient {
 
   private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, Map[String, String]]] =
     effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)).map(result =>
-      result.all().get(30, SECONDS).asScala.map { case (resource, config) =>
-        (resource.name, config.entries().asScala.map(entry => (entry.name -> entry.value)).toMap)
+      Try(result.all().get(30, SECONDS).asScala).getOrElse(Map.empty).map { case (resource, config) =>
+        (resource.name, config.entries().asScala.map(entry => entry.name -> entry.value).toMap)
       }.toMap)
 
   private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, (Int, Int)]] =
     effectBlocking(client.describeTopics(topics.asJavaCollection)).map(result =>
-      result.all().get(30, SECONDS).asScala.mapValues(desc =>
+      Try(result.all().get(30, SECONDS).asScala).getOrElse(Map.empty).mapValues(desc =>
         (Try(desc.partitions().asScala.minBy(_.replicas().size)).map(_.replicas().size()).getOrElse(0),
           desc.partitions().size())).toMap)
 
