@@ -124,4 +124,6 @@ trait EmptyConsumer extends Consumer {
   override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
   override def position(topicPartition: TopicPartition): Task[Offset] = Task(-1L)
+
+  override def config: ConsumerConfig = ConsumerConfig("", "")
 }
