@@ -45,6 +45,8 @@ trait Consumer {
   def position(topicPartition: TopicPartition): Task[Offset]
 
   def assignment: Task[Set[TopicPartition]]
+
+  def config: ConsumerConfig
 }
 
 object Consumer {
@@ -59,12 +61,12 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(config: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
+  def make(cfg: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
     semaphore <- Semaphore.make(1).toManaged_
-    consumer <- makeConsumer(config, semaphore)
+    consumer <- makeConsumer(cfg, semaphore)
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
-    missingOffsetsCommitter <- MissingOffsetsCommitter.make(config.clientId, config.groupId, UnsafeOffsetOperations.make(consumer), 500.millis).toManaged_
+    missingOffsetsCommitter <- MissingOffsetsCommitter.make(cfg.clientId, cfg.groupId, UnsafeOffsetOperations.make(consumer), 500.millis).toManaged_
   } yield {
     new Consumer {
       override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
@@ -119,6 +121,8 @@ object Consumer {
       override def assignment: Task[Set[TopicPartition]] = {
         withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
       }
+
+      override def config: ConsumerConfig = cfg
 
       private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): Task[A] =
         semaphore.withPermit(Task(f(consumer)))

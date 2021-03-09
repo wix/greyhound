@@ -114,6 +114,8 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   override def position(topicPartition: TopicPartition): Task[Offset] =
     internal.position(topicPartition)
+
+  override def config: ConsumerConfig = internal.config
 }
 
 object ReportingConsumer {
