@@ -7,7 +7,10 @@ scala_library(
     srcs = [
         "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-future_2.12:{pom_version}","manual"],
+    tags = [
+        "manual",
+        "maven_coordinates=com.wix:greyhound-future_2.12:{pom_version}",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
@@ -40,14 +43,14 @@ assemble_maven(
     project_name = "Greyhound Future",
     project_url = "https://github.com/wix/greyhound",
     scm_url = "https://github.com/wix/greyhound.git",
+    tags = ["manual"],
     target = "//future-interop:greyhound-future",
     version_file = "//central-sync:VERSION",
-    tags = ["manual"],
 )
 
 deploy_maven(
     name = "deploy-maven",
     deployment_properties = "//central-sync:deployment.properties",
-    target = ":assemble-maven",
     tags = ["manual"],
+    target = ":assemble-maven",
 )
