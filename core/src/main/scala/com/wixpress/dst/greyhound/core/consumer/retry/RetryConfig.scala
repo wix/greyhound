@@ -117,17 +117,17 @@ object RetryConfig {
   def infiniteBlockingRetry(interval: Duration): RetryConfig =
     ZRetryConfig.infiniteBlockingRetry(ZDuration.fromScala(interval))
 
-  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
-                                      maximalInterval: ZDuration,
+  def exponentialBackoffBlockingRetry(initialInterval: Duration,
+                                      maximalInterval: Duration,
                                       backOffMultiplier: Float,
                                       infiniteRetryMaxInterval: Boolean): RetryConfig =
-    ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maximalInterval, backOffMultiplier, infiniteRetryMaxInterval)
+    ZRetryConfig.exponentialBackoffBlockingRetry(ZDuration.fromScala(initialInterval), ZDuration.fromScala(maximalInterval), backOffMultiplier, infiniteRetryMaxInterval)
 
-  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
+  def exponentialBackoffBlockingRetry(initialInterval: Duration,
                                       maxMultiplications: Int,
                                       backOffMultiplier: Float,
                                       infiniteRetryMaxInterval: Boolean): RetryConfig =
-    ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maxMultiplications, backOffMultiplier, infiniteRetryMaxInterval)
+    ZRetryConfig.exponentialBackoffBlockingRetry(ZDuration.fromScala(initialInterval), maxMultiplications, backOffMultiplier, infiniteRetryMaxInterval)
 
   def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[Duration], nonBlockingBackoffs: List[Duration]): RetryConfig =
     ZRetryConfig.blockingFollowedByNonBlockingRetry(blockingBackoffs = blockingBackoffs.map(ZDuration.fromScala), nonBlockingBackoffs = NonBlockingBackoffPolicy(nonBlockingBackoffs.map(ZDuration.fromScala)))
