@@ -30,5 +30,5 @@ object Serdes {
   val LongSerde = Serde(new LongSerde).inmap(_.toLong)(java.lang.Long.valueOf)
   val InstantSerde = LongSerde.inmap(Instant.ofEpochMilli)(_.toEpochMilli)
   val DurationSerde = LongSerde.inmap(Duration.fromNanos)(_.toNanos)
-  val UnitSerde = Serde(new VoidSerde).inmap(Option(_).fold(Unit) { _ =>  Unit})(_ => null)
+  val UnitSerde = Serde(new VoidSerde).inmap(_ => Unit)(_ => null)
 }
