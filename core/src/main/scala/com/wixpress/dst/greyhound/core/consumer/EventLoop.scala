@@ -244,4 +244,6 @@ object EventLoopState {
 case class EventLoopExposedState(latestOffsets: Map[TopicPartition, Offset], dispatcherState: DispatcherExposedState) {
   def withDispatcherState(state: Dispatcher.DispatcherState) =
     copy(dispatcherState = dispatcherState.copy(state = state))
+
+  def topics = dispatcherState.topics
 }
