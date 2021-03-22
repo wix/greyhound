@@ -13,7 +13,9 @@ object TestMetrics {
     def reported: UIO[List[GreyhoundMetric]] = queue.takeAll
   }
 
-  def make: UManaged[TestMetrics] = {
+  def make: UManaged[TestMetrics] = make()
+
+  def make(andAlso: GreyhoundMetrics.Service = GreyhoundMetrics.Service.noop): UManaged[TestMetrics] = {
     val logger = LoggerFactory.getLogger("metrics")
 
     def reportLive(metric: GreyhoundMetric): URIO[Blocking, Unit] = {
@@ -22,14 +24,17 @@ object TestMetrics {
 
     Queue.unbounded[GreyhoundMetric].toManaged_.map { q =>
       val service = new Service {
-        override def report(metric: GreyhoundMetric): URIO[Blocking, Unit] = reportLive(metric) *> q.offer(metric).unit
+        override def report(metric: GreyhoundMetric): URIO[Blocking, Unit] =
+          reportLive(metric) *> q.offer(metric).unit *> andAlso.report(metric)
         override def queue: Queue[GreyhoundMetric] = q
       }
       Has(service) ++ Has(service: GreyhoundMetrics.Service)
     }
   }
 
-  def makeLayer = ZLayer.fromManagedMany(make)
+  def makeLayer: ULayer[TestMetrics] = makeLayer[Any]()
+  def makeLayer[R](andAlso: R => GreyhoundMetrics.Service = (_:R) => GreyhoundMetrics.Service.noop): URLayer[R, TestMetrics] =
+    ZLayer.fromFunctionManyManaged[R, Nothing, TestMetrics](a => make(andAlso(a)))
 
   def queue: URIO[TestMetrics, Queue[GreyhoundMetric]] =
     ZIO.access[TestMetrics](_.get.queue)
