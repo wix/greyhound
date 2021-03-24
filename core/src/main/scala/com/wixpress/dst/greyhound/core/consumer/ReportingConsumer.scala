@@ -169,6 +169,7 @@ object ConsumerMetric {
                                      partitions: Set[TopicPartition],
                                      offsets: Map[TopicPartition, Offset],
                                      elapsed: Duration,
+                                     seekForwardTo: Map[TopicPartition, Offset],
                                      error: Option[Throwable] = None) extends ConsumerMetric
 
 }

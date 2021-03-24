@@ -57,7 +57,7 @@ object RecordConsumer {
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
       consumer <- Consumer.make(
-        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener))
+        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener, config.seekForwardTo))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
@@ -196,7 +196,9 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
                                 extraProperties: Map[String, String] = Map.empty,
-                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty) extends CommonGreyhoundConfig {
+                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
+                                seekForwardTo: Map[TopicPartition, Offset] = Map.empty
+                               ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
 }

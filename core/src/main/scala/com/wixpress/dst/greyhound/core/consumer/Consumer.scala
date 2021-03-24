@@ -66,15 +66,22 @@ object Consumer {
     consumer <- makeConsumer(cfg, semaphore)
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
-    missingOffsetsCommitter <- MissingOffsetsCommitter.make(cfg.clientId, cfg.groupId, UnsafeOffsetOperations.make(consumer), 500.millis).toManaged_
+    // we also may want to seek forward to some given initial offsets
+    offsetsInitializer <- OffsetsInitializer.make(
+      cfg.clientId,
+      cfg.groupId,
+      UnsafeOffsetOperations.make(consumer),
+      timeout = 500.millis,
+      timeoutIfSeekForward = 10.seconds,
+      seekForwardTo = cfg.seekForwardTo).toManaged_
   } yield {
     new Consumer {
       override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(missingOffsetsCommitter.commitMissingOffsets, config.additionalListener *> rebalanceListener)
+        listener(offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
       override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(missingOffsetsCommitter.commitMissingOffsets, config.additionalListener *> rebalanceListener)
+        listener(offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
       override def poll(timeout: Duration): RIO[Blocking, Records] =
@@ -164,7 +171,9 @@ case class ConsumerConfig(bootstrapServers: String,
                           clientId: ClientId = s"wix-consumer-${Random.alphanumeric.take(5).mkString}",
                           offsetReset: OffsetReset = OffsetReset.Latest,
                           extraProperties: Map[String, String] = Map.empty,
-                          additionalListener: RebalanceListener[Any] = RebalanceListener.Empty) extends CommonGreyhoundConfig {
+                          additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
+                          seekForwardTo: Map[TopicPartition, Offset] = Map.empty
+                         ) extends CommonGreyhoundConfig {
 
 
   override def kafkaProps: Map[String, String] = Map(
@@ -199,6 +208,8 @@ trait UnsafeOffsetOperations {
   def position(partition: TopicPartition, timeout: zio.duration.Duration): Offset
 
   def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
+
+  def seek(offsets: Map[TopicPartition, Offset]): Unit
 }
 
 object UnsafeOffsetOperations {
@@ -221,5 +232,10 @@ object UnsafeOffsetOperations {
     override def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit = {
       consumer.commitSync(kafkaOffsets(offsets), timeout)
     }
+
+    override def seek(offsets: Map[TopicPartition, Offset]): Unit =
+      offsets.foreach {
+        case (tp, offset) => consumer.seek(tp.asKafka, offset)
+      }
   }
 }
