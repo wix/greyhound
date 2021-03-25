@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.lang
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._
@@ -16,6 +17,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import zio._
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
 
@@ -39,6 +41,8 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
   def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
   def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
+
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, java.lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 }
 
 object RecordConsumer {
@@ -125,6 +129,9 @@ object RecordConsumer {
         } yield result
 
       override def clientId: ClientId = config.clientId
+
+      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
+        consumer.offsetsForTimes(topicPartitionsOnTimestamp)
     }
 
   private def maybeAddRetryTopics[E, R](retryConfig: RetryConfig, config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {

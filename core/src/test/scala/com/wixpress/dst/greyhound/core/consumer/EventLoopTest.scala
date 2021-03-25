@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.lang
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
@@ -12,6 +13,7 @@ import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic, TopicPartition}
 import zio._
 import zio.blocking.Blocking
+import zio.clock.Clock
 import zio.duration._
 
 class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
@@ -126,4 +128,6 @@ trait EmptyConsumer extends Consumer {
   override def position(topicPartition: TopicPartition): Task[Offset] = Task(-1L)
 
   override def config: ConsumerConfig = ConsumerConfig("", "")
+
+  override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 }
