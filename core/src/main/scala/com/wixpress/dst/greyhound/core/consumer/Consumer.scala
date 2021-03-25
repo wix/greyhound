@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
-import java.{time, util}
+import java.{lang, time, util}
 
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core._
@@ -12,13 +12,13 @@ import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
+import zio.clock.Clock
 import zio.duration._
 
 import scala.collection.JavaConverters._
 import scala.util.Random
 
 trait Consumer {
-
   def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
 
   def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
@@ -28,6 +28,8 @@ trait Consumer {
   def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit]
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]]
+
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 
   def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect]
 
@@ -136,6 +138,13 @@ object Consumer {
 
       private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
         semaphore.withPermit(effectBlocking(f(consumer)))
+
+      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = {
+        val kafkaTopicPartitionsOnTimestamp = topicPartitionsOnTimestamp.map { case (tp, ts) => tp.asKafka -> ts }
+        withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.asJava))
+          .map(_.asScala.filter { case (_, offset) => offset != null }
+            .map { case (ktp, offset) => TopicPartition(ktp) -> offset.offset()}.toMap)
+      }
     }
   }
 

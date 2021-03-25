@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.lang
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core.{TopicPartition, _}
@@ -8,6 +9,7 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
+import zio.clock.Clock
 import zio.duration.Duration
 import zio.{RIO, Task, UIO, ZIO}
 
@@ -116,6 +118,9 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
     internal.position(topicPartition)
 
   override def config: ConsumerConfig = internal.config
+
+  override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
+    internal.offsetsForTimes(topicPartitionsOnTimestamp)
 }
 
 object ReportingConsumer {
