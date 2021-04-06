@@ -3,6 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer
 import java.lang
 import java.util.regex.Pattern
 
+import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopTest._
@@ -123,7 +124,7 @@ trait EmptyConsumer extends Consumer {
 
   override def assignment: Task[Set[TopicPartition]] = UIO(Set.empty)
 
-  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] = ZIO(Map.empty)
+  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
   override def position(topicPartition: TopicPartition): Task[Offset] = Task(-1L)
 
@@ -131,5 +132,5 @@ trait EmptyConsumer extends Consumer {
 
   override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
-  override def listTopics: RIO[Blocking, Map[Topic, List[TopicPartition]]] = UIO(Map.empty)
+  override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = UIO(Map.empty)
 }

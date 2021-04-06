@@ -3,12 +3,12 @@ package com.wixpress.dst.greyhound.core.consumer
 import java.lang
 import java.util.regex.Pattern
 
+import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.{TopicPartition, _}
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import org.apache.kafka.common.PartitionInfo
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration.Duration
@@ -112,7 +112,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   override def assignment: Task[Set[TopicPartition]] = internal.assignment
 
-  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] =
+  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
     internal.endOffsets(partitions)
 
   override def position(topicPartition: TopicPartition): Task[Offset] =
@@ -123,7 +123,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
   override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
     internal.offsetsForTimes(topicPartitionsOnTimestamp)
 
-  override def listTopics: RIO[Blocking, Map[Topic, List[TopicPartition]]] = internal.listTopics
+  override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = internal.listTopics
 }
 
 object ReportingConsumer {
