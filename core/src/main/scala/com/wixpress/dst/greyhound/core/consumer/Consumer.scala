@@ -27,7 +27,7 @@ trait Consumer {
 
   def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit]
 
-  def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]]
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
   def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 
@@ -50,7 +50,7 @@ trait Consumer {
 
   def config: ConsumerConfig
 
-  def listTopics: RIO[Blocking, Map[Topic, List[TopicPartition]]]
+  def listTopics: RIO[Blocking, Map[Topic, List[PartitionInfo]]]
 }
 
 object Consumer {
@@ -93,7 +93,7 @@ object Consumer {
           c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
         }
 
-      override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] =
+      override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
         .map(_.asScala.map { case (tp: KafkaTopicPartition, o: java.lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
 
@@ -148,9 +148,9 @@ object Consumer {
             .map { case (ktp, offset) => TopicPartition(ktp) -> offset.offset()}.toMap)
       }
 
-      override def listTopics: RIO[Blocking, Map[Topic, List[TopicPartition]]] =
+      override def listTopics: RIO[Blocking, Map[Topic, List[PartitionInfo]]] =
         withConsumer(_.listTopics()).map { topics =>
-          topics.asScala.mapValues(_.asScala.toList.map(TopicPartition.apply)).toMap
+          topics.asScala.mapValues(_.asScala.toList.map(PartitionInfo.apply)).toMap
         }
     }
   }
