@@ -130,4 +130,6 @@ trait EmptyConsumer extends Consumer {
   override def config: ConsumerConfig = ConsumerConfig("", "")
 
   override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
+
+  override def listTopics: RIO[Blocking, Map[Topic, List[TopicPartition]]] = UIO(Map.empty)
 }
