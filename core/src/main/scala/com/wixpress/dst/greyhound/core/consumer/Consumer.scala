@@ -3,8 +3,8 @@ package com.wixpress.dst.greyhound.core.consumer
 import java.util.regex.Pattern
 import java.{lang, time, util}
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
@@ -49,6 +49,8 @@ trait Consumer {
   def assignment: Task[Set[TopicPartition]]
 
   def config: ConsumerConfig
+
+  def listTopics: RIO[Blocking, Map[Topic, List[TopicPartition]]]
 }
 
 object Consumer {
@@ -145,6 +147,11 @@ object Consumer {
           .map(_.asScala.filter { case (_, offset) => offset != null }
             .map { case (ktp, offset) => TopicPartition(ktp) -> offset.offset()}.toMap)
       }
+
+      override def listTopics: RIO[Blocking, Map[Topic, List[TopicPartition]]] =
+        withConsumer(_.listTopics()).map { topics =>
+          topics.asScala.mapValues(_.asScala.toList.map(TopicPartition.apply)).toMap
+        }
     }
   }
 
