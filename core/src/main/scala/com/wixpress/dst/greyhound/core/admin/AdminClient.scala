@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit.SECONDS
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
@@ -34,6 +34,8 @@ trait AdminClient {
   def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]]
 
   def deleteTopic(topic: Topic): RIO[Blocking, Unit]
+
+  def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]]
 }
 
 case class TopicPropertiesResult(partitions: Int, properties: Map[String, String], replications: Int)
@@ -125,6 +127,13 @@ object AdminClient {
         override def deleteTopic(topic: Topic): RIO[Blocking, Unit] = {
           effectBlocking(client.deleteTopics(Set(topic).asJava).all())
             .flatMap(_.asZio).unit
+        }
+
+        override def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]] = {
+          for {
+            desc <- effectBlocking(client.describeConsumerGroups(groupIds.asJava).all())
+            all <- desc.asZio
+          } yield all.asScala.toMap.mapValues(ConsumerGroupDescription.apply)
         }
       }
     }
