@@ -33,6 +33,8 @@ object GreyhoundMetrics {
   def fromReporter(report: GreyhoundMetric => Unit): GreyhoundMetrics.Service =
     metric => ZIO.effectTotal(report(metric))
 
+  def noop: GreyhoundMetrics = Has(Service.noop)
+
 }
 
 trait GreyhoundMetric extends Product with Serializable
