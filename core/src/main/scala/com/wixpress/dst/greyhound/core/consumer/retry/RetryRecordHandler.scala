@@ -34,7 +34,7 @@ object RetryRecordHandler {
 
     new RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] {
       override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, Any] =
-        record.headers.get[String](RetryHeader.OriginalTopic, StringSerde).catchAll(_ => ZIO.none)
+        header(record, RetryHeader.OriginalTopic)
           .flatMap { originalTopic =>
             retryConfig.retryType(originalTopic.getOrElse(record.topic)) match {
               case BlockingFollowedByNonBlocking => blockingAndNonBlockingHandler.handle(record)
@@ -45,6 +45,9 @@ object RetryRecordHandler {
           }
     }
   }
+
+  private def header[V, K, E, R, R2](record: ConsumerRecord[Any, Any], key: String) =
+    record.headers.get[String](key, StringSerde).catchAll(_ => ZIO.none)
 }
 
 object ZIOHelper {
@@ -53,6 +56,7 @@ object ZIOHelper {
       def loop: ZIO[R, E, LastHandleResult] =
         if (i.hasNext) f(i.next).flatMap(result => if (result.shouldContinue) loop else (UIO(result)))
         else UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
+
       loop
     }
 }

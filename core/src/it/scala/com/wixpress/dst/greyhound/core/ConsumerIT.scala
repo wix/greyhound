@@ -14,8 +14,9 @@ import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, CountDownLatch, eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.Gate
-import com.wixpress.dst.greyhound.testkit.ITEnv.{clientId, _}
-import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
+import com.wixpress.dst.greyhound.testenv.ITEnv
+import com.wixpress.dst.greyhound.testenv.ITEnv.{clientId, _}
+import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import zio.clock.{Clock, sleep}
 import zio.console.Console
 import zio.duration._

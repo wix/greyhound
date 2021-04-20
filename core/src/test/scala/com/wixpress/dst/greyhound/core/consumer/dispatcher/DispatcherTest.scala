@@ -1,12 +1,12 @@
 package com.wixpress.dst.greyhound.core.consumer.dispatcher
 
-import com.wixpress.dst.greyhound.core.Headers
+import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric.RecordHandled
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.{Dispatcher, SubmitResult}
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult.Rejected
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit._
 import org.specs2.specification.Scope
@@ -84,7 +84,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
       for {
         queue <- Queue.bounded[Record](1)
         dispatcher <- Dispatcher.make[TestClock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"block resume paused partitions -queue.offer result: ${result}"))),
-          lowWatermark, highWatermark, 6500)
+          lowWatermark, highWatermark, delayResumeOfPausedPartition = 6500)
         _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
           submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
         }

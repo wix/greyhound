@@ -107,10 +107,12 @@ object Producer {
 }
 
 object ProducerR {
-  implicit class Ops[R <: Has[_]: Tag](producer: ProducerR[R]) {
-    def provide(env: R) = new ProducerR[Any] {
+  implicit class Ops[R <: Has[_]](producer: ProducerR[R]) {
+    // R1 is a work around to an apparent bug in Has.union ¯\_(ツ)_/¯
+    // https://github.com/zio/zio/issues/3558#issuecomment-776051184
+    def provide[R1 <: R : Tag](env: R1) = new ProducerR[Any] {
       override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
-        producer.produceAsync(record).provideSome[Blocking](_.union[R](env))
+        producer.produceAsync(record).provideSome[Blocking](_.union[R1](env))
 
       override def attributes: Map[String, String] = producer.attributes
 
@@ -121,6 +123,23 @@ object ProducerR {
         producer.produceAsync(record)
 
       override def shutdown: UIO[Unit] = onShutdown *> producer.shutdown
+
+      override def attributes: Map[String, String] = producer.attributes
+    }
+
+    def tapBoth(onError: (Topic, Cause[ProducerError]) => URIO[R, Unit], onSuccess: RecordMetadata => URIO[R, Unit]) = new ProducerR[R] {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
+        for {
+          called <- Ref.make(false)
+          once = ZIO.whenM(called.getAndUpdate(_ => true).negate)(_: URIO[R, Unit])
+          env <- ZIO.environment[R]
+          res <- producer.produceAsync(record)
+        } yield res
+          .tapCause(e => once(onError(record.topic, e)).provide(env))
+          .tap(r => once(onSuccess(r)).provide(env))
+      }
+
+      override def shutdown: UIO[Unit] = producer.shutdown
 
       override def attributes: Map[String, String] = producer.attributes
     }

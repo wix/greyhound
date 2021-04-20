@@ -5,7 +5,7 @@ import java.time.Instant
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
@@ -21,6 +21,7 @@ import zio.random.{Random, nextBytes, nextIntBounded}
 import zio.test.environment.{TestClock, TestRandom}
 
 class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
+
 
   override def env =
     for {
@@ -76,7 +77,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
           "retry-backoff" -> backoff)
         _ <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0l, 0l, 0L)).fork
         _ <- TestClock.adjust(1.second)
-        end <- executionTime.await
+        end <- executionTime.await.disconnect.timeoutFail(TimeoutWaitingForAssertion)(5.seconds)
       } yield end must equalTo(begin.plusSeconds(1))
     }
 
@@ -305,3 +306,5 @@ object RetryConsumerRecordHandlerTest {
 
   val cause = new RuntimeException("cause")
 }
+
+object TimeoutWaitingForAssertion extends RuntimeException

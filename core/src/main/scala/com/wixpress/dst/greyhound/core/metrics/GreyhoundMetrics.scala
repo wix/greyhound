@@ -22,6 +22,9 @@ object GreyhoundMetrics {
       val logger = LoggerFactory.getLogger("metrics")
       fromReporter(metric => logger.info(metric.toString))
     }
+    val noop = new Service {
+      override def report(metric: GreyhoundMetric): URIO[Blocking, Unit] = ZIO.unit
+    }
   }
 
   lazy val liveLayer = ZLayer.succeed(Service.Live)
@@ -29,6 +32,8 @@ object GreyhoundMetrics {
 
   def fromReporter(report: GreyhoundMetric => Unit): GreyhoundMetrics.Service =
     metric => ZIO.effectTotal(report(metric))
+
+  def noop: GreyhoundMetrics = Has(Service.noop)
 
 }
 

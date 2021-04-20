@@ -12,6 +12,7 @@ specs2_ite2e_test(
     deps = [
         "//core/src/it/resources",
         "//core/src/it/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testenv",
         "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
@@ -23,6 +24,5 @@ specs2_ite2e_test(
         "@ch_qos_logback_logback_classic",
         "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_clients",
-        "@org_scala_lang_scala_library",
     ],
 )

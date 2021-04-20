@@ -7,9 +7,10 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHa
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Group, Topic}
-import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka}
+import com.wixpress.dst.greyhound.testenv.ITEnv
+import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import zio.duration._
-import com.wixpress.dst.greyhound.testkit.ITEnv._
+import com.wixpress.dst.greyhound.testenv.ITEnv._
 import zio._
 
 

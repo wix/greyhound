@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.consumer.domain.TopicPartition
+import com.wixpress.dst.greyhound.core.TopicPartition
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 
 sealed trait RetryRecordHandlerMetric extends GreyhoundMetric

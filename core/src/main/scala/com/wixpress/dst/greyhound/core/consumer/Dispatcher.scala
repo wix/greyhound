@@ -6,10 +6,10 @@ import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic, TopicPartition}
 import zio._
 import zio.clock.Clock
 import zio.duration.{Duration, _}
@@ -41,6 +41,7 @@ object Dispatcher {
               handle: Record => URIO[R, Any],
               lowWatermark: Int,
               highWatermark: Int,
+              drainTimeout: Duration = 15.seconds,
               delayResumeOfPausedPartition: Long = 0): UIO[Dispatcher[R]] =
     for {
       state <- Ref.make[DispatcherState](DispatcherState.Running)
@@ -49,7 +50,7 @@ object Dispatcher {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
         for {
           _ <- report(SubmittingRecord(group, clientId, record))
-          partition = TopicPartition(record)
+          partition = RecordTopicPartition(record)
           worker <- workerFor(partition)
           submitted <- worker.submit(record)
         } yield if (submitted) Submitted else Rejected
@@ -121,7 +122,7 @@ object Dispatcher {
             case Some(worker) => ZIO.succeed(worker)
             case None => for {
               _ <- report(StartingWorker(group, clientId, partition))
-              worker <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition)
+              worker <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout)
               _ <- workers.update(_ + (partition -> worker))
             } yield worker
           }
@@ -162,7 +163,7 @@ object Dispatcher {
 
     def expose: URIO[Clock, WorkerExposedState]
 
-    def shutdown: UIO[Unit]
+    def shutdown: URIO[Clock, Unit]
 
     def clearPausedPartitionDuration: UIO[Unit]
 
@@ -175,7 +176,8 @@ object Dispatcher {
                 capacity: Int,
                 group: Group,
                 clientId: ClientId,
-                partition: TopicPartition): URIO[R with Env, Worker] = for {
+                partition: TopicPartition,
+                drainTimeout: Duration): URIO[R with Env, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber <-
@@ -200,8 +202,12 @@ object Dispatcher {
                 state.reachedHighWatermarkSince.map(currentTime - _)))
           }
 
-      override def shutdown: UIO[Unit] =
-        fiber.interrupt.unit
+      override def shutdown: URIO[Clock, Unit] =
+        for {
+          _ <- internalState.update(_.shutdown).commit
+          timeout <- fiber.join.disconnect.timeout(drainTimeout)
+          _ <- ZIO.when(timeout.isEmpty)(fiber.interrupt.disconnect)
+        } yield Unit
 
       override def clearPausedPartitionDuration: UIO[Unit] = internalState.update(_.clearReachedHighWatermark).commit
 
@@ -220,22 +226,24 @@ object Dispatcher {
           case DispatcherState.Running => queue.poll.flatMap {
             case Some(record) => report(TookRecordFromQueue(record, group, clientId)) *>
               internalState.update(_.started).commit *>
-              handle(record).uninterruptible
-                .as(true)
-            case None => UIO(true).delay(5.millis)
+              handle(record).interruptible *>
+              isActive(internalState)
+            case None => isActive(internalState).delay(5.millis)
           }
           case DispatcherState.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition)) *>
-              resume.await.timeout(30.seconds)
-                .as(true)
+              resume.await.timeout(30.seconds) *>
+              isActive(internalState)
           case DispatcherState.ShuttingDown =>
             UIO(false)
         }
   }
 
+  private def isActive[R](internalState: TRef[WorkerInternalState]) =
+    internalState.get.map(_.shuttingDown).commit.negate
 }
 
-case class WorkerInternalState(currentExecutionStarted: Option[Long], reachedHighWatermarkSince: Option[Long]) {
+case class WorkerInternalState(currentExecutionStarted: Option[Long], reachedHighWatermarkSince: Option[Long], shuttingDown: Boolean = false) {
   def cleared = copy(currentExecutionStarted = None)
 
   def started = copy(currentExecutionStarted = Some(System.currentTimeMillis()))
@@ -243,6 +251,8 @@ case class WorkerInternalState(currentExecutionStarted: Option[Long], reachedHig
   def reachedHighWatermark(nowMs: Long): WorkerInternalState = copy(reachedHighWatermarkSince = Some(nowMs))
 
   def clearReachedHighWatermark = copy(reachedHighWatermarkSince = None)
+
+  def shutdown = copy(shuttingDown = true)
 }
 
 object WorkerInternalState {

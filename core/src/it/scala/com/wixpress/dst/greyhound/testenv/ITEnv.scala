@@ -1,12 +1,12 @@
-package com.wixpress.dst.greyhound.testkit
+package com.wixpress.dst.greyhound.testenv
 
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ReportingProducer}
 import com.wixpress.dst.greyhound.core.testkit.TestMetrics
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
+import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import zio.duration._
-import zio.{ZIO, ZManaged, random, test}
-import zio._
+import zio.{UManaged, ZIO, ZManaged, random, test}
 
 object ITEnv {
   type Env = TestMetrics with zio.ZEnv
