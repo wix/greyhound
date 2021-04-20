@@ -7,7 +7,10 @@ java_library(
     srcs = [
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-java-core:{pom_version}","manual"],
+    tags = [
+        "manual",
+        "maven_coordinates=com.wix:greyhound-java-core:{pom_version}",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
@@ -21,12 +24,15 @@ scala_library(
     srcs = [
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/scala:sources",
     ],
-    tags = ["maven_coordinates=com.wix:greyhound-java:{pom_version}","manual"],
+    tags = [
+        "manual",
+        "maven_coordinates=com.wix:greyhound-java:{pom_version}",
+    ],
     visibility = ["//visibility:public"],
     deps = [
-        "//java-interop:greyhound-java-core",
         "//core:greyhound-core",
         "//future-interop:greyhound-future",
+        "//java-interop:greyhound-java-core",
         "@org_apache_kafka_kafka_clients",
     ],
 )
@@ -56,18 +62,17 @@ assemble_maven(
     project_name = "Greyhound Java Core",
     project_url = "https://github.com/wix/greyhound",
     scm_url = "https://github.com/wix/greyhound.git",
+    tags = ["manual"],
     target = "//java-interop:greyhound-java-core",
     version_file = "//central-sync:VERSION",
-    tags = ["manual"],
 )
 
 deploy_maven(
     name = "deploy-maven-java-core",
     deployment_properties = "//central-sync:deployment.properties",
-    target = ":assemble-maven-java-core",
     tags = ["manual"],
+    target = ":assemble-maven-java-core",
 )
-
 
 assemble_maven(
     name = "assemble-maven",
@@ -94,14 +99,14 @@ assemble_maven(
     project_name = "Greyhound Java",
     project_url = "https://github.com/wix/greyhound",
     scm_url = "https://github.com/wix/greyhound.git",
+    tags = ["manual"],
     target = "//java-interop:greyhound-java",
     version_file = "//central-sync:VERSION",
-    tags = ["manual"],
 )
 
 deploy_maven(
     name = "deploy-maven",
     deployment_properties = "//central-sync:deployment.properties",
-    target = ":assemble-maven",
     tags = ["manual"],
+    target = ":assemble-maven",
 )

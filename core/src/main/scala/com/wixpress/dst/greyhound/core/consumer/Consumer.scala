@@ -1,24 +1,24 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
-import java.{time, util}
+import java.{lang, time, util}
 
-import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.Consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
+import zio.clock.Clock
 import zio.duration._
 
 import scala.collection.JavaConverters._
 import scala.util.Random
 
 trait Consumer {
-
   def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
 
   def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
@@ -27,7 +27,9 @@ trait Consumer {
 
   def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit]
 
-  def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]]
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
+
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 
   def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect]
 
@@ -38,13 +40,17 @@ trait Consumer {
   def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
   def pause(record: ConsumerRecord[_, _]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] = {
-    val partition = TopicPartition(record)
+    val partition = RecordTopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }
 
   def position(topicPartition: TopicPartition): Task[Offset]
 
   def assignment: Task[Set[TopicPartition]]
+
+  def config: ConsumerConfig
+
+  def listTopics: RIO[Blocking, Map[Topic, List[PartitionInfo]]]
 }
 
 object Consumer {
@@ -59,20 +65,27 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(config: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
+  def make(cfg: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
     semaphore <- Semaphore.make(1).toManaged_
-    consumer <- makeConsumer(config, semaphore)
+    consumer <- makeConsumer(cfg, semaphore)
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
-    missingOffsetsCommitter <- MissingOffsetsCommitter.make(config.clientId, config.groupId, UnsafeOffsetOperations.make(consumer), 500.millis).toManaged_
+    // we also may want to seek forward to some given initial offsets
+    offsetsInitializer <- OffsetsInitializer.make(
+      cfg.clientId,
+      cfg.groupId,
+      UnsafeOffsetOperations.make(consumer),
+      timeout = 500.millis,
+      timeoutIfSeekForward = 10.seconds,
+      seekForwardTo = cfg.seekForwardTo).toManaged_
   } yield {
     new Consumer {
       override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(missingOffsetsCommitter.commitMissingOffsets, config.additionalListener *> rebalanceListener)
+        listener(offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
       override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(missingOffsetsCommitter.commitMissingOffsets, config.additionalListener *> rebalanceListener)
+        listener(offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
       override def poll(timeout: Duration): RIO[Blocking, Records] =
@@ -80,7 +93,7 @@ object Consumer {
           c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
         }
 
-      override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking with GreyhoundMetrics, Map[TopicPartition, Offset]] =
+      override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
         .map(_.asScala.map { case (tp: KafkaTopicPartition, o: java.lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
 
@@ -120,11 +133,25 @@ object Consumer {
         withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
       }
 
+      override def config: ConsumerConfig = cfg
+
       private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): Task[A] =
         semaphore.withPermit(Task(f(consumer)))
 
       private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
         semaphore.withPermit(effectBlocking(f(consumer)))
+
+      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = {
+        val kafkaTopicPartitionsOnTimestamp = topicPartitionsOnTimestamp.map { case (tp, ts) => tp.asKafka -> ts }
+        withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.asJava))
+          .map(_.asScala.filter { case (_, offset) => offset != null }
+            .map { case (ktp, offset) => TopicPartition(ktp) -> offset.offset()}.toMap)
+      }
+
+      override def listTopics: RIO[Blocking, Map[Topic, List[PartitionInfo]]] =
+        withConsumer(_.listTopics()).map { topics =>
+          topics.asScala.mapValues(_.asScala.toList.map(PartitionInfo.apply)).toMap
+        }
     }
   }
 
@@ -160,7 +187,9 @@ case class ConsumerConfig(bootstrapServers: String,
                           clientId: ClientId = s"wix-consumer-${Random.alphanumeric.take(5).mkString}",
                           offsetReset: OffsetReset = OffsetReset.Latest,
                           extraProperties: Map[String, String] = Map.empty,
-                          additionalListener: RebalanceListener[Any] = RebalanceListener.Empty) extends CommonGreyhoundConfig {
+                          additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
+                          seekForwardTo: Map[TopicPartition, Offset] = Map.empty
+                         ) extends CommonGreyhoundConfig {
 
 
   override def kafkaProps: Map[String, String] = Map(
@@ -195,6 +224,8 @@ trait UnsafeOffsetOperations {
   def position(partition: TopicPartition, timeout: zio.duration.Duration): Offset
 
   def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
+
+  def seek(offsets: Map[TopicPartition, Offset]): Unit
 }
 
 object UnsafeOffsetOperations {
@@ -217,5 +248,10 @@ object UnsafeOffsetOperations {
     override def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit = {
       consumer.commitSync(kafkaOffsets(offsets), timeout)
     }
+
+    override def seek(offsets: Map[TopicPartition, Offset]): Unit =
+      offsets.foreach {
+        case (tp, offset) => consumer.seek(tp.asKafka, offset)
+      }
   }
 }

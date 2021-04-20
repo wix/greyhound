@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.lang
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core._
@@ -9,13 +10,15 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CreatingConsumer
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumerMetric.{ResubscribeError, UncaughtHandlerError}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.{patternRetryTopic, retryPattern}
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import zio._
+import zio.blocking.Blocking
+import zio.clock.Clock
 import zio.duration._
 
 import scala.util.Random
@@ -37,7 +40,9 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
-  def waitForCurrentRecordsCompletion: UIO[Unit]
+  def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
+
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, java.lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 }
 
 object RecordConsumer {
@@ -56,7 +61,7 @@ object RecordConsumer {
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
       consumer <- Consumer.make(
-        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener))
+        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener, config.seekForwardTo))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
@@ -89,7 +94,7 @@ object RecordConsumer {
       override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
         consumer.endOffsets(partitions)
 
-      override def waitForCurrentRecordsCompletion: UIO[Unit] = eventLoop.waitForCurrentRecordsCompletion
+      override def waitForCurrentRecordsCompletion: URIO[Clock, Unit] = eventLoop.waitForCurrentRecordsCompletion
 
       override def state: UIO[RecordConsumerExposedState] = for {
         elState <- eventLoop.state
@@ -124,6 +129,9 @@ object RecordConsumer {
         } yield result
 
       override def clientId: ClientId = config.clientId
+
+      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
+        consumer.offsetsForTimes(topicPartitionsOnTimestamp)
     }
 
   private def maybeAddRetryTopics[E, R](retryConfig: RetryConfig, config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
@@ -195,7 +203,9 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 eventLoopConfig: EventLoopConfig = EventLoopConfig.Default,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
                                 extraProperties: Map[String, String] = Map.empty,
-                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty) extends CommonGreyhoundConfig {
+                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
+                                seekForwardTo: Map[TopicPartition, Offset] = Map.empty
+                               ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
 }

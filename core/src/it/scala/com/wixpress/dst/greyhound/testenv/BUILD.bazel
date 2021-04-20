@@ -2,23 +2,23 @@ package(default_visibility = ["//visibility:public"])
 
 sources()
 
-specs2_unit_test(
-    name = "producer",
+scala_library(
+    name = "testenv",
+    testonly = 1,
     srcs = [
         ":sources",
     ],
     deps = [
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered",
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered/buffers",
-        "//core/src/test/resources",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
-        "@ch_qos_logback_logback_classic",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_test_2_12",
-        "@dev_zio_zio_test_junit_2_12",
+        "@org_apache_curator_curator_test",
+        "@org_apache_kafka_kafka_2_12",
         "@org_apache_kafka_kafka_clients",
     ],
 )

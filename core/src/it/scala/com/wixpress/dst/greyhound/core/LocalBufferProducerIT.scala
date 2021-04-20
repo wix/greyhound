@@ -10,8 +10,9 @@ import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducer
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferFlushTimeout, LocalBufferProduceAttemptFailed}
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeoutFail, eventuallyZ}
-import com.wixpress.dst.greyhound.testkit.ITEnv.ManagedKafkaOps
-import com.wixpress.dst.greyhound.testkit.{ITEnv, ManagedKafka, ManagedKafkaConfig}
+import com.wixpress.dst.greyhound.testenv.ITEnv
+import com.wixpress.dst.greyhound.testenv.ITEnv.ManagedKafkaOps
+import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import org.apache.kafka.common.errors.RecordTooLargeException
 import zio.Schedule.{once, recurs}
 import zio._

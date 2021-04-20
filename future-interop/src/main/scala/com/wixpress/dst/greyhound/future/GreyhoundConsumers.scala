@@ -1,9 +1,9 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
+import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handler
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio.{Exit, ZIO, ZManaged}
 
@@ -18,7 +18,7 @@ trait GreyhoundConsumers extends Closeable {
 }
 
 case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
-                                     handlers: Map[(Group, ClientId), (OffsetReset, NonEmptySet[Topic], Handler[Env], RecordConsumerConfig => RecordConsumerConfig)] = Map.empty) {
+                                     handlers: Map[(Group, ClientId), (OffsetReset, NonEmptySet[Topic], Handler, RecordConsumerConfig => RecordConsumerConfig)] = Map.empty) {
 
   def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder =
     copy(handlers = handlers + ((consumer.group, consumer.clientId) -> (consumer.offsetReset, consumer.initialTopics, consumer.recordHandler, consumer.mutateConsumerConfig)))
