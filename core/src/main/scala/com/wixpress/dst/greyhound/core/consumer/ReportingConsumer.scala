@@ -73,7 +73,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
               runtime.unsafeRunTask(GreyhoundMetrics.report(CommitFailed(clientId, group, error, offsets, calledOnRebalance = true)))
             } *> DelayedRebalanceEffect(runtime.unsafeRunTask(
               GreyhoundMetrics.report(CommittedOffsets(clientId, group, offsets, calledOnRebalance = true)
-            ))))
+              ))))
       } else DelayedRebalanceEffect.zioUnit
     }
 
@@ -83,12 +83,12 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
       GreyhoundMetrics.report(CommittingOffsets(clientId, group, offsets, calledOnRebalance = false)) *>
         internal.commit(offsets).tapError { error =>
           GreyhoundMetrics.report(CommitFailed(clientId, group, error, offsets))
-        }  *>
+        } *>
         GreyhoundMetrics.report(CommittedOffsets(clientId, group, offsets, calledOnRebalance = false))
     }
   }
 
-  override def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics , IllegalStateException, Unit] =
+  override def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] =
     ZIO.when(partitions.nonEmpty) {
       GreyhoundMetrics.report(PausingPartitions(clientId, group, partitions)) *>
         internal.pause(partitions).tapError { error =>
@@ -120,7 +120,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   override def config: ConsumerConfig = internal.config
 
-  override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
+  override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
     internal.offsetsForTimes(topicPartitionsOnTimestamp)
 
   override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = internal.listTopics
@@ -177,7 +177,13 @@ object ConsumerMetric {
                                      partitions: Set[TopicPartition],
                                      offsets: Map[TopicPartition, Offset],
                                      elapsed: Duration,
-                                     seekForwardTo: Map[TopicPartition, Offset],
-                                     error: Option[Throwable] = None) extends ConsumerMetric
+                                     seekTo: Map[TopicPartition, Offset]) extends ConsumerMetric
+
+  case class CommittedMissingOffsetsFailed(clientId: ClientId,
+                                           group: Group,
+                                           partitions: Set[TopicPartition],
+                                           offsets: Map[TopicPartition, Offset],
+                                           elapsed: Duration,
+                                           error: Throwable) extends ConsumerMetric
 
 }
