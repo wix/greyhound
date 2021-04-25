@@ -1,4 +1,4 @@
-package com.wixpress.dst.greyhound.core.testkit
+package com.wixpress.dst.greyhound.core.zioutils
 
 import zio.{Promise, Ref, UIO, ZIO}
 
