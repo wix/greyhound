@@ -16,6 +16,7 @@ case class ConsumerRecord[+K, +V](topic: Topic,
   def id: String = s"$topic:$partition:$offset"
 
   def topicPartition = TopicPartition(topic, partition)
+  def topicPartitionOffset = TopicPartitionOffset(topic, partition, offset)
 
   def bimap[K2, V2](fk: K => K2, fv: V => V2): ConsumerRecord[K2, V2] =
     ConsumerRecord(
