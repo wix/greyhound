@@ -42,7 +42,9 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
 
-  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, java.lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
+
+  def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit]
 }
 
 object RecordConsumer {
@@ -61,7 +63,7 @@ object RecordConsumer {
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
       consumer <- Consumer.make(
-        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener, config.seekForwardTo))
+        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener, config.initialOffsetsSeek))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
@@ -130,8 +132,11 @@ object RecordConsumer {
 
       override def clientId: ClientId = config.clientId
 
-      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
+      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
         consumer.offsetsForTimes(topicPartitionsOnTimestamp)
+
+      override def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit] =
+        zio.ZIO.foreach(toOffsets.toSeq) { case (tp, offset) => consumer.seek(tp, offset) }.unit
     }
 
   private def maybeAddRetryTopics[E, R](retryConfig: RetryConfig, config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
@@ -204,7 +209,7 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
                                 extraProperties: Map[String, String] = Map.empty,
                                 userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
-                                seekForwardTo: Map[TopicPartition, Offset] = Map.empty
+                                initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default
                                ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties

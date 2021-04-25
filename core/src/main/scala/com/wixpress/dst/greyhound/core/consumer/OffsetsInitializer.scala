@@ -2,8 +2,8 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.Clock
 
-import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CommittedMissingOffsets
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets,CommittedMissingOffsetsFailed}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, Partition, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.{URIO, ZIO}
@@ -19,44 +19,56 @@ class OffsetsInitializer(clientId: ClientId,
                          group: Group,
                          offsetOperations: UnsafeOffsetOperations,
                          timeout: zio.duration.Duration,
-                         timeoutIfSeekForward: zio.duration.Duration,
+                         timeoutIfSeek: zio.duration.Duration,
                          reporter: GreyhoundMetric => Unit,
-                         seekForwardTo: Map[TopicPartition, Offset],
+                         initialSeek: InitialOffsetsSeek,
                          clock: Clock = Clock.systemUTC) {
   def initializeOffsets(partitions: Set[TopicPartition]): Unit = {
-    val hasSeekForward = seekForwardTo.exists { case (tp, _) =>  partitions(tp) }
-    val effectiveTimeout = if(hasSeekForward) timeoutIfSeekForward else timeout
-    withReporting(partitions, seekForwardTo, rethrow = hasSeekForward) {
+    val hasSeek = initialSeek != InitialOffsetsSeek.default
+    val effectiveTimeout = if (hasSeek) timeoutIfSeek else timeout
+
+    withReporting(partitions, initialSeek, rethrow = hasSeek) {
       val committed = offsetOperations.committed(partitions, effectiveTimeout)
-      val toSeekForward = seekForwardTo.filter { case (tp, pos) =>
-        partitions(tp) && pos > committed.getOrElse(tp, 0L)
-      }
-      val notCommitted = partitions -- committed.keySet -- toSeekForward.keySet
+      val toOffsets: Map[TopicPartition, Offset] = initialSeek.seekOffsetsFor(partitions.map((_, None)).toMap ++ committed.mapValues(Some.apply))
+      val notCommitted = partitions -- committed.keySet -- toOffsets.keySet
       val positions =
         notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap ++
-        toSeekForward
-      if(toSeekForward.nonEmpty) {
-        offsetOperations.seek(toSeekForward)
+          toOffsets
+      if (toOffsets.nonEmpty) {
+        offsetOperations.seek(toOffsets)
       }
       if (positions.nonEmpty) {
-        offsetOperations.commit(positions , effectiveTimeout)
+        offsetOperations.commit(positions, effectiveTimeout)
       }
       positions
     }
   }
 
-  private def withReporting(partitions: Set[TopicPartition], seekForwardTo: Map[TopicPartition, Offset], rethrow: Boolean)
+  private def withReporting(partitions: Set[TopicPartition],
+                            initialOffsetsSeek: InitialOffsetsSeek,
+                            rethrow: Boolean)
                            (operation: => Map[TopicPartition, Offset]): Unit = {
     val start = clock.millis
+
     try {
       val positions = operation
-      reporter(CommittedMissingOffsets(clientId, group, partitions, positions, Duration.fromMillis(clock.millis - start), seekForwardTo, None))
+      reporter(CommittedMissingOffsets(clientId, group, partitions, positions, Duration.fromMillis(clock.millis - start), positions))
     } catch {
       case e: Throwable =>
-        reporter(CommittedMissingOffsets(clientId, group, partitions, Map.empty, Duration.fromMillis(clock.millis - start), seekForwardTo, Some(e)))
-        if(rethrow) throw e
+        reporter(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, Duration.fromMillis(clock.millis - start), e))
+        if (rethrow) throw e
     }
   }
+}
+
+trait InitialOffsetsSeek {
+  def seekOffsetsFor(currentCommittedOffsets: Map[TopicPartition, Option[Offset]]): Map[TopicPartition, Offset]
+}
+
+object InitialOffsetsSeek {
+  val default: InitialOffsetsSeek = _ => Map.empty
+
+  def setOffset(offsets: Map[TopicPartition, Offset]): InitialOffsetsSeek = _ => offsets
 }
 
 object OffsetsInitializer {
@@ -64,8 +76,8 @@ object OffsetsInitializer {
            group: Group,
            offsetOperations: UnsafeOffsetOperations,
            timeout: zio.duration.Duration,
-           timeoutIfSeekForward: zio.duration.Duration,
-           seekForwardTo: Map[TopicPartition, Offset],
+           timeoutIfSeek: zio.duration.Duration,
+           initialSeek: InitialOffsetsSeek,
            clock: Clock = Clock.systemUTC
           ): URIO[Blocking with GreyhoundMetrics, OffsetsInitializer] = for {
     metrics <- ZIO.environment[GreyhoundMetrics].map(_.get)
@@ -76,10 +88,14 @@ object OffsetsInitializer {
       group,
       offsetOperations,
       timeout,
-      timeoutIfSeekForward,
+      timeoutIfSeek,
       m => runtime.unsafeRunTask(metrics.report(m)),
-      seekForwardTo,
+      initialSeek: InitialOffsetsSeek,
       clock
     )
 }
 
+
+////  val toSeek = toOffsets.filter { case (tp, pos) =>
+//  //        partitions(tp) && pos > committed.getOrElse(tp, 0L)
+//  //      }
