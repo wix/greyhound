@@ -94,8 +94,3 @@ object OffsetsInitializer {
       clock
     )
 }
-
-
-////  val toSeek = toOffsets.filter { case (tp, pos) =>
-//  //        partitions(tp) && pos > committed.getOrElse(tp, 0L)
-//  //      }
