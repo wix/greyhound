@@ -5,7 +5,8 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{Top
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, CountDownLatch, TestMetrics}
+import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics}
+import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.core.{Group, Topic}
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testkit.ManagedKafka
