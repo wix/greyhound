@@ -29,7 +29,7 @@ trait Consumer {
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
-  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 
   def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect]
 
@@ -76,8 +76,8 @@ object Consumer {
       cfg.groupId,
       UnsafeOffsetOperations.make(consumer),
       timeout = 500.millis,
-      timeoutIfSeekForward = 10.seconds,
-      seekForwardTo = cfg.seekForwardTo).toManaged_
+      timeoutIfSeek = 10.seconds,
+      initialSeek = cfg.initialSeek).toManaged_
   } yield {
     new Consumer {
       override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
@@ -95,7 +95,7 @@ object Consumer {
 
       override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
-        .map(_.asScala.map { case (tp: KafkaTopicPartition, o: java.lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
+        .map(_.asScala.map { case (tp: KafkaTopicPartition, o: lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
 
       override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
@@ -141,9 +141,9 @@ object Consumer {
       private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
         semaphore.withPermit(effectBlocking(f(consumer)))
 
-      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = {
+      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = {
         val kafkaTopicPartitionsOnTimestamp = topicPartitionsOnTimestamp.map { case (tp, ts) => tp.asKafka -> ts }
-        withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.asJava))
+        withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.mapValues(l => new lang.Long(l)).asJava))
           .map(_.asScala.filter { case (_, offset) => offset != null }
             .map { case (ktp, offset) => TopicPartition(ktp) -> offset.offset()}.toMap)
       }
@@ -188,7 +188,7 @@ case class ConsumerConfig(bootstrapServers: String,
                           offsetReset: OffsetReset = OffsetReset.Latest,
                           extraProperties: Map[String, String] = Map.empty,
                           additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
-                          seekForwardTo: Map[TopicPartition, Offset] = Map.empty
+                          initialSeek: InitialOffsetsSeek =InitialOffsetsSeek.default
                          ) extends CommonGreyhoundConfig {
 
 
