@@ -9,6 +9,7 @@ import com.wixpress.dst.greyhound.core.consumer.SubmitResult.Rejected
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit._
+import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import org.specs2.specification.Scope
 import zio.clock.Clock
 import zio.duration._
