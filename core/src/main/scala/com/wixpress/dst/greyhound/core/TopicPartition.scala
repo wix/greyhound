@@ -10,3 +10,5 @@ object TopicPartition {
   def apply(topicPartition: KafkaTopicPartition): TopicPartition =
     TopicPartition(topicPartition.topic, topicPartition.partition)
 }
+
+case class TopicPartitionOffset(topic: Topic, partition: Partition, offset: Offset)
