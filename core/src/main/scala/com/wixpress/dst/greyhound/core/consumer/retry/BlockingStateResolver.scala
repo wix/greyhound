@@ -31,7 +31,7 @@ object BlockingStateResolver {
               case _ => false
             }
             val updatedState = if (shouldBlock && !isBlockedAlready) {
-              state.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record.key, record.value, record.headers, topicPartition, record.offset))
+              state.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record))
             } else
               state
             (mergedBlockingState, updatedState)
