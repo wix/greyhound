@@ -2,9 +2,9 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.{Clock, Duration, ZoneId}
 import java.util.concurrent.atomic.AtomicReference
-
 import com.wixpress.dst.greyhound.core.{Offset, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed}
+import com.wixpress.dst.greyhound.core.consumer.SeekTo.{SeekToEnd, SeekToOffset}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import org.specs2.mock.Mockito
 import org.specs2.mutable.SpecificationWithJUnit
@@ -44,7 +44,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
     reported must contain(CommittedMissingOffsets(clientId, group, partitions, missingOffsets, elapsed = Duration.ZERO, missingOffsets))
   }
 
-  "seek to specified offsets if nothing committed" in new ctx(seekTo = Map(p1 -> p1Pos)) {
+  "seek to specified offsets if nothing committed" in new ctx(seekTo = Map(p1 -> SeekToOffset(p1Pos))) {
     givenCommittedOffsets(partitions, timeoutIfSeek)(Map(p2 -> p2Pos))
     givenPositions(timeoutIfSeek, p1 -> (p1Pos + 100), p3 -> p3Pos)
 
@@ -64,18 +64,19 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       contain(CommittedMissingOffsets(clientId, group, partitions, expected, elapsed = Duration.ZERO, expected))
   }
 
-  "seek to specified offsets" in new ctx(seekTo = Map(p1 -> p1Pos)) {
+  "seek to specified offsets" in new ctx(seekTo = Map(p1 -> SeekToOffset(p1Pos), p2 -> SeekToEnd)) {
     givenCommittedOffsets(partitions, timeoutIfSeek)(Map(p1 -> (p1Pos - 1), p2 -> randomInt))
+    givenEndOffsets(Set(p2), timeoutIfSeek)(Map(p2 -> p2Pos))
     givenPositions(timeoutIfSeek, p3 -> p3Pos)
 
     committer.initializeOffsets(partitions)
 
-    val expected = Map(p1 -> p1Pos, p3 -> p3Pos)
+    val expected = Map(p1 -> p1Pos, p3 -> p3Pos, p2 -> p2Pos)
     there was one(offsetOps).commit(
       expected,
       timeoutIfSeek
     )
-    there was one(offsetOps).seek(Map(p1 -> p1Pos))
+    there was one(offsetOps).seek(Map(p1 -> p1Pos, p2 -> p2Pos))
 
     there was no(offsetOps).position(===(p1), any())
 
@@ -83,7 +84,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       contain(CommittedMissingOffsets(clientId, group, partitions, expected, elapsed = Duration.ZERO, expected))
   }
 
-  "fail if operation fails and there are relevant seekTo offsets" in new ctx(seekTo = Map(p1 -> p1Pos)) {
+  "fail if operation fails and there are relevant seekTo offsets" in new ctx(seekTo = Map(p1 -> SeekToOffset(p1Pos))) {
     val e = new RuntimeException(randomStr)
     offsetOps.committed(any(), any()) throws e
 
@@ -117,7 +118,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
   }
 
-  abstract class ctx(val seekTo: Map[TopicPartition, Offset] = Map.empty) extends Scope {
+  abstract class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty) extends Scope {
     private val metricsLogRef = new AtomicReference(Seq.empty[GreyhoundMetric])
     def reported = metricsLogRef.get
     val timeout = Duration.ofMillis(123)
@@ -136,6 +137,10 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       offsetOps.committed(partitions, timeout) returns result
     }
 
+    def givenEndOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration = timeout)(result: Map[TopicPartition, Long]) = {
+      offsetOps.endOffsets(partitions, timeout) returns result
+    }
+
     def givenPositions(positions: (TopicPartition, Long)*): Unit = {
       givenPositions(timeout, positions:_*)
     }
@@ -145,6 +150,8 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
         offsetOps.position(tp, timeout) returns p
       }
     }
+
+
   }
 
   private def randomStr = Random.alphanumeric.take(5).mkString
