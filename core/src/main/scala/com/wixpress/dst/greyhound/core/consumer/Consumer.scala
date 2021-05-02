@@ -226,6 +226,9 @@ trait UnsafeOffsetOperations {
   def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
 
   def seek(offsets: Map[TopicPartition, Offset]): Unit
+
+  def endOffsets(partitions: Set[TopicPartition],
+                 timeout: Duration): Map[TopicPartition, Offset]
 }
 
 object UnsafeOffsetOperations {
@@ -253,5 +256,13 @@ object UnsafeOffsetOperations {
       offsets.foreach {
         case (tp, offset) => consumer.seek(tp.asKafka, offset)
       }
+
+    override def endOffsets(partitions: Set[TopicPartition],
+                   timeout: Duration): Map[TopicPartition, Long] = {
+      consumer.endOffsets(partitions.map(_.asKafka).asJava, timeout)
+        .asScala.toMap.map {
+        case (tp, of) => TopicPartition(tp) -> (of: Long)
+      }
+    }
   }
 }
