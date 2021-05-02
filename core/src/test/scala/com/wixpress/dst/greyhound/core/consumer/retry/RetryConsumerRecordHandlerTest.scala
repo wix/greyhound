@@ -92,9 +92,10 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
           ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
         key <- bytes
         value <- bytes
-        _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        record = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+        _ <- retryHandler.handle(record).fork
         _ <- adjustTestClockFor(100.millis)
-        _ <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(Some(key), value, Headers.Empty, tpartition, offset)))
+        _ <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(record)))
         _ <- adjustTestClockFor(4.seconds)
         _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(_.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError")))
         _ <- adjustTestClockFor(1.second)
@@ -153,11 +154,12 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
             ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1): _*), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic))
           key <- bytes
           value <- bytes
-          fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+          record = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+          fiber <- retryHandler.handle(record).fork
           _ <- adjustTestClockFor(retryDurations.head, 0.5)
           _ <- eventuallyZ(TestMetrics.reported)(metrics =>
             !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset)) && metrics.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError")))
-          _ <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(Some(key), value, Headers.Empty, tpartition, offset)))
+          _ <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(record)))
           _ <- blockingState.set(Map(TopicPartitionTarget(tpartition) -> IgnoringOnce))
           _ <- adjustTestClockFor(retryDurations.head)
           _ <- fiber.join
