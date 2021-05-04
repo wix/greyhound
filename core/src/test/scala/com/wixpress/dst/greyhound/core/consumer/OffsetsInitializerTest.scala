@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.{Clock, Duration, ZoneId}
 import java.util.concurrent.atomic.AtomicReference
-import com.wixpress.dst.greyhound.core.{Offset, TopicPartition}
+import com.wixpress.dst.greyhound.core.TopicPartition
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed}
 import com.wixpress.dst.greyhound.core.consumer.SeekTo.{SeekToEnd, SeekToOffset}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
