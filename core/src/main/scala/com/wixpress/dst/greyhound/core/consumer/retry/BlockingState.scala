@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingFor, BlockingIgnoredForAllFor, BlockingIgnoredOnceFor}
-import com.wixpress.dst.greyhound.core.{Headers, Offset, TopicPartition}
+import com.wixpress.dst.greyhound.core.TopicPartition
 
 sealed trait BlockingState {
   def metric[K, V](record: ConsumerRecord[K, V]): RetryRecordHandlerMetric
