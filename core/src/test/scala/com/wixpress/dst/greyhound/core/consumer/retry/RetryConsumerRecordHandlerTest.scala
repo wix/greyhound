@@ -1,17 +1,17 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
 import java.time.Instant
-
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
-import com.wixpress.dst.greyhound.core.producer.ProducerRecord
+import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerRecord}
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryHelper._
 import com.wixpress.dst.greyhound.core.testkit._
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import org.specs2.specification.core.Fragment
 import zio._
 import zio.blocking.Blocking
@@ -276,7 +276,99 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
         producedRecords.map(_.value.get) === value2 :: Nil
       }
     }
+
+    "on blocking retry, if failing to produce, retry until successful" in {
+      val produceRetryBackoff = 100.millis
+      for {
+        producerFails <- Ref.make(true)
+        producer <- FakeProducer.make(beforeComplete = r => ZIO.whenM(producerFails.get)(ZIO.fail(ProducerError.from(new RuntimeException))).as(r))
+        topic <- randomTopicName
+        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+        retryHandler = RetryRecordHandler.withRetries(group, failingHandler,
+            ZRetryConfig.nonBlockingRetry(1.second).withProduceRetryBackoff(produceRetryBackoff.asScala),
+            producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic)
+        )
+        key <- bytes
+        value <- bytes
+        handling <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
+        _ <- producer.records.takeN(3)
+        _ <- producerFails.set(false)
+        _ <- handling.join.withTimeout(10.seconds)
+        produceAttempts <- producer.producedCount
+      } yield {
+        produceAttempts === 4
+      }
+    }.updateService[Clock.Service](_ => Clock.Service.live)
+
+    "on shutdown, interrupt wait for non-blocking retry" in {
+      for {
+        producer <- FakeProducer.make
+        topic <- randomTopicName
+        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+        retryHelper = alwaysBackOffRetryHelper(3.seconds)
+        handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
+          val retryHandler = RetryRecordHandler.withRetries(group, failingHandler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, retryHelper, awaitShutdown)
+          for {
+            key <- bytes
+            value <- bytes
+            handling <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
+          } yield handling
+        }
+        // we expect for the backoff sleep to be interrupted
+        result <- handling.join.resurrect.either.withTimeout(10.seconds)
+      } yield {
+        result must beLeft(beAnInstanceOf[InterruptedException])
+      }
+    }
   }
+
+  "on shutdown, interrupt wait on blocking backoff" in {
+    for {
+      producer <- FakeProducer.make
+      topic <- randomTopicName
+      handleCountRef <- Ref.make(0)
+      blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+      handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
+        val retryHandler = RetryRecordHandler.withRetries(group, failingHandlerWith(handleCountRef),
+          ZRetryConfig.finiteBlockingRetry(10.seconds), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic),
+          awaitShutdown.tapShutdown(_ => UIO(println("interrupting await shutdown")))
+        )
+         for {
+           key <- bytes
+           value <- bytes
+           handling <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
+        } yield handling
+      }
+      // we expect for the backoff sleep to be interrupted
+      result <- handling.join.resurrect.either.withTimeout(5.seconds)
+      handlerCalled <- handleCountRef.get
+    } yield {
+      result must beLeft(beAnInstanceOf[InterruptedException])
+      handlerCalled === 1
+    }
+  }.updateService[Clock.Service](_ => Clock.Service.live)
+
+  "on shutdown, not retry forever on failing producer" in {
+    for {
+      producer <- FakeProducer.make.map(_.failing)
+      topic <- randomTopicName
+      blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+      handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
+        val retryHandler = RetryRecordHandler.withRetries(group, failingHandler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic) ,
+          awaitShutdown)
+        for {
+          key <- bytes
+          value <- bytes
+          handling <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
+        } yield handling
+      }
+      // we expect produce retries to be interrupted
+      result <- handling.join.resurrect.either.withTimeout(10.seconds)
+    } yield {
+      result must beLeft(beAnInstanceOf[InterruptedException])
+    }
+  }.updateService[Clock.Service](_ => Clock.Service.live)
+
 
   private def adjustTestClockFor(duration: Duration, durationMultiplier: Double = 1) = {
     val steps: Int = (10 * durationMultiplier).toInt
@@ -307,6 +399,16 @@ object RetryConsumerRecordHandlerTest {
   def randomTopicName = randomStr.map(suffix => s"some-topic-$suffix")
 
   val cause = new RuntimeException("cause")
+
+  def alwaysBackOffRetryHelper(backoff: Duration) = {
+    new FakeNonBlockingRetryHelper {
+      override val topic: Topic = ""
+      override def retryAttempt(topic: Topic,
+                                headers: Headers,
+                                subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = UIO(Some(RetryAttempt(topic, 1, Instant.now, backoff)))
+    }
+  }
 }
 
 object TimeoutWaitingForAssertion extends RuntimeException
+

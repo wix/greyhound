@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.Serdes.StringSerde
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.ProducerR
@@ -22,14 +23,17 @@ object RetryRecordHandler {
    */
   def withRetries[R2, R, E, K, V](groupId: String,
                                   handler: RecordHandler[R, E, K, V],
-                                  retryConfig: RetryConfig, producer: ProducerR[R],
+                                  retryConfig: RetryConfig,
+                                  producer: ProducerR[R],
                                   subscription: ConsumerSubscription,
                                   blockingState: Ref[Map[BlockingTarget, BlockingState]],
-                                  nonBlockingRetryHelper: NonBlockingRetryHelper)
+                                  nonBlockingRetryHelper: NonBlockingRetryHelper,
+                                  consumerShutdown: AwaitShutdown = AwaitShutdown.never
+                                 )
                                  (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] = {
 
-    val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, subscription, evK, evV, nonBlockingRetryHelper)
-    val blockingHandler = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler)
+    val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, retryConfig, subscription, nonBlockingRetryHelper, consumerShutdown)
+    val blockingHandler = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler, consumerShutdown)
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
     new RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] {

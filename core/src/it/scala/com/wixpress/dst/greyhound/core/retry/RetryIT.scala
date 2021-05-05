@@ -1,15 +1,15 @@
 package com.wixpress.dst.greyhound.core.retry
 
-import java.util.regex.Pattern
-
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
+import com.wixpress.dst.greyhound.core.consumer.OffsetReset.Latest
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.fixedRetryTopic
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig, TopicPartition}
 import com.wixpress.dst.greyhound.testenv.ITEnv
@@ -17,6 +17,8 @@ import com.wixpress.dst.greyhound.testenv.ITEnv._
 import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import zio._
 import zio.duration._
+
+import java.util.regex.Pattern
 
 class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
@@ -235,6 +237,36 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield ok
   }
 
+  "release consumer during non-blocking retry back-off" in {
+    val drainTimeout = 5.seconds
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(1)
+      group <- randomGroup
+      attempt <- AwaitableRef.make(0)
+      handler  = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => attempt.update(_ + 1) *> ZIO.fail(new RuntimeException("boom!")) }
+      retryConfig = ZRetryConfig.nonBlockingRetry(15.seconds)
+      resource <- RecordConsumer.make(configFor(kafka, group, retryConfig, topic).withDrainTimeout(drainTimeout), handler).reserve
+      _ <- resource.acquire
+      payload <- randomId
+      _ <- producer.produce(ProducerRecord(topic, payload, Some("someKey")), StringSerde, StringSerde) *>
+          attempt.await(_ >= 1) *>
+          clock.sleep(3.seconds)
+      _ <- resource.release(Exit.unit).withTimeout(drainTimeout * 2)
+      // now we start a new consumer on the retry topic directly and expect to consume the message
+      consumedPayloads <- AwaitableRef.make(Seq.empty[String])
+      collectingHandler = RecordHandler { rec: ConsumerRecord[String, String] =>
+        consumedPayloads.update(_ :+ rec.value)
+      }.withDeserializers(StringSerde, StringSerde)
+      retryTopic = fixedRetryTopic(topic, group, 0)
+      consumed <- RecordConsumer.make(consumerConfig(kafka, group, retryTopic, OffsetReset.Latest), collectingHandler).use_ {
+        consumedPayloads.await(_.nonEmpty)
+      }
+    } yield {
+      consumed === Seq(payload)
+    }
+  }
+
 
   private def configFor(kafka: ManagedKafka, group: String, retryConfig: RetryConfig, topics: String*) = {
     RecordConsumerConfig(kafka.bootstrapServers, group,
@@ -242,10 +274,21 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
   }
 
+  private def consumerConfig(kafka: ManagedKafka, group: String, topic: String, offsetReset: OffsetReset = OffsetReset.Earliest) = {
+    RecordConsumerConfig(kafka.bootstrapServers, group,
+      initialSubscription = Topics(Set(topic)),
+      extraProperties = fastConsumerMetadataFetching, offsetReset = offsetReset)
+  }
+
+
+  private implicit class RecordConsumerConfigOps(val config: RecordConsumerConfig) {
+    def withDrainTimeout(duration: Duration) = config.copy(eventLoopConfig = config.eventLoopConfig.copy(drainTimeout = duration))
+  }
+
   private def blockResumeHandler(exceptionMessage: String,
                                  callCount: Ref[Int]) = {
     RecordHandler { r: ConsumerRecord[String, String] =>
-      callCount.get.flatMap(count => UIO(println(s">>>> in handler: r: ${r} callCount before: $count"))) *>
+      callCount.get.flatMap(count => UIO(println(s">>>> in handler: r: $r callCount before: $count"))) *>
         callCount.update(_ + 1) *>
         ZIO.when(r.value == exceptionMessage) {
           ZIO.fail(SomeException())

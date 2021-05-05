@@ -6,10 +6,12 @@ import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import zio.Chunk
 import zio.duration.{Duration => ZDuration}
 
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 
 case class RetryConfig(perTopic: PartialFunction[Topic, RetryConfigForTopic],
-                       forPatternSubscription: Option[RetryConfigForTopic]) {
+                       forPatternSubscription: Option[RetryConfigForTopic],
+                       produceRetryBackoff: Duration = 5.seconds
+                      ) {
   def blockingBackoffs(topic: Topic) =
     get(topic)(_.blockingBackoffs)(ifEmpty = () => Nil)
 
@@ -26,6 +28,8 @@ case class RetryConfig(perTopic: PartialFunction[Topic, RetryConfigForTopic],
 
     copy(perTopic = newConfigs)
   }
+
+  def withProduceRetryBackoff(duration: Duration) = copy(produceRetryBackoff = duration)
 
   private def get[T](forTopic: Topic)(f: RetryConfigForTopic => T)(ifEmpty: => T): T =
     forPatternSubscription.map(f).getOrElse(

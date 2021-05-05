@@ -1,7 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
 import java.util.concurrent.TimeUnit
-
 import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
@@ -9,6 +8,7 @@ import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import zio._
 import zio.blocking.Blocking
 import zio.clock.{Clock, currentTime}
@@ -24,7 +24,9 @@ private[retry] object BlockingRetryRecordHandler {
                         handler: RecordHandler[R, E, K, V],
                         retryConfig: RetryConfig,
                         blockingState: Ref[Map[BlockingTarget, BlockingState]],
-                        nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
+                        nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R],
+                        consumerShutdown: AwaitShutdown
+                       ): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
 
@@ -47,7 +49,9 @@ private[retry] object BlockingRetryRecordHandler {
         for {
           start <- currentTime(TimeUnit.MILLISECONDS)
           continueBlocking <- if (interval.toMillis > 100L) {
-            pollBlockingStateWithSuspensions(interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
+            consumerShutdown.interruptOnShutdown(
+              pollBlockingStateWithSuspensions(interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
+            )
           } else {
             for {
               shouldBlock <- blockingStateResolver.resolve(record)
@@ -58,7 +62,7 @@ private[retry] object BlockingRetryRecordHandler {
       }
 
       def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics with Blocking, Nothing, LastHandleResult] = {
-        (handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false))).catchAll {
+        handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false)).catchAll {
           case ex: NonRetriableException =>
             report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause))
               .as(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))

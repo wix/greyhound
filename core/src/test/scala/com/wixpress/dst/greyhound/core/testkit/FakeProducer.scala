@@ -7,6 +7,7 @@ import zio._
 import zio.blocking.Blocking
 
 case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]],
+                        counterRef: Ref[Int],
                         offsets: Ref[Map[TopicPartition, Offset]],
                         config: ProducerConfig,
                         beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] = UIO(_),
@@ -23,6 +24,7 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
         for {
           modified <- beforeProduce(record)
           _ <- records.offer(modified)
+          _ <- counterRef.update(_ + 1)
           topic = modified.topic
           partition = modified.partition.getOrElse(0)
           topicPartition = TopicPartition(topic, partition)
@@ -41,6 +43,8 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
     }
 
   override def shutdown: UIO[Unit] = onShutDown
+
+  def producedCount = counterRef.get
 }
 
 object FakeProducer {
@@ -52,7 +56,8 @@ object FakeProducer {
           ): UIO[FakeProducer] = for {
     records <- Queue.unbounded[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
     offset <- Ref.make(Map.empty[TopicPartition, Offset])
-  } yield FakeProducer(records, offset, ProducerConfig.Standard, beforeProduce, beforeComplete, attributes, onShutdown)
+    counter <- Ref.make(0)
+  } yield FakeProducer(records, counter, offset, ProducerConfig.Standard, beforeProduce, beforeComplete, attributes, onShutdown)
 }
 
 sealed trait ProducerConfig
