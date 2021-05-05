@@ -4,7 +4,6 @@ import com.wixpress.dst.greyhound.core.{Topic, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import zio.duration.Duration
 
-import java.time.Instant
 
 sealed trait RetryRecordHandlerMetric extends GreyhoundMetric
 

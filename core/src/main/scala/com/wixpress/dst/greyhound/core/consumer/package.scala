@@ -5,7 +5,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
-import zio.{Managed, Promise, RIO, UIO, UManaged, ZIO, ZManaged}
+import zio.{RIO, ZIO}
 import zio.blocking.Blocking
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 
