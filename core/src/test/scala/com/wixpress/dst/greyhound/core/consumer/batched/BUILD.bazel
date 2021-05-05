@@ -14,10 +14,8 @@ specs2_unit_test(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/consumer",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
-        "//data-streams/infra-zio-test/src/main/com/wixpress/infra/zio/test",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_test_2_12",
         "@dev_zio_zio_test_junit_2_12",
-        "@wix_framework//hoopoe-common/hoopoe-utest/src/main/java/com/wixpress/hoopoe",
     ],
 )

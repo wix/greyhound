@@ -10,8 +10,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, Cons
 import com.wixpress.dst.greyhound.core.consumer.{Consumer, DelayedRebalanceEffect, EmptyConsumer}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.TestMetrics
-import com.wixpress.hoopoe.RandomTestUtils._
-import com.wixpress.infra.zio.test.{AwaitableRef, TestCtx}
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, TestCtx}
 import zio.blocking.Blocking
 import zio.duration._
 import zio.test.Assertion._
@@ -74,6 +73,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
           val consumerRecords = records(topicCount = 1, partitions = 2)
           val topics = consumerRecords.map(_.topic).distinct
           val retry = BatchRetryConfig(backoff = 1.second)
+
           BatchEventLoop.make(group, ConsumerSubscription.topics(topics: _*), consumer, handler, clientId, Some(retry)).use { loop =>
             for {
               _ <- UIO(println(s"Should retry for cause: $cause"))
