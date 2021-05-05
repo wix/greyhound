@@ -3,10 +3,11 @@ package com.wixpress.dst.greyhound.core.consumer.batched
 import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.Consumer
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
-import com.wixpress.hoopoe.RandomTestUtils.{randomPositiveInt, randomStr}
 import zio.Chunk
 import zio.test.Assertion
 import zio.test.Assertion.{contains, equalTo, hasSize}
+
+import scala.util.Random
 
 object TestSupport {
   def aRecord(topicPartition: TopicPartition, payload: String = randomStr, hint: String = ""): Consumer.Record = ConsumerRecord(
@@ -34,4 +35,10 @@ object TestSupport {
     records.groupBy(_.topicPartition).foldLeft[Assertion[Vector[Seq[Consumer.Record]]]](Assertion.anything) {
       case (res, (_, records)) => res && contains(records)
     } && hasSize(equalTo(records.map(_.topicPartition).distinct.size))
+
+  def randomStr: String =
+    Random.alphanumeric.take(20).mkString("")
+
+  def randomPositiveInt: Int =
+    Random.nextInt(Int.MaxValue)
 }
