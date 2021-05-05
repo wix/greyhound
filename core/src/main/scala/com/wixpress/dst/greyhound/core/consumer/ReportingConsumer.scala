@@ -6,14 +6,12 @@ import com.wixpress.dst.greyhound.core.{TopicPartition, _}
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryAttempt.RetryAttemptNumber
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration.Duration
 import zio.{RIO, Task, UIO, ZIO}
 
-import java.time.Instant
 
 case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consumer)
   extends Consumer {
