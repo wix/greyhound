@@ -138,7 +138,7 @@ object Dispatcher {
       private def shutdownWorkers(workers: Iterable[(TopicPartition, Worker)]) =
         ZIO.foreachPar_(workers) {
           case (partition, worker) =>
-            report(StoppingWorker(group, clientId, partition)) *>
+            report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis)) *>
               worker.shutdown.timed.map(_._1).flatMap(duration =>
                 report(WorkerStopped(group, clientId, partition, duration.toMillis)))
         }
@@ -205,7 +205,7 @@ object Dispatcher {
       override def shutdown: URIO[Clock, Unit] =
         for {
           _ <- internalState.update(_.shutdown).commit
-          timeout <- fiber.join.disconnect.timeout(drainTimeout)
+          timeout <- fiber.join.resurrect.ignore.disconnect.timeout(drainTimeout)
           _ <- ZIO.when(timeout.isEmpty)(fiber.interrupt.disconnect)
         } yield Unit
 
@@ -275,7 +275,7 @@ object DispatcherMetric {
 
   case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
 
-  case class StoppingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
+  case class StoppingWorker(group: Group, clientId: ClientId, partition: TopicPartition, drainTimeoutMs: Long) extends DispatcherMetric
 
   case class WorkerStopped(group: Group, clientId: ClientId, partition: TopicPartition, durationMs: Long) extends DispatcherMetric
 
