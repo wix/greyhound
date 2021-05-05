@@ -1,14 +1,14 @@
 package com.wixpress.dst.greyhound.core
 
 import java.util
-
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
-import zio.{RIO, ZIO}
+import zio.{Managed, Promise, RIO, UIO, UManaged, ZIO, ZManaged}
 import zio.blocking.Blocking
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
+
 import scala.collection.JavaConverters._
 
 package object consumer {
