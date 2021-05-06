@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.java;
 
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecordBatch;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 import java.util.concurrent.CompletableFuture;
@@ -33,6 +34,13 @@ public class RecordHandlers {
             handle.accept(record);
             return CompletableFuture.completedFuture(null);
         };
+    }
+
+    /**
+     * Create a batch record handler from an async function (returns a `CompletableFuture`).
+     */
+    public static <K, V> BatchRecordHandler<K, V> aBlockingBatchRecordHandler(Consumer<ConsumerRecordBatch<K, V>> handle) {
+        return (record, executor) -> CompletableFuture.runAsync(() -> handle.accept(record), executor);
     }
 
 }

@@ -3,6 +3,7 @@ package com.wixpress.dst.greyhound.java
 import java.util.concurrent.Executor
 
 import com.wixpress.dst.greyhound.core
+import com.wixpress.dst.greyhound.core.consumer.batched.{BatchConsumer, BatchConsumerConfig, BatchEventLoopConfig}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.{NonBlockingBackoffPolicy, RetryConfigForTopic, RetryConfig => CoreRetryConfig}
@@ -19,8 +20,15 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
 
   private val consumers = ListBuffer.empty[GreyhoundConsumer[_, _]]
 
+  private val batchConsumers = ListBuffer.empty[GreyhoundBatchConsumer[_, _]]
+
   def withConsumer(consumer: GreyhoundConsumer[_, _]): GreyhoundConsumersBuilder = synchronized {
     consumers += consumer
+    this
+  }
+
+  def withBatchConsumer(consumer: GreyhoundBatchConsumer[_, _]): GreyhoundConsumersBuilder = {
+    batchConsumers += consumer
     this
   }
 
@@ -32,6 +40,9 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
         import javaConsumerConfig._
         RecordConsumer.make(RecordConsumerConfig(config.bootstrapServers, group, Topics(initialTopics), offsetReset = offsetReset, retryConfig = retryConfig, extraProperties = config.extraProperties), handler)
       }
+      // todo use makeBatchConsumer
+      makeBatchConsumer = ZManaged.foreach(batchConsumers)(batchConsumer =>
+        BatchConsumer.make(BatchConsumerConfig(config.bootstrapServers, batchConsumer.group, Topics(Set(batchConsumer.initialTopic)), batchConsumer.retryConfig, batchConsumer.clientId, BatchEventLoopConfig.Default, convert(batchConsumer.offsetReset), batchConsumer.extraProperties, batchConsumer.userProvidedListener, batchConsumer.resubscribeTimeout, batchConsumer.initialOffsetsSeek), batchConsumer.batchRecordHandler(executor, runtime)))
       reservation <- makeConsumer.reserve
       consumers <- reservation.acquire
     } yield new GreyhoundConsumers {
