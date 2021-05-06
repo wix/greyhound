@@ -14,6 +14,7 @@ scala_library(
     ],
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/retry",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
