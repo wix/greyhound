@@ -21,6 +21,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
 
+import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingBatchRecordHandler;
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
 import static org.junit.Assert.*;
 import static org.junit.Assert.assertEquals;
@@ -309,6 +310,38 @@ public class GreyhoundBuilderTest {
             fail("should throw Exception");
         } catch (Throwable throwable) {
             assertTrue(throwable.toString().contains("Invalid value 0 for configuration max.poll.interval.ms: Value must be at least 1"));
+        }
+    }
+
+    @Test
+    public void configure_batch_consumer() throws Exception {
+        int numOfMessages = 2;
+        CountDownLatch lock = new CountDownLatch(numOfMessages);
+        String messagePrefix = UUID.randomUUID().toString();
+        GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
+        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
+        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
+                .withBatchConsumer(
+                        GreyhoundBatchConsumer.with(
+                                topic,
+                                group,
+                                aBlockingBatchRecordHandler(value -> {
+                                    lock.countDown();
+                                })
+                        )
+                );
+
+        try (GreyhoundConsumers ignored = consumersBuilder.build();
+             GreyhoundProducer producer = producerBuilder.build()) {
+
+            for (int i = 0; i < numOfMessages; i++) {
+                String msg = messagePrefix+"-"+i;
+                produceTo(producer, topic, msg);
+            }
+
+            boolean consumedAll = lock.await(3000, TimeUnit.MILLISECONDS);
+
+            assertTrue(consumedAll);
         }
     }
 
