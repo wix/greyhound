@@ -19,11 +19,13 @@ specs2_unit_test(
         "//core/src/test/resources",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@ch_qos_logback_logback_classic",
+        "@dev_zio_izumi_reflect_2_12",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_streams_2_12",
         "@dev_zio_zio_test_2_12",
         "@dev_zio_zio_test_junit_2_12",
         "@org_apache_kafka_kafka_clients",
+        "@org_mockito_mockito_core",
         "@org_specs2_specs2_mock_2_12",
     ],
 )
