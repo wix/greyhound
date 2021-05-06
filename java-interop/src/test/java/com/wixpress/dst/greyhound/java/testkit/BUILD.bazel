@@ -9,10 +9,13 @@ scala_library(
         ":sources",
     ],
     deps = [
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//future-interop/src/it/scala/com/wixpress/dst/greyhound/future",
+        "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/scala",
+        "@dev_zio_zio_2_12",
     ],
 )
