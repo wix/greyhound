@@ -85,6 +85,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
               } yield (
                 (state.maxRecordedConcurrency === maxConcurrency) and
                   (queryCountAfterDelay === queryCountAfterComplete) and
+                  (state.runningFiberCount === maxConcurrency) and
                   (queryCountAfterComplete must beGreaterThan(1)))
             }
           } yield test
@@ -222,7 +223,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       topic <- kafka.createRandomTopic(1)
       record = ProducerRecord(topic, value = "0")
       results <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
-        ZIO.foreach(0 until 1000 : Seq[Int])(i =>
+        ZIO.foreach(0 until 1000: Seq[Int])(i =>
           localBufferProducer.produce(record.copy(key = Some(i)), IntSerde, StringSerde)
         )
       }
@@ -232,7 +233,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
   }
 
   def produceMultiple[R](keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer[GreyhoundMetrics with Clock with R], record: ProducerRecord[String, Int]) =
-    ZIO.foreach(0 until (keyCount * recordPerKey) : Seq[Int]) { i =>
+    ZIO.foreach(0 until (keyCount * recordPerKey): Seq[Int]) { i =>
       localBufferProducer.produce(record.copy(value = Some(i), key = Some((i % keyCount).toString)), StringSerde, IntSerde)
     }
 
