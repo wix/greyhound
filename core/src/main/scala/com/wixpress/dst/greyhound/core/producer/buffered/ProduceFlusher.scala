@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.producer.buffered
 
 import java.lang.System.currentTimeMillis
 
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.buffered.Common.{nonRetriable, timeoutPassed}
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded}
@@ -17,6 +17,8 @@ import scala.util.Random
 
 trait ProduceFlusher[R] extends ProducerR[R] {
   def recordedConcurrency: UIO[Int]
+
+  def fiberCount: UIO[Int]
 }
 
 object ProduceFlusher {
@@ -34,13 +36,18 @@ object ProduceFiberAsyncRouter {
   def make[R](producer: ProducerR[R], maxConcurrency: Int,
               giveUpAfter: Duration, retryInterval: Duration,
               batchSize: Int): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
+  //also it should be on blocking pool, it can hog fibers..
     for {
       usedFibers <- Ref.make(Set.empty[Int])
+      runningFibers <- Ref.make(0)
       queues <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
       _ <- ZIO.foreach_(queues.values)(q =>
         fetchAndProduce(producer)(retryInterval, batchSize)(q)
           .forever
-          .forkDaemon)
+          .tapCause(_ => report(LocalBufferProducerInternalFiberDied()) *> runningFibers.update(_ - 1))
+          .forkDaemon
+          .tap(_ => runningFibers.update(_ + 1))
+      )
     } yield new ProduceFlusher[R] {
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
@@ -51,6 +58,8 @@ object ProduceFiberAsyncRouter {
           queues(queueNum).offer(ProduceRequest(record, promise, currentTimeMillis + giveUpAfter.toMillis)) *>
             usedFibers.update(_ + queueNum)).map(_.await)
       }
+
+      override def fiberCount: UIO[Int] = runningFibers.get
     }
 
   private def fetchAndProduce[R](producer: ProducerR[R])(retryInterval: Duration, batchSize: Int) =
@@ -109,6 +118,7 @@ object ProduceFiberSyncRouter {
   def make[R](producer: ProducerR[R], maxConcurrency: Int, giveUpAfter: Duration, retryInterval: Duration): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
     for {
       usedFibers <- Ref.make(Set.empty[Int])
+      runningFibers <- Ref.make(0)
       queues <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
       _ <- ZIO.foreach_(queues.values)(
         _.take
@@ -126,9 +136,14 @@ object ProduceFiberSyncRouter {
             }.ignore
           )
           .forever
-          .forkDaemon)
+          .tapCause(_ => report(LocalBufferProducerInternalFiberDied()) *> runningFibers.update(_ - 1))
+          .forkDaemon
+          .tap(_ => runningFibers.update(_ + 1)))
 
     } yield new ProduceFlusher[R] {
+
+
+      override def fiberCount: UIO[Int] = runningFibers.get
 
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
@@ -157,3 +172,5 @@ object Common {
   private[producer] def timeoutPassed(req: ProduceRequest): Boolean =
     currentTimeMillis > req.giveUpTimestamp
 }
+
+case class LocalBufferProducerInternalFiberDied() extends GreyhoundMetric
