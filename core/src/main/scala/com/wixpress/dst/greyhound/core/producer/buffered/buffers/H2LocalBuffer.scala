@@ -69,11 +69,11 @@ object H2LocalBuffer {
       override def unsentRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
         count(connection)(notSent)
 
-      override def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Long] =
+      override def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Option[Long]] =
         query(connection)(s"SELECT SUBMITTED FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT 1") {
           rs =>
             Task(rs.next()).map(found =>
-              if (found) System.currentTimeMillis - rs.getLong("SUBMITTED") else 0L
+              if (found) Some(rs.getLong("SUBMITTED")) else None
             )
         }
           .mapError(LocalBufferError.apply)
