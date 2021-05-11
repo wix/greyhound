@@ -17,7 +17,7 @@ trait LocalBuffer {
 
   def unsentRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Long]
+  def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Option[Long]]
 
   def close: ZIO[Blocking, LocalBufferError, Unit]
 

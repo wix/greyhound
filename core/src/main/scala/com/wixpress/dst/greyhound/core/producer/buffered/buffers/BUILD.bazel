@@ -12,5 +12,7 @@ scala_library(
         "@com_h2database_h2",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_streams_2_12",
+        "@net_openhft_chronicle_queue",
+        "@net_openhft_chronicle_wire",
     ],
 )
