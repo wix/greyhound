@@ -11,7 +11,7 @@ package object testkit {
   type TestMetrics = Has[TestMetrics.Service] with GreyhoundMetrics
 
   def eventuallyZ[R <: Has[_], T](f: RIO[R, T], timeout: Duration = 4.seconds)(predicate: T => Boolean): ZIO[R, Throwable, Unit] =
-    eventuallyTimeoutFail(f)(predicate)(4.seconds)
+    eventuallyTimeoutFail(f)(predicate)(timeout)
 
   def eventuallyTimeoutFail[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Unit] =
     for {

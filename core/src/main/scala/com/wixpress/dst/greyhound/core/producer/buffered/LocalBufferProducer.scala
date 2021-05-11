@@ -125,7 +125,8 @@ object LocalBufferProducer {
           failedCount <- localBuffer.failedRecordsCount.catchAll(_ => UIO(-1))
           inflight <- localBuffer.inflightRecordsCount.catchAll(_ => UIO(-1))
           unsent <- localBuffer.unsentRecordsCount.catchAll(_ => UIO(-1))
-          lagMs <- localBuffer.oldestUnsent.catchAll(_ => UIO(-1L))
+          now <- UIO(System.currentTimeMillis)
+          lagMs <- localBuffer.oldestUnsent.map(_.map(now - _).getOrElse(0L)).catchAll(_ => UIO(-1L))
         } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount,
           enqueued = unsent, inflight = inflight, lagMs = lagMs)
 
