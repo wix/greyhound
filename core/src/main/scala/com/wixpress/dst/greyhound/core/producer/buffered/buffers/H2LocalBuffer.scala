@@ -48,7 +48,14 @@ object H2LocalBuffer {
           .mapError(LocalBufferError.apply)
       }
 
+      //wait, current sequence number just shows the last appended.
+      // it doesn't say the last written
       override def lastSequenceNumber: UIO[Long] = currentSequenceNumber.get
+
+      override def firstSequenceNumber: ZIO[Blocking, LocalBufferError, Long] =
+        query(connection)("SELECT MIN(SEQ_NUM) FROM MESSAGES")(
+          rs => Task(rs.next()) *> Task(rs.getLong(1)))
+          .mapError(LocalBufferError.apply)
 
       override def delete(messageId: PersistedMessageId): ZIO[Blocking, LocalBufferError, Boolean] =
         update(connection)(s"DELETE TOP 1 FROM MESSAGES WHERE ID=$messageId").map(_ > 0)
