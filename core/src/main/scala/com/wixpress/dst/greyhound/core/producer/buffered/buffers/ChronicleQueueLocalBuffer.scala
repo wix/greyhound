@@ -115,6 +115,8 @@ object ChronicleQueueLocalBuffer {
             m.get(messageId).map(_ => m + (messageId -> true)).getOrElse(m)
           }.map(_ => true)
 
+      override def lastSequenceNumber: UIO[Long] = UIO(0L)
+
       override def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean] =
         failedCounter.updateAndGet(_ + 1).map(_ => true)
 
