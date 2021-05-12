@@ -29,6 +29,8 @@ trait LocalBuffer {
 
   def lastSequenceNumber: UIO[Long]
 
+  def firstSequenceNumber: ZIO[Blocking, LocalBufferError, Long]
+
   def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 
   def cleanup: ZIO[Blocking, LocalBufferError, Unit]
