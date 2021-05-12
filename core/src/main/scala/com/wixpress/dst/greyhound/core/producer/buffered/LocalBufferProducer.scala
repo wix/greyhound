@@ -36,7 +36,8 @@ trait LocalBufferProducer[R] {
 case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolean, localBufferQueryCount: Int,
                                     failedRecords: Int, enqueued: Int, inflight: Int, lagMs: Long,
                                     promises: Map[PersistedMessageId, Promise[ProducerError, RecordMetadata]],
-                                    runningFiberCount: Int, lastSequenceNumberAppended: Long) {
+                                    runningFiberCount: Int, lastSequenceNumberAppended: Long,
+                                    firstSequenceNumberAppended: Long) {
   def removePromises(ids: Iterable[PersistedMessageId]): LocalBufferProducerState =
     copy(promises = promises -- ids)
 
@@ -52,10 +53,10 @@ case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolea
 
 object LocalBufferProducerState {
   val empty = LocalBufferProducerState(maxRecordedConcurrency = 0, running = true,
-    localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, lagMs = 0L, promises = Map.empty, runningFiberCount = 0, lastSequenceNumberAppended = 0L)
+    localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, lagMs = 0L, promises = Map.empty, runningFiberCount = 0, lastSequenceNumberAppended = 0L, firstSequenceNumberAppended = 0L)
 
   val invalid = LocalBufferProducerState(maxRecordedConcurrency = -1, running = false,
-    localBufferQueryCount = -1, failedRecords = -1, enqueued = -1, inflight = -1, lagMs = -1L, promises = Map.empty, runningFiberCount = 0, lastSequenceNumberAppended = 0L)
+    localBufferQueryCount = -1, failedRecords = -1, enqueued = -1, inflight = -1, lagMs = -1L, promises = Map.empty, runningFiberCount = 0, lastSequenceNumberAppended = 0L, firstSequenceNumberAppended = 0L)
 }
 
 case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: IO[ProducerError, RecordMetadata])
@@ -126,12 +127,14 @@ object LocalBufferProducer {
           runningFiberCount <- router.fiberCount
           failedCount <- localBuffer.failedRecordsCount.catchAll(_ => UIO(-1))
           lastSeqNum <- localBuffer.lastSequenceNumber
+          firstSeqNum <- localBuffer.firstSequenceNumber.catchAll(_ => UIO(-1L))
           inflight <- localBuffer.inflightRecordsCount.catchAll(_ => UIO(-1))
           unsent <- localBuffer.unsentRecordsCount.catchAll(_ => UIO(-1))
           now <- UIO(System.currentTimeMillis)
           lagMs <- localBuffer.oldestUnsent.map(_.map(now - _).getOrElse(0L)).catchAll(_ => UIO(-1L))
         } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount,
-          enqueued = unsent, inflight = inflight, lagMs = lagMs, runningFiberCount = runningFiberCount, lastSequenceNumberAppended = lastSeqNum)
+          enqueued = unsent, inflight = inflight, lagMs = lagMs, runningFiberCount = runningFiberCount,
+          lastSequenceNumberAppended = lastSeqNum, firstSequenceNumberAppended = firstSeqNum)
 
       override def close: URIO[ZEnv with GreyhoundMetrics with R, LocalBufferProducerState] =
         state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
