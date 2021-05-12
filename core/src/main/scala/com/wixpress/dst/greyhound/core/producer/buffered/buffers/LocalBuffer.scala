@@ -27,6 +27,8 @@ trait LocalBuffer {
 
   def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 
+  def lastSequenceNumber: UIO[Long]
+
   def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 
   def cleanup: ZIO[Blocking, LocalBufferError, Unit]
@@ -48,7 +50,8 @@ case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Durat
                                      shutdownFlushTimeout: Duration, retryInterval: Duration,
                                      strategy: ProduceStrategy = ProduceStrategy.Sync(10),
                                      localBufferBatchSize: Int = 100,
-                                     id: Int = Random.nextInt(100000)) {
+                                     id: Int = Random.nextInt(100000),
+                                     startFrom: Option[Long] = None) {
   def withStrategy(f: ProduceStrategy): LocalBufferProducerConfig = copy(strategy = f)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
