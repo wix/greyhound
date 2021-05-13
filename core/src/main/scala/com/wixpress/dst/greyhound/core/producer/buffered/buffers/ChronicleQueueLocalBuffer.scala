@@ -11,7 +11,7 @@ import zio.blocking.{Blocking, blocking}
 import zio.clock.Clock
 import zio.duration._
 import zio.stream.{ZSink, ZStream}
-import zio.{Chunk, RManaged, Ref, Schedule, Task, UIO, URIO, ZIO}
+import zio.{Chunk, RManaged, Ref, Schedule, Semaphore, Task, UIO, URIO, ZIO}
 
 object ChronicleQueueLocalBuffer {
 
@@ -46,6 +46,9 @@ object ChronicleQueueLocalBuffer {
       appender <- queue.acquireAppender
       completionMap <- Ref.make(Map.empty[ExcerptIndex, Boolean])
 
+      writeSem <- Semaphore.make(1)
+      readSem <- Semaphore.make(1)
+
       _ <- UIO.whenM(completionMap.get.map(_.nonEmpty))(
         for {
           _ <- persistentMarkerTailer.moveToActualStart
@@ -62,7 +65,6 @@ object ChronicleQueueLocalBuffer {
         } yield ())
         .schedule(Schedule.spaced(100.milliseconds))
         .forkDaemon
-
     } yield new ExposedLocalBuffer {
 
       override def failedRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
@@ -92,14 +94,14 @@ object ChronicleQueueLocalBuffer {
 
       override def enqueue(message: PersistedRecord): ZIO[Clock with Blocking, LocalBufferError, PersistedMessageId] =
         for {
-          index <- blocking(RawRecord.createFrom(message).writeTo(appender).mapError(LocalBufferError))
+          index <- blocking(RawRecord.createFrom(message).writeTo(appender, writeSem).mapError(LocalBufferError))
           _ <- enqueuedCount.update(_ + 1)
         } yield index
 
       override def take(upTo: Int): ZIO[Clock with Blocking, LocalBufferError, Seq[PersistedRecord]] =
         (for {
-          rawRecords <- ZStream.repeatEffectOption(readingTailer.readOne) // todo possibly read multiple in a managed io
-            .run(ZSink.take(upTo))
+          rawRecords <- readSem.withPermit(ZStream.repeatEffectOption(readingTailer.readOne) // todo possibly read multiple in a managed io
+            .run(ZSink.take(upTo)))
             .mapError(LocalBufferError)
           _ <- ZIO.foreach(rawRecords.toList) { case (_, rawRecord) =>
             completionMap.update(m => m + (rawRecord.id -> false))
@@ -157,16 +159,17 @@ object ChronicleQueueLocalBuffer {
         EncodedMessage(payload.flatMap(arr => Option(arr).map(Chunk.fromArray)),
           decodeHeaders(this.headers)))
 
-    def writeTo(appender: ExcerptAppender): Task[ExcerptIndex] = {
-      ZIO(appender.writingDocument(false))
+    def writeTo(appender: ExcerptAppender, semaphore: Semaphore): Task[ExcerptIndex] = {
+      semaphore.withPermit(ZIO(appender.writingDocument(false))
         .toManaged(dc => URIO(dc.close()))
         .use { dc =>
           writeUnmanaged(dc)
-        }
+        })
     }
 
     private def writeUnmanaged(dc: DocumentContext): Task[ExcerptIndex] = ZIO {
       val wire: Wire = dc.wire()
+      assert(wire != null)
       wire.write("topic").text(this.topic)
       this.partition.orElse(Some(-1)).map(wire.write("partition").int64(_))
       this.key.orElse(Some("".getBytes)).map(wire.write("key").bytes(_))

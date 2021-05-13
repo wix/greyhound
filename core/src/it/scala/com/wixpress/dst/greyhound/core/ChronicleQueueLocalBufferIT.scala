@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.testenv.ITEnv.Env
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
-import zio.{Chunk, RManaged, UIO, UManaged, ZIO, ZManaged, test}
+import zio.{Chunk, RManaged, Schedule, UIO, UManaged, ZIO, ZManaged, test}
 
 import scala.util.Random
 
@@ -25,13 +25,38 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
     } yield env ++ testMetrics
 
   val topic = "topic-x"
-  val record = PersistedRecord(0,
+  val aRecord = PersistedRecord(0,
     SerializableTarget(topic, Some(555), Some(Chunk.fromArray("key-x".getBytes))),
     EncodedMessage(Some(Chunk.fromArray("payload-x".getBytes())), Headers.from(("header-key-1" -> "header-val-1"), "header-key-2" -> "header-val-2")))
+
+  val aBigRecord = PersistedRecord(200,
+    SerializableTarget(topic, Some(555), Some(Chunk.fromArray("key-x".getBytes))),
+    EncodedMessage(Some(Chunk.fromArray(("payload-x" * 1024).getBytes())), Headers.from(("header-key-1" -> "header-val-1"), "header-key-2" -> "header-val-2")))
 
 //  "dump" in {
 //    net.openhft.chronicle.queue.main.DumpMain.main(Array("/private/tmp/test-producer-75429/20210502F.cq4"))
 //    ko("don't run this test automatically - it's here for manual runs")
+//  }
+
+/* THIS TEST CREATES A LARGE FILE ON DISK VERY VERY FAST */
+//  "cycle" in {
+//    val howMany = 10000000
+//    val batchSize = 1000
+//    val par = 4
+//
+//    def enqAndTake(buffer: ChronicleQueueLocalBuffer.ExposedLocalBuffer) = {
+//      (for {
+//        expectedRecords <- UIO.succeed((1 to batchSize).map(i => fakeID(aBigRecord, 100 + i)))
+//        _ <- ZIO.foreach(expectedRecords)(buffer.enqueue)
+////        records <- buffer.take(batchSize)
+////        _ <- ZIO(records.size mustEqual batchSize)
+//      } yield ())
+//        .repeat(Schedule.recurs(howMany / batchSize / par))
+//    }
+//
+//    queueBuilder("cycle").use { buffer =>
+//      ZIO.foreachPar(1 to par)(_ => enqAndTake(buffer)).as(ok)
+//    }
 //  }
 
   "enqueue and then take" in {
@@ -39,9 +64,7 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
     val howManyToTake = 2
     queueBuilder("enqueue").use { buffer =>
       for {
-        expectedRecords <- UIO.succeed(for {
-          i <- 1 to howManyInTotal
-        } yield fakeID(record, 100 + i))
+        expectedRecords <- UIO.succeed((1 to howManyInTotal).map(i => fakeID(aRecord, 100 + i)))
         _ <- buffer.unsentRecordsCount.map(_ mustEqual 0)
         _ <- ZIO.foreach(expectedRecords)(buffer.enqueue)
         _ <- buffer.unsentRecordsCount.map(_ mustEqual howManyInTotal /* all records */)
@@ -67,7 +90,7 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
         for {
           records <- UIO.succeed(for {
             i <- 1 to howMany
-          } yield fakeID(record, i))
+          } yield fakeID(aRecord, i))
           _ <- ZIO.foreach(records)(buffer.enqueue)
           _ <- buffer.unsentRecordsCount.map(_ mustEqual howMany)
         } yield ()
@@ -117,7 +140,7 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
   "oldest unsent" in {
     queueBuilder("oldest-unsent").use { buffer =>
       for {
-        aRecord <- ZIO.succeed(fakeID(record, 1000))
+        aRecord <- ZIO.succeed(fakeID(aRecord, 1000))
         _ <- buffer.enqueue(aRecord)
         _ <- buffer.oldestUnsent.map(_.get must be_>(0L))
         _ <- buffer.take(1)
@@ -132,7 +155,7 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
 
   def queueBuilder(pathSuffix: String, randomSuffix: Int = Random.nextInt()):
   RManaged[Clock with Blocking, ChronicleQueueLocalBuffer.ExposedLocalBuffer] = {
-    ChronicleQueueLocalBuffer.makeInternal(s"./tests-data/localbuffer-$randomSuffix-$pathSuffix")
+    ChronicleQueueLocalBuffer.makeInternal(s"/tmp/tests-data/localbuffer-$randomSuffix-$pathSuffix")
   }
 
   def fakeID(record: PersistedRecord, id: PersistedMessageId) = record.copy(id = id)
