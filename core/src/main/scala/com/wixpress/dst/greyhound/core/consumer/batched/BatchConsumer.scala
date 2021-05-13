@@ -36,9 +36,7 @@ object BatchConsumer {
     consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
     assignments <- Ref.make(Set.empty[TopicPartition]).toManaged_
     assignmentsListener = trackAssignments(assignments)
-    consumer <- Consumer.make(
-      ConsumerConfig(config.bootstrapServers, config.groupId, config.clientId, config.offsetReset, config.extraProperties, assignmentsListener *> config.userProvidedListener, config.initialOffsetsSeek)
-    )
+    consumer <- Consumer.make(consumerConfig(config, assignmentsListener))
     eventLoop <- BatchEventLoop.make[R](
       config.groupId,
       config.initialSubscription,
@@ -95,6 +93,19 @@ object BatchConsumer {
       consumer.offsetsForTimes(topicPartitionsOnTimestamp.mapValues(_.toLong))
   }
 
+  private def consumerConfig[R <: Has[_] : ClassTag](config: BatchConsumerConfig,
+                                                     assignmentsListener: RebalanceListener[Any]) = {
+    ConsumerConfig(
+      config.bootstrapServers,
+      config.groupId,
+      config.clientId,
+      config.offsetReset,
+      config.extraProperties,
+      assignmentsListener *> config.userProvidedListener,
+      config.initialOffsetsSeek,
+      config.consumerAttributes)
+  }
+
   private def trackAssignments(assignments: Ref[Set[TopicPartition]]) = {
     new RebalanceListener[Any] {
       override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] =
@@ -121,7 +132,8 @@ case class BatchConsumerConfig(bootstrapServers: String,
                                extraProperties: Map[String, String] = Map.empty,
                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
                                resubscribeTimeout: Duration = 30.seconds,
-                               initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default
+                               initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
+                               consumerAttributes: Map[String, String] = Map.empty
                               )
 
 object BatchConsumerConfig {

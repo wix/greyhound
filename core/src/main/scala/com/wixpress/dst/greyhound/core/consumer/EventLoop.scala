@@ -30,12 +30,14 @@ object EventLoop {
               consumer: Consumer,
               handler: Handler[R],
               clientId: ClientId,
-              config: EventLoopConfig = EventLoopConfig.Default): RManaged[R with Env, EventLoop[GreyhoundMetrics with Blocking]] = {
+              config: EventLoopConfig = EventLoopConfig.Default,
+              consumerAttributes: Map[String, String] = Map.empty
+             ): RManaged[R with Env, EventLoop[GreyhoundMetrics with Blocking]] = {
     val start = for {
-      _ <- report(StartingEventLoop(clientId, group))
+      _ <- report(StartingEventLoop(clientId, group, consumerAttributes))
       offsets <- Offsets.make
       handle = handler.andThen(offsets.update).handle(_)
-      dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark, config.drainTimeout, config.delayResumeOfPausedPartition)
+      dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark, config.drainTimeout, config.delayResumeOfPausedPartition, consumerAttributes)
       positionsRef <- Ref.make(Map.empty[TopicPartition, Offset])
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned <- Promise.make[Nothing, Unit]
@@ -51,20 +53,20 @@ object EventLoop {
 
     start.toManaged {
       case (dispatcher, fiber, offsets, _, running, _) => for {
-        _ <- report(StoppingEventLoop(clientId, group))
+        _ <- report(StoppingEventLoop(clientId, group, consumerAttributes))
         _ <- running.set(ShuttingDown)
         drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
-        _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis)))
+        _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
         _ <- commitOffsets(consumer, offsets)
       } yield ()
     }.map {
       case (dispatcher, fiber, _, positionsRef, running, listener) =>
         new EventLoop[GreyhoundMetrics with Blocking] {
           override def pause: URIO[GreyhoundMetrics with Blocking, Unit] =
-            report(PausingEventLoop(clientId, group)) *> running.set(Paused) *> dispatcher.pause
+            report(PausingEventLoop(clientId, group, consumerAttributes)) *> running.set(Paused) *> dispatcher.pause
 
           override def resume: URIO[GreyhoundMetrics with Blocking, Unit] =
-            report(ResumingEventLoop(clientId, group)) *> running.set(Running) *> dispatcher.resume
+            report(ResumingEventLoop(clientId, group, consumerAttributes)) *> running.set(Running) *> dispatcher.resume
 
           override def isAlive: UIO[Boolean] = fiber.poll.map {
             case Some(Exit.Failure(_)) => false
@@ -88,7 +90,7 @@ object EventLoop {
                               consumer: Consumer, clientId: ClientId) =
     ZIO.foreach(records.map(_.topicPartition))(tp =>
       consumer.position(tp).flatMap(offset => positionsRef.update(_ + (tp -> offset)))
-    ).catchAll(t => report(FailedToUpdatePositions(t, clientId)))
+    ).catchAll(t => report(FailedToUpdatePositions(t, clientId, consumer.config.consumerAttributes)))
 
 
   private def pollOnce[R2](running: Ref[EventLoopState],
@@ -123,7 +125,7 @@ object EventLoop {
         override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[ZEnv with GreyhoundMetrics, DelayedRebalanceEffect] = {
           pausedPartitionsRef.set(Set.empty) *>
             dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
-              ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis)))
+              ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumer.config.consumerAttributes)))
             } *>
             commitOffsetsOnRebalance(consumer, offsets)
         }
@@ -143,7 +145,7 @@ object EventLoop {
       paused <- pausedRef.get
       partitionsToResume <- dispatcher.resumeablePartitions(paused)
       _ <- ZIO.when(partitionsToResume.nonEmpty)(
-        report(LowWatermarkReached(clientId, group, partitionsToResume)))
+        report(LowWatermarkReached(clientId, group, partitionsToResume, consumer.config.consumerAttributes)))
       _ <- consumer.resume(partitionsToResume)
         .tapError(e => UIO(e.printStackTrace())).ignore
       _ <- pausedRef.update(_ -- partitionsToResume)
@@ -159,12 +161,12 @@ object EventLoop {
       pausedTopics <- ZIO.foldLeft(records)(paused) { (acc, record) =>
         val partition = record.topicPartition
         if (acc contains partition)
-          report(PartitionThrottled(partition, record.offset)).as(acc)
+          report(PartitionThrottled(partition, record.offset, consumer.config.consumerAttributes)).as(acc)
         else
           dispatcher.submit(record).flatMap {
             case SubmitResult.Submitted => ZIO.succeed(acc)
             case SubmitResult.Rejected =>
-              report(HighWatermarkReached(partition, record.offset)) *>
+              report(HighWatermarkReached(partition, record.offset, consumer.config.consumerAttributes)) *>
                 consumer.pause(record).fold(_ => acc, _ => acc + partition)
           }
       }
@@ -209,23 +211,23 @@ sealed trait EventLoopMetric extends GreyhoundMetric
 
 object EventLoopMetric {
 
-  case class StartingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
+  case class StartingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class PausingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
+  case class PausingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class ResumingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
+  case class ResumingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class StoppingEventLoop(clientId: ClientId, group: Group) extends EventLoopMetric
+  case class StoppingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class DrainTimeoutExceeded(clientId: ClientId, group: Group, timeoutMs: Long) extends EventLoopMetric
+  case class DrainTimeoutExceeded(clientId: ClientId, group: Group, timeoutMs: Long, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class HighWatermarkReached(partition: TopicPartition, onOffset: Offset) extends EventLoopMetric
+  case class HighWatermarkReached(partition: TopicPartition, onOffset: Offset, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class PartitionThrottled(partition: TopicPartition, onOffset: Offset) extends EventLoopMetric
+  case class PartitionThrottled(partition: TopicPartition, onOffset: Offset, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class LowWatermarkReached(clientId: ClientId, group: Group, partitionsToResume: Set[TopicPartition]) extends EventLoopMetric
+  case class LowWatermarkReached(clientId: ClientId, group: Group, partitionsToResume: Set[TopicPartition], attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class FailedToUpdatePositions(t: Throwable, clientId: ClientId) extends EventLoopMetric
+  case class FailedToUpdatePositions(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
 }
 

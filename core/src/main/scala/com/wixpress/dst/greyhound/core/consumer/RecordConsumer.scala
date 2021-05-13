@@ -58,12 +58,11 @@ object RecordConsumer {
   def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     for {
       shutdown <- AwaitShutdown.make.toManaged_
-      _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers)).toManaged_
+      _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers, config.consumerAttributes)).toManaged_
       _ <- validateRetryPolicy(config)
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
-      consumer <- Consumer.make(
-        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener, config.initialOffsetsSeek))
+      consumer <- Consumer.make(consumerConfig(config))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
@@ -78,7 +77,9 @@ object RecordConsumer {
         consumer = ReportingConsumer(config.clientId, config.group, consumer),
         handler = handlerWithRetries,
         config = config.eventLoopConfig,
-        clientId = config.clientId)
+        clientId = config.clientId,
+        consumerAttributes = config.consumerAttributes
+      )
       _ <- shutdown.toManaged // this will be called first on release
     } yield new RecordConsumer[R with Env] {
       override def pause: URIO[R with Env, Unit] =
@@ -139,6 +140,18 @@ object RecordConsumer {
       override def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit] =
         zio.ZIO.foreach(toOffsets.toSeq) { case (tp, offset) => consumer.seek(tp, offset) }.unit
     }
+
+  private def consumerConfig[E, R](config: RecordConsumerConfig) = {
+    ConsumerConfig(
+      config.bootstrapServers,
+      config.group,
+      config.clientId,
+      config.offsetReset,
+      config.extraProperties,
+      config.userProvidedListener,
+      config.initialOffsetsSeek,
+      config.consumerAttributes)
+  }
 
   private def maybeAddRetryTopics[E, R](retryConfig: RetryConfig, config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
     config.initialSubscription match {
@@ -212,7 +225,8 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
                                 extraProperties: Map[String, String] = Map.empty,
                                 userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
-                                initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default
+                                initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
+                                consumerAttributes: Map[String, String] = Map.empty
                                ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
