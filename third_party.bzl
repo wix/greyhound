@@ -62,6 +62,7 @@ deps = [
     dependency("org.specs2:specs2-matcher_2.12:4.8.3"),
     dependency("org.specs2:specs2-mock_2.12:4.8.3"),
     dependency("org.xerial.snappy:snappy-java:1.1.7.1"),
+    dependency("net.openhft:chronicle-queue:5.20.123"),
     dependency("com.kubukoz:better-tostring_" + scala_version +":0.2.4"),
 ]
 
