@@ -188,7 +188,8 @@ case class ConsumerConfig(bootstrapServers: String,
                           offsetReset: OffsetReset = OffsetReset.Latest,
                           extraProperties: Map[String, String] = Map.empty,
                           additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
-                          initialSeek: InitialOffsetsSeek =InitialOffsetsSeek.default
+                          initialSeek: InitialOffsetsSeek =InitialOffsetsSeek.default,
+                          consumerAttributes: Map[String, String] = Map.empty
                          ) extends CommonGreyhoundConfig {
 
 
