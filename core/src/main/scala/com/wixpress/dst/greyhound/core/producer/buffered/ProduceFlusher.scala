@@ -44,7 +44,7 @@ object ProduceFiberAsyncRouter {
       _ <- ZIO.foreach_(queues.values)(q =>
         fetchAndProduce(producer)(retryInterval, batchSize)(q)
           .forever
-          .tapCause(_ => report(LocalBufferProducerInternalFiberDied()) *> runningFibers.update(_ - 1))
+          .tapCause(t => report(LocalBufferProducerInternalFiberDied(t.squashTrace)) *> runningFibers.update(_ - 1))
           .forkDaemon
           .tap(_ => runningFibers.update(_ + 1))
       )
@@ -136,7 +136,7 @@ object ProduceFiberSyncRouter {
             }.ignore
           )
           .forever
-          .tapCause(_ => report(LocalBufferProducerInternalFiberDied()) *> runningFibers.update(_ - 1))
+          .tapCause(t => report(LocalBufferProducerInternalFiberDied(t.squashTrace)) *> runningFibers.update(_ - 1))
           .forkDaemon
           .tap(_ => runningFibers.update(_ + 1)))
 
