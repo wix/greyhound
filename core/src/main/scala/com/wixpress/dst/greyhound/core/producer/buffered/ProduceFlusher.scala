@@ -2,10 +2,10 @@ package com.wixpress.dst.greyhound.core.producer.buffered
 
 import java.lang.System.currentTimeMillis
 
-import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.buffered.Common.{nonRetriable, timeoutPassed}
-import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded}
+import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded, LocalBufferProducerInternalFiberDied}
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy
 import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerR, ProducerRecord, RecordMetadata}
 import org.apache.kafka.common.errors._
@@ -172,5 +172,3 @@ object Common {
   private[producer] def timeoutPassed(req: ProduceRequest): Boolean =
     currentTimeMillis > req.giveUpTimestamp
 }
-
-case class LocalBufferProducerInternalFiberDied() extends GreyhoundMetric
