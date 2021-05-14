@@ -392,7 +392,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           tasksDurationFiber <- waitForTasksDuration.get.tap(d => STM.check(d > 0.millis)).commit.fork
           _ <- innerGate.toggle(true).delay(delay) /*and now handler will complete */
           tasksDuration <- tasksDurationFiber.join
-        } yield tasksDuration must between(delay, delay * 3)
+        } yield tasksDuration must between(delay * 0.9, delay * 3)
       }
     } yield test
   }
