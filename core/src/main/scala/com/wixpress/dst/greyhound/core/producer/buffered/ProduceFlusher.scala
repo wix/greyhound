@@ -36,7 +36,6 @@ object ProduceFiberAsyncRouter {
   def make[R](producer: ProducerR[R], maxConcurrency: Int,
               giveUpAfter: Duration, retryInterval: Duration,
               batchSize: Int): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
-  //also it should be on blocking pool, it can hog fibers..
     for {
       usedFibers <- Ref.make(Set.empty[Int])
       runningFibers <- Ref.make(0)
@@ -63,8 +62,8 @@ object ProduceFiberAsyncRouter {
     }
 
   private def fetchAndProduce[R](producer: ProducerR[R])(retryInterval: Duration, batchSize: Int) =
-    (s: Queue[ProduceRequest]) =>
-      s.takeBetween(1, batchSize)
+    (q: Queue[ProduceRequest]) =>
+      q.takeBetween(1, batchSize)
         .flatMap(produceUntilResolution(producer)(level = 0)(retryInterval))
 
   private def produceUntilResolution[R](producer: ProducerR[R])(level: Int)(retryInterval: Duration)(reqs: Seq[ProduceRequest]): ZIO[GreyhoundMetrics with zio.ZEnv with R with Blocking, ProducerError, Unit] =
