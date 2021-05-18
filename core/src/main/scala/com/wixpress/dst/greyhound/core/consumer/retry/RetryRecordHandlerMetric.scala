@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.{Topic, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import zio.duration.Duration
@@ -28,6 +29,7 @@ object RetryRecordHandlerMetric {
   case class RetryProduceFailedWillRetry(retryTopic: Topic,
                                          retryAttempt: Option[RetryAttempt],
                                          willRetryAfterMs: Long,
+                                         record: ConsumerRecord[_, _],
                                          error: Throwable) extends RetryRecordHandlerMetric
 
 }
