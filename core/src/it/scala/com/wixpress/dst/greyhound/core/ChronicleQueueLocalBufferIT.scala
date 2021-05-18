@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.testenv.ITEnv.Env
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
-import zio.{Chunk, RManaged, Schedule, UIO, UManaged, ZIO, ZManaged, test}
+import zio.{Chunk, RManaged, UIO, UManaged, ZIO, ZManaged, test}
 
 import scala.util.Random
 
