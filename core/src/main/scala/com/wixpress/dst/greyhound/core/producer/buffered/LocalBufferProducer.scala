@@ -85,7 +85,7 @@ object LocalBufferProducer {
                         localBuffer.delete(record.id) *>
                         report(ResilientProducerSentRecord(record.topic, metadata.partition, metadata.offset, config.id, record.id)))
                   .ignore
-                  .fork)
+                  .forkDaemon)
             ).flatMap(ZIO.collectAll(_))
               .as(msgs)
         )
