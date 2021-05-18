@@ -2,10 +2,11 @@ package com.wixpress.dst.greyhound.core.producer.buffered
 
 import java.lang.System.currentTimeMillis
 
+import zio.duration._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.buffered.Common.{nonRetriable, timeoutPassed}
-import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded, LocalBufferProducerInternalFiberDied}
+import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferProduceAttemptFailed, LocalBufferProduceTimeoutExceeded, LocalBufferProducerInternalFiberDied, LocalBufferProducerProduceHardError}
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy
 import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerR, ProducerRecord, RecordMetadata}
 import org.apache.kafka.common.errors._
@@ -64,7 +65,14 @@ object ProduceFiberAsyncRouter {
   private def fetchAndProduce[R](producer: ProducerR[R])(retryInterval: Duration, batchSize: Int) =
     (q: Queue[ProduceRequest]) =>
       q.takeBetween(1, batchSize)
-        .flatMap(produceUntilResolution(producer)(level = 0)(retryInterval))
+        .flatMap(reqs => produceWithRetries(producer)(retryInterval)(reqs))
+
+  private def produceWithRetries[R](producer: ProducerR[R])(retryInterval: Duration)(requests: Seq[ProduceRequest]): ZIO[GreyhoundMetrics with zio.ZEnv with R with Blocking, Nothing, Unit] =
+    produceUntilResolution(producer)(level = 0)(retryInterval)(requests)
+      .catchAllCause(c => report(LocalBufferProducerProduceHardError(c.squashTrace)) *>
+        produceWithRetries(producer)(retryInterval)(requests)
+          .delay(retryInterval)
+      )
 
   private def produceUntilResolution[R](producer: ProducerR[R])(level: Int)(retryInterval: Duration)(reqs: Seq[ProduceRequest]): ZIO[GreyhoundMetrics with zio.ZEnv with R with Blocking, ProducerError, Unit] =
     ZIO.when(reqs.nonEmpty)(
