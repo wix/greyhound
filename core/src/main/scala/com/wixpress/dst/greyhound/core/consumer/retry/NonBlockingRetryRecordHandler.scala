@@ -65,13 +65,14 @@ private[retry] object NonBlockingRetryRecordHandler {
 
     private def maybeRetry[E1](retryAttempt: Option[RetryAttempt], error: E1, record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
       nonBlockingRetryHelper.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
-        case RetryWith(retryRecord) => producerToRetryTopic(retryAttempt, retryRecord)
+        case RetryWith(retryRecord) => producerToRetryTopic(retryAttempt, retryRecord, record)
         case NoMoreRetries => ZIO.unit //todo: report uncaught errors and producer failures
       }
     }
 
     private def producerToRetryTopic[E1](retryAttempt: Option[RetryAttempt],
-                                         retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]]) = {
+                                         retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]],
+                                         record:  ConsumerRecord[_, _]) = {
       consumerShutdown.interruptOnShutdown(
         producer.produce(retryRecord).tapError(
           e =>
@@ -80,6 +81,7 @@ private[retry] object NonBlockingRetryRecordHandler {
                 retryRecord.topic,
                 retryAttempt,
                 retryConfig.produceRetryBackoff.toMillis,
+                record,
                 e)) *>
               sleep(fromScala(retryConfig.produceRetryBackoff))
         ).eventually.ignore
