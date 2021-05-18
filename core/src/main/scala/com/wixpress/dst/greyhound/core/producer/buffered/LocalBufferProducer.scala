@@ -238,6 +238,9 @@ object LocalBufferProducerMetric {
   case class LocalBufferProducerCaughtError(e: Throwable) extends LocalBufferProducerMetric
 
   case class LocalBufferProducerInternalFiberDied(cause: Throwable) extends LocalBufferProducerMetric
+
+  case class LocalBufferProducerProduceHardError(cause: Throwable) extends LocalBufferProducerMetric
+
 }
 
 
