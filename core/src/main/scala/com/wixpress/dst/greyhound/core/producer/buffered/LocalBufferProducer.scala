@@ -164,7 +164,7 @@ object LocalBufferProducer {
               report(ResilientProducerSentRecord(topic, metadata.partition, metadata.offset, config.id, id))
         }
         .catchAllCause(t => report(LocalBufferProducerResponseUpdateFailed(t.squashTrace)))
-        .forever
+        .repeatWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
         .forkDaemon
     )
 
