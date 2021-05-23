@@ -186,7 +186,7 @@ object Dispatcher {
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber <-
         pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
-          .interruptible.repeatWhile(_ == true).forkDaemon
+          .repeatWhile(_ == true).forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Clock, Boolean] =
         queue.offer(record)
@@ -210,7 +210,7 @@ object Dispatcher {
         for {
           _ <- internalState.update(_.shutdown).commit
           timeout <- fiber.join.resurrect.ignore.disconnect.timeout(drainTimeout)
-          _ <- ZIO.when(timeout.isEmpty)(fiber.interrupt.disconnect)
+          _ <- ZIO.when(timeout.isEmpty)(fiber.interruptFork)
         } yield Unit
 
       override def clearPausedPartitionDuration: UIO[Unit] = internalState.update(_.clearReachedHighWatermark).commit
