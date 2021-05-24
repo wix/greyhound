@@ -207,9 +207,7 @@ object LocalBufferProducer {
       .flatMap(_.promises.get(id).map(promise =>
         promise.complete(ZIO.fromEither(result)) *>
           state.update(_.removePromise(id))
-            .commit
-            .delay(1.minutes)
-            .forkDaemon)
+            .commit)
         .getOrElse(ZIO.unit))
       .unit
 
