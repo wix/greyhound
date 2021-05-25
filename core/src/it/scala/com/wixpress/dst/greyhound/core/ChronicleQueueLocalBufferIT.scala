@@ -34,6 +34,7 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
     EncodedMessage(Some(Chunk.fromArray(("payload-x" * 1024).getBytes())), Headers.from(("header-key-1" -> "header-val-1"), "header-key-2" -> "header-val-2")))
 
 //  "dump" in {
+//    System.setProperty("file", "/tmp/20210518F.txt")
 //    net.openhft.chronicle.queue.main.DumpMain.main(Array("/private/tmp/test-producer-75429/20210502F.cq4"))
 //    ko("don't run this test automatically - it's here for manual runs")
 //  }
@@ -74,7 +75,7 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
         _ <- buffer.unsentRecordsCount.map(_ mustEqual (howManyInTotal - howManyToTake) /* that have _not_ been taken */)
         _ <- buffer.delete(records.head.id) /* complete 1 */
         _ <- buffer.inflightRecordsCount.map(_ mustEqual (howManyToTake - 1) /* that have been taken but not completed */)
-        _ <- buffer.getCompletionMap.get.map(m => m.size.mustEqual(howManyInTotal - howManyToTake /* that still needs to be completed */)).delay(500.milliseconds)
+        _ <- eventuallyZ(buffer.getCompletionMap.get)(m => m.size == howManyInTotal - howManyToTake /* that still needs to be completed */)
       } yield ok
     }
   }
@@ -82,6 +83,17 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
   "restart a queue with existing messages" in {
     val howMany = 2
     val sameBufferIdentifier = ("restart", Random.nextInt())
+
+    def eventuallyMarkedForRemoval(ids: Seq[PersistedMessageId],
+                                   buffer: ChronicleQueueLocalBuffer.ExposedLocalBuffer) = {
+      eventuallyZ(buffer.getCompletionMap.get, timeout = 2.seconds)(completionMap =>
+        ids.map(id => completionMap.getOrElse(id, false)).fold(true)(_ && _))
+    }
+
+    def eventuallyRemoved(buffer: ChronicleQueueLocalBuffer.ExposedLocalBuffer) = {
+      eventuallyZ(buffer.getCompletionMap.get, timeout = 2.seconds)(completionMap =>
+        completionMap.size == 0)
+    }
 
     for {
 
@@ -103,18 +115,15 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
           records <- buffer.take(howMany - 1)
           ids = records.map(_.id)
           _ <- ZIO.foreach(ids)(buffer.delete)
-          _ <- eventuallyZ(buffer
-            .getCompletionMap.get
-            .map(completionMap => ids.map(id => completionMap.getOrElse(id, true)).fold(true)(_ && _)),
-            timeout = 2.seconds)(x => x)
+          _ <- eventuallyMarkedForRemoval(ids, buffer)
+          _ <- buffer.unsentRecordsCount.map(_ mustEqual 1)
+          _ <- eventuallyRemoved(buffer)
         } yield ok
       }
 
       // restart and check
       _ <- queueBuilder(sameBufferIdentifier).use { buffer =>
-        for {
-          _ <- buffer.unsentRecordsCount.map(_ mustEqual 1)
-        } yield ()
+        buffer.unsentRecordsCount.map(_ mustEqual 1)
       }
 
     } yield ok
@@ -155,7 +164,7 @@ class ChronicleQueueLocalBufferIT extends BaseTestWithSharedEnv[ITEnv.Env, Any] 
 
   def queueBuilder(pathSuffix: String, randomSuffix: Int = Random.nextInt()):
   RManaged[Clock with Blocking, ChronicleQueueLocalBuffer.ExposedLocalBuffer] = {
-    ChronicleQueueLocalBuffer.makeInternal(s"/tmp/tests-data/localbuffer-$randomSuffix-$pathSuffix")
+    ChronicleQueueLocalBuffer.makeInternal(s"./tests-data/localbuffer-$randomSuffix-$pathSuffix")
   }
 
   def fakeID(record: PersistedRecord, id: PersistedMessageId) = record.copy(id = id)
