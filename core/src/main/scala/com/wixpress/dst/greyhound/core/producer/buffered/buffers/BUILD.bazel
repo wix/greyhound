@@ -10,8 +10,11 @@ scala_library(
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "@com_h2database_h2",
+        "@com_propensive_mercator_2_12",
         "@dev_zio_zio_2_12",
+        "@dev_zio_zio_json_2_12",
         "@dev_zio_zio_streams_2_12",
+        "@net_openhft_chronicle_bytes",
         "@net_openhft_chronicle_queue",
         "@net_openhft_chronicle_wire",
     ],
