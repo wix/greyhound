@@ -1,10 +1,10 @@
 package com.wixpress.dst.greyhound.core.producer.buffered.buffers
 
-import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ChronicleQueueLocalBuffer.{ExcerptIndex, RawRecord, readFromUnsafe}
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ChronicleQueueLocalBuffer.{ExcerptIndex, RawRecord}
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ZChronicleQueue.ZTailer
+import net.openhft.chronicle.bytes.Bytes
 import net.openhft.chronicle.queue.{ChronicleQueue, ExcerptAppender, ExcerptTailer}
-import net.openhft.chronicle.wire.DocumentContext
-import zio.{IO, Task, URIO, ZIO}
+import zio.{IO, Task, ZIO}
 
 trait ZChronicleQueue {
 
@@ -45,12 +45,19 @@ object ZChronicleQueue {
 
   trait ZTailer {
     def toEnd: Task[ZTailer]
+
     def copy: Task[ZTailer]
+
     def index: Task[ExcerptIndex]
+
     def moveToIndex(index: ExcerptIndex): Task[Boolean]
+
     def moveToActualStart: Task[Boolean]
+
     def peekDocument: Task[Boolean]
+
     def readCurrentTimestamp: Task[Option[ExcerptIndex]]
+
     def readOne: IO[Option[Throwable], (ExcerptIndex, RawRecord)]
   }
 
@@ -88,26 +95,23 @@ object ZChronicleQueue {
 
         override def readCurrentTimestamp: Task[Option[ExcerptIndex]] =
           readOne
-            .map {{case (_, record) => Some(record.timestamp)}}
+            .map { case (_, record) => Some(record.timestamp) }
             .catchAll(e => e.map(t => ZIO.fail(t)).getOrElse(ZIO.none))
 
         override def readOne: IO[Option[Throwable], (ExcerptIndex, RawRecord)] =
-          IO(tailer.readingDocument(false))
-            .toManaged(dc => URIO(dc.close()))
-            .use(readFrom)
-            .mapError {
-              case _: DcNotPresent => None
-              case t: Throwable => Option(t)
-            }
+          for {
+            _ <- moveToActualStart.mapError(e => Option(e))
+            index <- index.mapError(e => Option(e)) // save index before actual reading
+            bytes <- bytes(tailer).mapError(e => Option(e))
+            json <- if (bytes.isEmpty) ZIO.fail(None) else ZIO(Bytes.toString(bytes)).mapError(e => Option(e))
+            record <- ZIO.fromEither(RawRecord.createFrom(json)).map(r => r.copy(id = index)).mapError(e => Option(new RuntimeException(e)))
+          } yield (index, record)
+
+        private def bytes(tailer: ExcerptTailer): Task[Bytes[_]] = {
+          ZIO(Bytes.elasticByteBuffer()).flatMap(bytes =>
+            Task(tailer.readBytes(bytes)).as(bytes))
+        }
       })
-
-    private def readFrom[R](dc: DocumentContext): ZIO[Any, Throwable, (ExcerptIndex, RawRecord)] =
-      ensureHasNextDocument(dc).flatMap(readFromUnsafe)
-
-    case class DcNotPresent() extends RuntimeException
-
-    private def ensureHasNextDocument[R](dc: DocumentContext): ZIO[Any, Throwable, DocumentContext] =
-      if (dc.isPresent) ZIO.succeed(dc) else ZIO.fail(new DcNotPresent)
   }
 
 }
