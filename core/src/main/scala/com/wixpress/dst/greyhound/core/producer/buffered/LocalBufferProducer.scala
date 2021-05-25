@@ -99,7 +99,7 @@ object LocalBufferProducer {
           UIO(Random.nextLong).flatMap(generatedMsgId =>
             report(ResilientProducerAppendingMessage(record.topic, generatedMsgId, config.id)) *>
               state.update(_.updateEnqueuedCount(1)).commit *>
-              enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId)
+              enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId, config)
                 .catchAll(error => directSendToKafkaIfUnordered(router, record, config, state, error)))
 
       override def produce[K, V](record: ProducerRecord[K, V],
@@ -155,11 +155,11 @@ object LocalBufferProducer {
       responsesQueue.take
         .flatMap {
           case Response(id, submitted, topic, Left(error)) =>
-            updateReferences(Left(error), state, id) *>
+            updateReferences(Left(error), state, id, config) *>
               localBuffer.markDead(id) *>
               report(ResilientProducerFailedNonRetriable(error, config.id, topic, id, submitted))
           case Response(id, _, topic, Right(metadata)) =>
-            updateReferences(Right(metadata), state, id) *>
+            updateReferences(Right(metadata), state, id, config) *>
               localBuffer.delete(id) *>
               report(ResilientProducerSentRecord(topic, metadata.partition, metadata.offset, config.id, id))
         }
@@ -178,10 +178,11 @@ object LocalBufferProducer {
     }
 
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState],
-                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
+                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long,
+                                    config: LocalBufferProducerConfig): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
     Promise.make[producer.ProducerError, producer.RecordMetadata].flatMap(promise =>
       localBuffer.enqueue(persistedRecord(record, generatedMessageId))
-        .tap(id => state.update(_.withPromise(id, promise)).commit)
+        .tap(id => ZIO.when(config.allowAwaitingOnKafkaResult)(state.update(_.withPromise(id, promise)).commit))
         .map { id => BufferedProduceResult(id, promise.await) })
 
   private def persistedRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long) = {
@@ -202,13 +203,14 @@ object LocalBufferProducer {
 
   private def updateReferences(result: Either[ProducerError, RecordMetadata],
                                state: TRef[LocalBufferProducerState],
-                               id: PersistedMessageId): URIO[ZEnv, Unit] =
+                               id: PersistedMessageId,
+                               config: LocalBufferProducerConfig): URIO[ZEnv, Unit] =
     state.updateAndGet(_.updateEnqueuedCount(-1)).commit
-      .flatMap(_.promises.get(id).map(promise =>
+      .flatMap(s => ZIO.when(config.allowAwaitingOnKafkaResult)(s.promises.get(id).map(promise =>
         promise.complete(ZIO.fromEither(result)) *>
           state.update(_.removePromise(id))
             .commit)
-        .getOrElse(ZIO.unit))
+        .getOrElse(ZIO.unit)))
       .unit
 
   private def producerRecord(msg: PersistedRecord): ProducerRecord[Chunk[Byte], Chunk[Byte]] =
