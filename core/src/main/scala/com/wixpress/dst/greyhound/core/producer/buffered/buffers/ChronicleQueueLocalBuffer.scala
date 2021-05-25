@@ -2,16 +2,18 @@ package com.wixpress.dst.greyhound.core.producer.buffered.buffers
 
 import java.util.Base64
 
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ChronicleQueueLocalBuffer.RawRecord.partitionExists
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ZChronicleQueue.ZTailer
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
 import com.wixpress.dst.greyhound.core.{Headers, Partition}
+import net.openhft.chronicle.bytes.Bytes
 import net.openhft.chronicle.queue.ExcerptAppender
-import net.openhft.chronicle.wire.{DocumentContext, Wire}
 import zio.blocking.{Blocking, blocking}
 import zio.clock.Clock
 import zio.duration._
+import zio.json._
 import zio.stream.{ZSink, ZStream}
-import zio.{Chunk, RManaged, Ref, Schedule, Semaphore, Task, UIO, URIO, ZIO}
+import zio.{Chunk, RManaged, Ref, Schedule, Semaphore, Task, UIO, ZIO}
 
 object ChronicleQueueLocalBuffer {
 
@@ -23,13 +25,14 @@ object ChronicleQueueLocalBuffer {
   // for testing purposes
   trait ExposedLocalBuffer extends LocalBuffer {
     def getCompletionMap: Ref[Map[PersistedMessageId, Boolean]]
+
     def getPersistedTailer: ZTailer
   }
 
   def makeInternal(localPath: String): RManaged[Clock with Blocking, ExposedLocalBuffer] =
     (for {
       queue <- ZChronicleQueue.make(localPath)
-      persistentMarkerTailer <- queue.createTailer("persistent").tap(t => t.peekDocument)
+      persistentMarkerTailer <- queue.createTailer("persistent").tap(t => t.moveToActualStart)
 
       enqueuedCount <- for {
         start <- persistentMarkerTailer.index
@@ -61,7 +64,7 @@ object ChronicleQueueLocalBuffer {
                 (None, scoreboard)
             }
           })
-          _ <- Task.whenCase(deletedIndex){case Some(idx) => persistentMarkerTailer.moveToIndex(idx + 1)}
+          _ <- Task.whenCase(deletedIndex) { case Some(idx) => persistentMarkerTailer.moveToIndex(idx + 1) }
         } yield ())
         .schedule(Schedule.spaced(100.milliseconds))
         .forkDaemon
@@ -71,19 +74,15 @@ object ChronicleQueueLocalBuffer {
         failedCounter.get
 
       override def inflightRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
-        completionMap.get.map { m => m.count{case (_, completed) => !completed }}
+        completionMap.get.map { m => m.count { case (_, completed) => !completed } }
 
       override def unsentRecordsCount: ZIO[Blocking, LocalBufferError, Int] =
         enqueuedCount.get.map(_.toInt)
 
       override def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Option[Long]] =
         (for {
-          success <- readingTailer.index.flatMap(index =>
-            if (index == 0)
-              readingTailer.peekDocument.flatMap(peeked =>
-                if (peeked) readingTailer.index else ZIO.succeed(index))
-            else
-              ZIO.succeed(index))
+          _ <- readingTailer.moveToActualStart
+          success <- readingTailer.index
             .flatMap(index => unsentReportingTailer.moveToIndex(index))
             .tap(moved => Task.when(moved)(unsentReportingTailer.peekDocument))
           timestamp <- if (success) unsentReportingTailer.readCurrentTimestamp else ZIO.none
@@ -94,7 +93,7 @@ object ChronicleQueueLocalBuffer {
 
       override def enqueue(message: PersistedRecord): ZIO[Clock with Blocking, LocalBufferError, PersistedMessageId] =
         for {
-          index <- blocking(RawRecord.createFrom(message).writeTo(appender, writeSem).mapError(LocalBufferError))
+          index <- blocking(RawRecord.writeTo(RawRecord.createFrom(message), appender, writeSem).mapError(LocalBufferError))
           _ <- enqueuedCount.update(_ + 1)
         } yield index
 
@@ -140,99 +139,94 @@ object ChronicleQueueLocalBuffer {
 
   private def encodeHeader(headers: Headers): String = {
     headers.headers
-      .map { case (k, v) => encode(k.getBytes("UTF-8")) -> encode(v) }
+      .map { case (k, v) => SerDes.encode(k.getBytes("UTF-8")) -> SerDes.encode(v) }
       .map { case (k, v) => s"$k:$v" }
       .mkString(";")
   }
 
   case class RawRecord(id: ExcerptIndex,
                        topic: String,
-                       partition: Option[Partition],
-                       key: Option[Array[Byte]],
-                       payload: Option[Array[Byte]],
+                       partition: Partition,
+                       key: String,
+                       payload: String,
                        headers: String,
                        timestamp: Long) {
 
     def toPersistedRecord: PersistedRecord =
       PersistedRecord(this.id,
-        SerializableTarget(this.topic, this.partition, key.flatMap(arr => Option(arr).map(Chunk.fromArray))),
-        EncodedMessage(payload.flatMap(arr => Option(arr).map(Chunk.fromArray)),
-          decodeHeaders(this.headers)))
-
-    def writeTo(appender: ExcerptAppender, semaphore: Semaphore): Task[ExcerptIndex] = {
-      semaphore.withPermit(ZIO(appender.writingDocument(false))
-        .toManaged(dc => URIO(dc.close()))
-        .use { dc =>
-          writeUnmanaged(dc)
-        })
-    }
-
-    private def writeUnmanaged(dc: DocumentContext): Task[ExcerptIndex] = ZIO {
-      val wire: Wire = dc.wire()
-      assert(wire != null)
-      wire.write("topic").text(this.topic)
-      this.partition.orElse(Some(-1)).map(wire.write("partition").int64(_))
-      this.key.orElse(Some("".getBytes)).map(wire.write("key").bytes(_))
-      this.payload.orElse(Some("".getBytes)).map(wire.write("payload").bytes(_))
-      wire.write("headers").text(this.headers)
-      wire.write("timestamp").int64(this.timestamp)
-      dc.index()
-    }
+        SerializableTarget(this.topic,
+          Option(this.partition).flatMap(p => Some(p).filter(partitionExists)),
+          Option(key).map(SerDes.decode)),
+        EncodedMessage(Option(payload).map(SerDes.decode),
+          SerDes.decodeHeaders(this.headers)))
   }
 
   object RawRecord {
-    def createFrom(record: PersistedRecord): RawRecord =
+    val noPartition: Partition = -1
+
+    @inline def partitionExists(partition: Partition): Boolean = {
+      !noPartition.equals(partition)
+    }
+
+    def createFrom(record: PersistedRecord): RawRecord = {
       RawRecord(record.id,
         record.topic,
-        record.target.partition,
-        record.target.key.map(_.toArray),
-        record.encodedMsg.value.map(_.toArray),
+        record.target.partition.getOrElse(noPartition),
+        record.target.key.map(v => SerDes.encode(v.toArray)).getOrElse(""),
+        record.encodedMsg.value.map(v => SerDes.encode(v.toArray)).getOrElse(""),
         encodeHeader(record.encodedMsg.headers),
         System.currentTimeMillis())
-  }
-
-  def readFromUnsafe[R](dc: DocumentContext): ZIO[R, Throwable, (ExcerptIndex, RawRecord)] = ZIO {
-    val wire = dc.wire()
-    val topic = wire.read("topic").text()
-    val partition = Option(wire.read("partition").int64()).flatMap(v => if (v == -1L) None else Option(v))
-    val key = Option(wire.read("key").bytes()).flatMap(v => if (v sameElements "".getBytes) None else Option(v))
-    val payload = Option(wire.read("payload").bytes()).flatMap(v => if (v sameElements "".getBytes) None else Option(v))
-    val headers = wire.read("headers").text()
-    val timestamp = wire.read("timestamp").int64()
-    val index = dc.index()
-    (index, RawRecord(index, topic, partition.map(_.toInt), key, payload, headers, timestamp))
-  }
-
-  private def decodeHeaders(headersString: String): Headers = {
-    val map: Map[String, Chunk[Byte]] = Option(headersString).map(s => s.split(';')
-      .filter(_.nonEmpty)
-      .filter(_.split(":").length == 2)
-      .map(part => {
-        val key :: value :: Nil = part.split(":").toList
-        (key, value)
-      }).toMap
-      .map {
-        case (base64Key, base64Value) =>
-          new String(decode(base64Key).toArray, "UTF-8") -> decode(base64Value)
-      }).getOrElse(Map.empty)
-    Headers(map)
-  }
-
-  private val encoder = Base64.getEncoder
-  private val decoder = Base64.getDecoder
-
-  def encode(bytes: Chunk[Byte]): String =
-    encode(bytes.toArray)
-
-  def encode(bytes: Array[Byte]): String =
-    Option(bytes) match {
-      case None => null
-      case _ => new String(encoder.encode(bytes), "UTF-8")
     }
 
-  def decode(message: String): Chunk[Byte] =
-    Option(message) match {
-      case None => Chunk.empty
-      case _ => Chunk.fromArray(decoder.decode(message.getBytes("UTF-8")))
+    def createFrom(json: String): Either[String, RawRecord] =
+      json.fromJson[RawRecord]
+
+    def writeTo(record: RawRecord, appender: ExcerptAppender, semaphore: Semaphore): Task[ExcerptIndex] =
+      Task(record.toJson).flatMap(json =>
+        semaphore.withPermit(Task(Bytes.from(json))
+          .flatMap(bytes => Task(appender.writeBytes(bytes))
+            .flatMap(_ => Task(appender.lastIndexAppended())))))
+
+    implicit val decoder: JsonDecoder[RawRecord] =
+      DeriveJsonDecoder.gen[RawRecord]
+
+    implicit val encoder: JsonEncoder[RawRecord] =
+      DeriveJsonEncoder.gen[RawRecord]
+  }
+
+  object SerDes {
+    def decodeHeaders(headersString: String): Headers = {
+      val map: Map[String, Chunk[Byte]] = Option(headersString).map(s => s.split(';')
+        .filter(_.nonEmpty)
+        .filter(_.split(":").length == 2)
+        .map(part => {
+          val key :: value :: Nil = part.split(":").toList
+          (key, value)
+        }).toMap
+        .map {
+          case (base64Key, base64Value) =>
+            new String(decode(base64Key).toArray, "UTF-8") -> decode(base64Value)
+        }).getOrElse(Map.empty)
+      Headers(map)
     }
+
+    private val encoder = Base64.getEncoder
+    private val decoder = Base64.getDecoder
+
+    def encode(bytes: Chunk[Byte]): String =
+      encode(bytes.toArray)
+
+    def encode(bytes: Array[Byte]): String =
+      Option(bytes) match {
+        case None => null
+        case _ => new String(encoder.encode(bytes), "UTF-8")
+      }
+
+    def decode(message: String): Chunk[Byte] =
+      Option(message) match {
+        case None => Chunk.empty
+        case _ => Chunk.fromArray(decoder.decode(message.getBytes("UTF-8")))
+      }
+  }
+
 }
