@@ -46,10 +46,19 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
             offsetReset = offsetReset, retryConfig = retryConfig, extraProperties = config.extraProperties), handler)
       }
       makeBatchConsumer = ZManaged.foreach(batchConsumers.toSeq) { batchConsumer =>
-        BatchConsumer.make(BatchConsumerConfig(config.bootstrapServers, batchConsumer.group, Topics(Set(batchConsumer.initialTopic)),
-          batchConsumer.retryConfig, batchConsumer.clientId, BatchEventLoopConfig.Default, convert(batchConsumer.offsetReset),
-          batchConsumer.extraProperties, batchConsumer.userProvidedListener, batchConsumer.resubscribeTimeout, batchConsumer.initialOffsetsSeek),
-          batchConsumer.batchRecordHandler(executor, runtime))
+        val batchConsumerConfig = BatchConsumerConfig(
+          bootstrapServers = config.bootstrapServers,
+          groupId = batchConsumer.group,
+          initialSubscription = Topics(Set(batchConsumer.initialTopic)),
+          retryConfig = batchConsumer.retryConfig,
+          clientId = batchConsumer.clientId,
+          eventLoopConfig = BatchEventLoopConfig.Default,
+          offsetReset = convert(batchConsumer.offsetReset),
+          extraProperties = config.extraProperties,
+          userProvidedListener = batchConsumer.userProvidedListener,
+          resubscribeTimeout = batchConsumer.resubscribeTimeout,
+          initialOffsetsSeek = batchConsumer.initialOffsetsSeek)
+        BatchConsumer.make(batchConsumerConfig, batchConsumer.batchRecordHandler(executor, runtime))
       }
 
       reservation <- makeConsumer.reserve
@@ -75,7 +84,7 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
       }
 
       override def close(): Unit = runtime.unsafeRun {
-        reservation.release(Exit.Success(())).unit *>
+        reservation.release(Exit.Success(())) *>
           batchReservation.release(Exit.Success(())).unit
       }
     }

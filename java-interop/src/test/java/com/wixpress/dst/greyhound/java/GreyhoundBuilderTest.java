@@ -22,7 +22,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
 
-import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingBatchRecordHandler;
+import static com.wixpress.dst.greyhound.java.BatchRecordHandlers.aBlockingBatchRecordHandler;
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
 import static org.junit.Assert.*;
 
@@ -315,7 +315,7 @@ public class GreyhoundBuilderTest {
 
     @Test
     public void configure_batch_consumer() throws Exception {
-        int numOfMessages = 10;
+        int numOfMessages = getRandom(10);
         CountDownLatch lock = new CountDownLatch(numOfMessages);
         String messagePrefix = UUID.randomUUID().toString();
         GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
@@ -324,14 +324,13 @@ public class GreyhoundBuilderTest {
                 topic,
                 group,
                 aBlockingBatchRecordHandler((ConsumerRecordBatch<String, String> handle) -> {
-                    for (int i = 0; i<handle.records().size(); i++){
+                    for (int i = 0; i < handle.records().size(); i++) {
                         lock.countDown();
                     }
                 }),
                 new StringDeserializer(),
-                new StringDeserializer(),
-                OffsetReset.Earliest
-        );
+                new StringDeserializer()
+        ).withOffsetReset(OffsetReset.Earliest);
         GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
                 .withBatchConsumer(batchConsumer);
 
@@ -400,7 +399,7 @@ public class GreyhoundBuilderTest {
     private <K, V> RecordHandler<K, V> failingRecordHandler(ConcurrentLinkedQueue<ConsumerRecord<K, V>> invocations,
                                                             int timesToFail,
                                                             CompletableFuture<ConsumerRecord<K, V>> done) {
-        return RecordHandlers.aBlockingRecordHandler(value -> {
+        return aBlockingRecordHandler(value -> {
             invocations.add(value);
             if (invocations.size() <= timesToFail) {
                 throw new RuntimeException("Oops!");
@@ -414,5 +413,10 @@ public class GreyhoundBuilderTest {
         assertEquals(key, record.key());
         assertEquals(value, record.value());
         assertEquals(topic, record.topic());
+    }
+
+    private int getRandom(int max) {
+        Random r = new Random();
+        return r.nextInt(max);
     }
 }
