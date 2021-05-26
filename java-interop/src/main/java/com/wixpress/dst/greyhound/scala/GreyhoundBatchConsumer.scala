@@ -18,15 +18,13 @@ object GreyhoundBatchConsumer {
                               handler: BatchRecordHandler[K, V],
                               keyDeserializer: Deserializer[K],
                               valueDeserializer: Deserializer[V],
-                              offsetReset: OffsetReset
                             ) =
     new GreyhoundBatchConsumer(
       initialTopic,
       group,
       handler,
       clientId = RecordConsumerConfig.makeClientId,
-      offsetReset = offsetReset,
-      extraProperties = Map.empty,
+      offsetReset = OffsetReset.Latest,
       userProvidedListener = RebalanceListener.Empty, // hide from api
       resubscribeTimeout = Duration.ofSeconds(30), // hide from api
       initialOffsetsSeek = InitialOffsetsSeek.default, // hide from api
@@ -42,7 +40,6 @@ case class GreyhoundBatchConsumer[K >: AnyRef, V](
                                                    handler: BatchRecordHandler[K, V],
                                                    clientId: String,
                                                    offsetReset: OffsetReset,
-                                                   extraProperties: Map[String, String],
                                                    keyDeserializer: Deserializer[K],
                                                    valueDeserializer: Deserializer[V],
                                                    userProvidedListener: RebalanceListener[Any],
@@ -52,7 +49,7 @@ case class GreyhoundBatchConsumer[K >: AnyRef, V](
                                                  ) {
   private[greyhound] def batchRecordHandler(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]):
   CoreBatchRecordHandler[Any with BatchConsumer.Env, Any, Chunk[Byte], Chunk[Byte]] = {
-    val baseHandler: CoreBatchRecordHandler[Any, Throwable, K, V] = CoreBatchRecordHandler { //todo: Daniel - Is V a list here?
+    val baseHandler: CoreBatchRecordHandler[Any, Throwable, K, V] = CoreBatchRecordHandler {
       records: CoreConsumerRecordBatch[K, V] =>
         ZIO.effectAsync[Any, HandleError[Throwable], Unit] { cb =>
           handler
@@ -66,4 +63,11 @@ case class GreyhoundBatchConsumer[K >: AnyRef, V](
     baseHandler
       .withDeserializers(CoreDeserializer(keyDeserializer), CoreDeserializer(valueDeserializer))
   }
+
+  def withResubscribeTimeout(seconds: Int) =
+    copy(resubscribeTimeout = Duration.ofSeconds(seconds))
+
+  def withOffsetReset(offsetReset: OffsetReset) =
+    copy(offsetReset = offsetReset)
+
 }
