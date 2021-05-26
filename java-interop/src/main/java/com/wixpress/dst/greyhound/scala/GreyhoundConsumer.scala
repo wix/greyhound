@@ -2,8 +2,8 @@ package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.{CompletableFuture, Executor}
 
-import com.wixpress.dst.greyhound.core.consumer.domain.{SerializationError, ConsumerRecord ⇒ CoreConsumerRecord, RecordHandler ⇒ CoreRecordHandler}
-import com.wixpress.dst.greyhound.core.{Deserializer ⇒ CoreDeserializer}
+import com.wixpress.dst.greyhound.core.consumer.domain.{SerializationError, ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.{Deserializer => CoreDeserializer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
 import com.wixpress.dst.greyhound.java.Convert.toScala
 import org.apache.kafka.clients.consumer.ConsumerRecord
@@ -78,7 +78,6 @@ case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
       .withErrorHandler { case (t, record) =>
         ZIO.fromFuture(_ => toScala(errorHandler.onUserException(t, record))).catchAll(_ => ZIO.unit) *> ZIO.fail(t)
       }
-
       .withDeserializers(CoreDeserializer(keyDeserializer), CoreDeserializer(valueDeserializer))
       .withErrorHandler {
         case (error, record) => error match {
@@ -106,7 +105,6 @@ object Convert {
     promise.future
   }
 }
-
 
 trait ErrorHandler[K, V] {
   self =>
