@@ -6,7 +6,5 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 public interface BatchRecordHandler<K, V> {
-
     CompletableFuture<Void> handle(ConsumerRecordBatch<K, V> recordBatch, Executor executor);
-
 }

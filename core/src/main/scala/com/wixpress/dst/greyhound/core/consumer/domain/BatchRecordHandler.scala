@@ -4,9 +4,9 @@ import com.wixpress.dst.greyhound.core.{Deserializer, Partition}
 import zio.{Cause, Chunk, Task, ZIO}
 
 case class ConsumerRecordBatch[K, V](topic: String, partition: Partition, records: Seq[ConsumerRecord[K, V]]) {
-  def size = records.size
-  def startOffset = records.headOption.fold(0L)(_.offset)
-  def endOffset = records.lastOption.fold(0L)(_.offset)
+  def size: Int = records.size
+  def startOffset: Long = records.headOption.fold(0L)(_.offset)
+  def endOffset: Long = records.lastOption.fold(0L)(_.offset)
 }
 
 trait BatchRecordHandler[-R, +E, K, V] { self =>
