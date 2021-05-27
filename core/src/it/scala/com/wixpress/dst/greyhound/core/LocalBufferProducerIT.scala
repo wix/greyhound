@@ -273,11 +273,9 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
   }
 
   def makeBuffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] =
-    if (false) makeH2Buffer(pathSuffix) else makeChronicleQueueBuffer(pathSuffix) // todo remove conditional
+    makeH2Buffer(pathSuffix)
 
   def makeH2Buffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-$pathSuffix", keepDeadMessages = 1.day)
-
-  def makeChronicleQueueBuffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] = ChronicleQueueLocalBuffer.make(s"./tests-data/test-producer-$pathSuffix")
 
   def configFor(kafka: ManagedKafka, group: Group, topic: Topic) = RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching, offsetReset = OffsetReset.Earliest)
 
