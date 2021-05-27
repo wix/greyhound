@@ -350,7 +350,7 @@ public class GreyhoundBuilderTest {
     private void produceTo(GreyhoundProducer producer, String topic, String message) {
         producer.produce(
                 new ProducerRecord<>(topic, message),
-                new IntegerSerializer(),
+                new StringSerializer(),
                 new StringSerializer());
     }
 
