@@ -21,8 +21,6 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
-        "//data-streams/greyhound/wix-interop/src/main/scala/com/wixpress/dst/greyhound/wix",
-        "@com_chuusai_shapeless_2_12",
         "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_clients",
     ],
