@@ -1,6 +1,7 @@
 package(default_visibility = ["//visibility:public"])
 
-sources()
+# visibility is extended to allow packaging a jar to deploy to maven central
+sources(["//core:__subpackages__"])
 
 specs2_ite2e_test(
     name = "batched",
