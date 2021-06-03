@@ -1,0 +1,21 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+scala_library(
+    name = "batched",
+    srcs = [
+        ":sources",
+    ],
+    plugins = ["@com_kubukoz_better_tostring_2_12"],
+    deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/retry",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
+        "@dev_zio_izumi_reflect_2_12",
+        "@dev_zio_zio_2_12",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)

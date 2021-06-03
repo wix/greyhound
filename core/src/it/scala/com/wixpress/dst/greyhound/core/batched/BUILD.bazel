@@ -1,0 +1,29 @@
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+specs2_ite2e_test(
+    name = "batched",
+    srcs = [
+        ":sources",
+    ],
+    jvm_flags = [
+        "-Dwix.app.id=com.wixpress.it",
+        "-Dwix.app.version=fixed.version-SNAPSHOT",
+    ],
+    deps = [
+        "//core/src/it/resources",
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testenv",
+        "//core/src/it/scala/com/wixpress/dst/greyhound/testkit",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/batched",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core/zioutils",
+        "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
+        "@dev_zio_izumi_reflect_2_12",
+        "@dev_zio_zio_2_12",
+        "@org_apache_kafka_kafka_clients",
+    ],
+)

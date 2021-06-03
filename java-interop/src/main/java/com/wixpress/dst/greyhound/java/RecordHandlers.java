@@ -34,5 +34,4 @@ public class RecordHandlers {
             return CompletableFuture.completedFuture(null);
         };
     }
-
 }

@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.java;
 
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecordBatch;
 import com.wixpress.dst.greyhound.core.producer.KafkaError;
 import com.wixpress.dst.greyhound.java.testkit.DefaultEnvironment;
 import com.wixpress.dst.greyhound.java.testkit.Environment;
@@ -21,9 +22,9 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
 
+import static com.wixpress.dst.greyhound.java.BatchRecordHandlers.aBlockingBatchRecordHandler;
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
 import static org.junit.Assert.*;
-import static org.junit.Assert.assertEquals;
 
 
 public class GreyhoundBuilderTest {
@@ -119,7 +120,7 @@ public class GreyhoundBuilderTest {
              GreyhoundProducer producer = producerBuilder.build()) {
 
             for (int i = 0; i < numOfMessages; i++) {
-                String msg = messagePrefix+"-"+i;
+                String msg = messagePrefix + "-" + i;
                 produceTo(producer, topic, msg);
                 produceTo(producer, maxParTopic, msg);
             }
@@ -312,10 +313,44 @@ public class GreyhoundBuilderTest {
         }
     }
 
+    @Test
+    public void configure_batch_consumer() throws Exception {
+        int numOfMessages = getRandom(10);
+        CountDownLatch lock = new CountDownLatch(numOfMessages);
+        String messagePrefix = UUID.randomUUID().toString();
+        GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
+        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
+        GreyhoundBatchConsumer<String, String> batchConsumer = GreyhoundBatchConsumer.with(
+                topic,
+                group,
+                aBlockingBatchRecordHandler((ConsumerRecordBatch<String, String> handle) -> {
+                    for (int i = 0; i < handle.records().size(); i++) {
+                        lock.countDown();
+                    }
+                }),
+                new StringDeserializer(),
+                new StringDeserializer()
+        ).withOffsetReset(OffsetReset.Earliest);
+        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
+                .withBatchConsumer(batchConsumer);
+
+        try (GreyhoundConsumers ignored = consumersBuilder.build();
+             GreyhoundProducer producer = producerBuilder.build()) {
+            for (int i = 0; i < numOfMessages; i++) {
+                String msg = messagePrefix + "-" + i;
+                produceTo(producer, topic, msg);
+            }
+
+            boolean consumedAll = lock.await(3000, TimeUnit.MILLISECONDS);
+
+            assertTrue(consumedAll);
+        }
+    }
+
     private void produceTo(GreyhoundProducer producer, String topic, String message) {
         producer.produce(
                 new ProducerRecord<>(topic, message),
-                new IntegerSerializer(),
+                new StringSerializer(),
                 new StringSerializer());
     }
 
@@ -335,7 +370,7 @@ public class GreyhoundBuilderTest {
                 topic2,
                 group,
                 aBlockingRecordHandler(value -> {
-                    if(value.value().startsWith(msgPrefix)) {
+                    if (value.value().startsWith(msgPrefix)) {
                         consumed.add(value);
                         lockMaxPar.countDown();
                     }
@@ -364,7 +399,7 @@ public class GreyhoundBuilderTest {
     private <K, V> RecordHandler<K, V> failingRecordHandler(ConcurrentLinkedQueue<ConsumerRecord<K, V>> invocations,
                                                             int timesToFail,
                                                             CompletableFuture<ConsumerRecord<K, V>> done) {
-        return RecordHandlers.aBlockingRecordHandler(value -> {
+        return aBlockingRecordHandler(value -> {
             invocations.add(value);
             if (invocations.size() <= timesToFail) {
                 throw new RuntimeException("Oops!");
@@ -378,5 +413,10 @@ public class GreyhoundBuilderTest {
         assertEquals(key, record.key());
         assertEquals(value, record.value());
         assertEquals(topic, record.topic());
+    }
+
+    private int getRandom(int max) {
+        Random r = new Random();
+        return r.nextInt(max);
     }
 }

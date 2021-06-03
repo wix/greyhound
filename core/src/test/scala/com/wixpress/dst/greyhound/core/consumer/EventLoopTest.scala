@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.lang
 import java.util.regex.Pattern
 
 import com.wixpress.dst.greyhound.core
@@ -130,7 +129,7 @@ trait EmptyConsumer extends Consumer {
 
   override def config: ConsumerConfig = ConsumerConfig("", "")
 
-  override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
+  override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
   override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = UIO(Map.empty)
 }

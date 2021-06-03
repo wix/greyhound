@@ -1,11 +1,11 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{bytes, offset, partition, randomTopicName}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{bytes, offset, partition, randomTopicName}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
+import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import org.specs2.specification.core.Fragment
 import zio.test.environment.TestEnvironment
 import zio.{Ref, UIO, test}
@@ -81,10 +81,11 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
 
         resolver = BlockingStateResolver(blockingState)
 
-        shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L))
+        record = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        shouldBlock <- resolver.resolve(record)
         updatedStateMap <- blockingState.get
         updatedState = updatedStateMap(TopicPartitionTarget(tpartition))
-      } yield shouldBlock === true and updatedState === Blocked(Some(key), value, headers, tpartition, offset)
+      } yield shouldBlock === true and updatedState === Blocked(record)
     }
 
     "switch state to Blocked(message) when previous state was Blocking for TopicPartitionTarget" in {
@@ -98,10 +99,11 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
 
         resolver = BlockingStateResolver(blockingState)
 
-        shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L))
+        record = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        shouldBlock <- resolver.resolve(record)
         updatedStateMap <- blockingState.get
         updatedState = updatedStateMap(TopicPartitionTarget(tpartition))
-      } yield shouldBlock === true and updatedState === Blocked(Some(key), value, headers, tpartition, offset)
+      } yield shouldBlock === true and updatedState === Blocked(record)
     }
 
     "Keep 'Blocking' state when previous state was Blocking for TopicTarget" in {
@@ -171,7 +173,7 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
         (shouldBlockAfter aka "shouldBlockAfter" mustEqual(true)) and
         (shouldBlockBefore2 aka "shouldBlockBefore2" mustEqual(false)) and
         (shouldBlockAfter2 aka "shouldBlockAfter2" mustEqual(false)) and
-        (updatedState === Blocked(Some(key), value, headers, tpartition, offset)) and
+        (updatedState === Blocked(record)) and
         (updatedState2 === IgnoringOnce)
     }
 
@@ -208,17 +210,18 @@ class BlockingStateResolverTest  extends BaseTest[TestEnvironment with Greyhound
 
         resolver = BlockingStateResolver(blockingState)
 
-        shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+        record = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+        shouldBlock <- resolver.resolve(record)
         updatedStateMap <- blockingState.get
         updatedStateTopic = updatedStateMap(TopicTarget(topic))
         updatedStateTopicPartition = updatedStateMap(TopicPartitionTarget(tpartition))
       } yield shouldBlock === true and
         updatedStateTopic === IgnoringAll and
-        updatedStateTopicPartition === Blocked(Some(key), value, Headers.Empty, tpartition, offset)
+        updatedStateTopicPartition === Blocked(record)
     }
   }
 
-  final val BlockedMessageState = Blocked(None, "", Headers.Empty, TopicPartition("", 0), 0)
+  final val BlockedMessageState = Blocked(ConsumerRecord("", 0, 0, Headers.Empty, None, "", 0L, 0L, 0L))
 }
 
 case class Foo(message: String)

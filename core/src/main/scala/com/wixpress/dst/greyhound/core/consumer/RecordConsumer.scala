@@ -1,8 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.lang
 import java.util.regex.Pattern
-
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
@@ -16,6 +14,7 @@ import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -42,7 +41,9 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
 
-  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, java.lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
+
+  def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit]
 }
 
 object RecordConsumer {
@@ -56,12 +57,12 @@ object RecordConsumer {
    */
   def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     for {
-      _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers)).toManaged_
+      shutdown <- AwaitShutdown.make.toManaged_
+      _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers, config.consumerAttributes)).toManaged_
       _ <- validateRetryPolicy(config)
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
       nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
-      consumer <- Consumer.make(
-        ConsumerConfig(config.bootstrapServers, config.group, config.clientId, config.offsetReset, config.extraProperties, config.userProvidedListener, config.seekForwardTo))
+      consumer <- Consumer.make(consumerConfig(config))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
       _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
@@ -69,14 +70,17 @@ object RecordConsumer {
       ).toManaged_
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
       blockingStateResolver = BlockingStateResolver(blockingState)
-      handlerWithRetries <- addRetriesToHandler(config, handler, blockingState, nonBlockingRetryHelper)
+      handlerWithRetries <- addRetriesToHandler(config, handler, blockingState, nonBlockingRetryHelper, shutdown.awaitShutdown)
       eventLoop <- EventLoop.make(
         group = config.group,
         initialSubscription = initialSubscription,
         consumer = ReportingConsumer(config.clientId, config.group, consumer),
         handler = handlerWithRetries,
         config = config.eventLoopConfig,
-        clientId = config.clientId)
+        clientId = config.clientId,
+        consumerAttributes = config.consumerAttributes
+      )
+      _ <- shutdown.toManaged // this will be called first on release
     } yield new RecordConsumer[R with Env] {
       override def pause: URIO[R with Env, Unit] =
         eventLoop.pause
@@ -130,9 +134,24 @@ object RecordConsumer {
 
       override def clientId: ClientId = config.clientId
 
-      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, lang.Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
+      override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
         consumer.offsetsForTimes(topicPartitionsOnTimestamp)
+
+      override def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit] =
+        zio.ZIO.foreach(toOffsets.toSeq) { case (tp, offset) => consumer.seek(tp, offset) }.unit
     }
+
+  private def consumerConfig[E, R](config: RecordConsumerConfig) = {
+    ConsumerConfig(
+      config.bootstrapServers,
+      config.group,
+      config.clientId,
+      config.offsetReset,
+      config.extraProperties,
+      config.userProvidedListener,
+      config.initialOffsetsSeek,
+      config.consumerAttributes)
+  }
 
   private def maybeAddRetryTopics[E, R](retryConfig: RetryConfig, config: RecordConsumerConfig, helper: NonBlockingRetryHelper): (ConsumerSubscription, Set[String]) = {
     config.initialSubscription match {
@@ -148,13 +167,15 @@ object RecordConsumer {
   private def addRetriesToHandler[R, E](config: RecordConsumerConfig,
                                         handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
                                         blockingState: Ref[Map[BlockingTarget, BlockingState]],
-                                        nonBlockingRetryHelper: NonBlockingRetryHelper) =
+                                        nonBlockingRetryHelper: NonBlockingRetryHelper,
+                                        consumerShutdown: AwaitShutdown
+                                       ) =
     config.retryConfig match {
       case Some(retryConfig) =>
         Producer.makeR[R](ProducerConfig(config.bootstrapServers,
           retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties))
           .map(producer => ReportingProducer(producer))
-          .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper))
+          .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper, consumerShutdown))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
           report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))
@@ -204,7 +225,8 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 offsetReset: OffsetReset = OffsetReset.Latest,
                                 extraProperties: Map[String, String] = Map.empty,
                                 userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
-                                seekForwardTo: Map[TopicPartition, Offset] = Map.empty
+                                initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
+                                consumerAttributes: Map[String, String] = Map.empty
                                ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties

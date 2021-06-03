@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import org.specs2.mutable.SpecificationWithJUnit
 

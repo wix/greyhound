@@ -16,6 +16,7 @@ specs2_unit_test(
         "//core/src/test/resources",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@ch_qos_logback_logback_classic",
+        "@dev_zio_izumi_reflect_2_12",
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_test_2_12",
         "@dev_zio_zio_test_junit_2_12",

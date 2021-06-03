@@ -18,7 +18,7 @@ trait ProducerR[-R] { self =>
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, RecordMetadata] =
     for {
       promise <- produceAsync(record)
-      res <- promise // promise is ZIO itself (the result of from Proimse.await)
+      res <- promise // promise is ZIO itself (the result of from Promise.await)
     } yield res
 
   def produce[K, V](record: ProducerRecord[K, V],

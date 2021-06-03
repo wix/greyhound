@@ -8,7 +8,9 @@ specs2_unit_test(
         ":sources",
     ],
     deps = [
+        "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
+        "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_clients",
     ],
 )

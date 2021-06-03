@@ -5,10 +5,10 @@ import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.producer.buffered.buffers.{H2LocalBuffer, LocalBuffer, LocalBufferError, LocalBufferFull, LocalBufferProducerConfig, ProduceStrategy}
+import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducer
 import com.wixpress.dst.greyhound.core.producer.buffered.LocalBufferProducerMetric.{LocalBufferFlushTimeout, LocalBufferProduceAttemptFailed}
-import com.wixpress.dst.greyhound.core.producer._
+import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics, eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.ManagedKafkaOps
@@ -85,6 +85,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
               } yield (
                 (state.maxRecordedConcurrency === maxConcurrency) and
                   (queryCountAfterDelay === queryCountAfterComplete) and
+                  (state.runningFiberCount === maxConcurrency) and
                   (queryCountAfterComplete must beGreaterThan(1)))
             }
           } yield test
@@ -145,7 +146,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"restart", partitions = 1)
-      producerPath = 500
+      producerPath = 500 + Random.nextInt(100000) // same path in same test run
       _ <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
         makeProducer(producer, strategy(1), pathSuffix = producerPath, flushTimeout = 5.seconds).use { localBufferProducer =>
           localBufferProducer.produce(record(topic, key), IntSerde, StringSerde).repeat(once)
@@ -222,7 +223,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       topic <- kafka.createRandomTopic(1)
       record = ProducerRecord(topic, value = "0")
       results <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
-        ZIO.foreach(0 until 1000 : Seq[Int])(i =>
+        ZIO.foreach(0 until 1000: Seq[Int])(i =>
           localBufferProducer.produce(record.copy(key = Some(i)), IntSerde, StringSerde)
         )
       }
@@ -232,7 +233,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
   }
 
   def produceMultiple[R](keyCount: Int, recordPerKey: Int)(localBufferProducer: LocalBufferProducer[GreyhoundMetrics with Clock with R], record: ProducerRecord[String, Int]) =
-    ZIO.foreach(0 until (keyCount * recordPerKey) : Seq[Int]) { i =>
+    ZIO.foreach(0 until (keyCount * recordPerKey): Seq[Int]) { i =>
       localBufferProducer.produce(record.copy(value = Some(i), key = Some((i % keyCount).toString)), StringSerde, IntSerde)
     }
 
@@ -254,7 +255,7 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
                       retryInterval: Duration = 1.second,
                       localBufferBatchSize: Int = 100,
                       pathSuffix: Int = Math.abs(Random.nextInt(100000))): ZManaged[ZEnv with GreyhoundMetrics with Clock with R, Throwable, LocalBufferProducer[GreyhoundMetrics with Clock with R]] =
-    makeH2Buffer(pathSuffix.toString).flatMap(buffer =>
+    makeBuffer(pathSuffix.toString).flatMap(buffer =>
       makeProducerWith[R](buffer, producer, strategy, maxMessagesOnDisk, giveUpAfter, flushTimeout, retryInterval, localBufferBatchSize))
 
   def makeProducerWith[R](buffer: LocalBuffer,
@@ -270,6 +271,9 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       maxMessagesOnDisk = maxMessagesOnDisk, giveUpAfter = giveUpAfter, shutdownFlushTimeout = flushTimeout,
       retryInterval = retryInterval, strategy = strategy, localBufferBatchSize = localBufferBatchSize))
   }
+
+  def makeBuffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] =
+    makeH2Buffer(pathSuffix)
 
   def makeH2Buffer(pathSuffix: String): RManaged[Clock with Blocking, LocalBuffer] = H2LocalBuffer.make(s"./tests-data/test-producer-$pathSuffix", keepDeadMessages = 1.day)
 
@@ -301,7 +305,7 @@ class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"buffered-1")
-      _ <- makeH2Buffer(Random.nextInt(100000).toString).use { buffer =>
+      _ <- makeBuffer(Random.nextInt(100000).toString).use { buffer =>
         makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second, maxMessagesOnDisk = 1).use { localBufferProducer =>
           for {
             _ <- buffer.close
@@ -322,7 +326,7 @@ class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
       BufferTestResources(kafka, _) <- getShared
       topic <- kafka.createRandomTopic(prefix = s"buffered-1")
       _ <- Producer.make(failSlowInvalidBrokersConfig).use { producer =>
-        makeH2Buffer(Random.nextInt(100000).toString).use { buffer =>
+        makeBuffer(Random.nextInt(100000).toString).use { buffer =>
           makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second).use { localBufferProducer =>
             buffer.close *>
               localBufferProducer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)

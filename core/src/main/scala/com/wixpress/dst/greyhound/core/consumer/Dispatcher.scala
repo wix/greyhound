@@ -42,14 +42,16 @@ object Dispatcher {
               lowWatermark: Int,
               highWatermark: Int,
               drainTimeout: Duration = 15.seconds,
-              delayResumeOfPausedPartition: Long = 0): UIO[Dispatcher[R]] =
+              delayResumeOfPausedPartition: Long = 0,
+              consumerAttributes: Map[String, String] = Map.empty
+             ): UIO[Dispatcher[R]] =
     for {
       state <- Ref.make[DispatcherState](DispatcherState.Running)
       workers <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
         for {
-          _ <- report(SubmittingRecord(group, clientId, record))
+          _ <- report(SubmittingRecord(group, clientId, record, consumerAttributes))
           partition = RecordTopicPartition(record)
           worker <- workerFor(partition)
           submitted <- worker.submit(record)
@@ -121,26 +123,26 @@ object Dispatcher {
           workers1.get(partition) match {
             case Some(worker) => ZIO.succeed(worker)
             case None => for {
-              _ <- report(StartingWorker(group, clientId, partition))
-              worker <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout)
+              _ <- report(StartingWorker(group, clientId, partition, consumerAttributes))
+              worker <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout, consumerAttributes)
               _ <- workers.update(_ + (partition -> worker))
             } yield worker
           }
         }
 
       private def handleWithMetrics(record: Record) =
-        report(HandlingRecord(group, clientId, record, System.currentTimeMillis() - record.pollTime)) *>
+        report(HandlingRecord(group, clientId, record, System.currentTimeMillis() - record.pollTime, consumerAttributes)) *>
           handle(record).timed.flatMap {
             case (duration, _) =>
-              report(RecordHandled(group, clientId, record, duration))
+              report(RecordHandled(group, clientId, record, duration, consumerAttributes))
           }
 
       private def shutdownWorkers(workers: Iterable[(TopicPartition, Worker)]) =
         ZIO.foreachPar_(workers) {
           case (partition, worker) =>
-            report(StoppingWorker(group, clientId, partition)) *>
+            report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
               worker.shutdown.timed.map(_._1).flatMap(duration =>
-                report(WorkerStopped(group, clientId, partition, duration.toMillis)))
+                report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
         }
     }
 
@@ -177,12 +179,14 @@ object Dispatcher {
                 group: Group,
                 clientId: ClientId,
                 partition: TopicPartition,
-                drainTimeout: Duration): URIO[R with Env, Worker] = for {
+                drainTimeout: Duration,
+                consumerAttributes: Map[String, String]
+               ): URIO[R with Env, Worker] = for {
       queue <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber <-
-        pollOnce(status, internalState, handle, queue, group, clientId, partition)
-          .interruptible.repeatWhile(_ == true).forkDaemon
+        pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
+          .repeatWhile(_ == true).forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Clock, Boolean] =
         queue.offer(record)
@@ -205,8 +209,8 @@ object Dispatcher {
       override def shutdown: URIO[Clock, Unit] =
         for {
           _ <- internalState.update(_.shutdown).commit
-          timeout <- fiber.join.disconnect.timeout(drainTimeout)
-          _ <- ZIO.when(timeout.isEmpty)(fiber.interrupt.disconnect)
+          timeout <- fiber.join.resurrect.ignore.disconnect.timeout(drainTimeout)
+          _ <- ZIO.when(timeout.isEmpty)(fiber.interruptFork)
         } yield Unit
 
       override def clearPausedPartitionDuration: UIO[Unit] = internalState.update(_.clearReachedHighWatermark).commit
@@ -220,18 +224,20 @@ object Dispatcher {
                             queue: Queue[Record],
                             group: Group,
                             clientId: ClientId,
-                            partition: TopicPartition): URIO[R with Env, Boolean] =
+                            partition: TopicPartition,
+                            consumerAttributes: Map[String, String],
+                           ): URIO[R with Env, Boolean] =
       internalState.update(s => s.cleared).commit *>
         state.get.flatMap {
           case DispatcherState.Running => queue.poll.flatMap {
-            case Some(record) => report(TookRecordFromQueue(record, group, clientId)) *>
+            case Some(record) => report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *>
               internalState.update(_.started).commit *>
               handle(record).interruptible *>
               isActive(internalState)
             case None => isActive(internalState).delay(5.millis)
           }
           case DispatcherState.Paused(resume) =>
-            report(WorkerWaitingForResume(group, clientId, partition)) *>
+            report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes)) *>
               resume.await.timeout(30.seconds) *>
               isActive(internalState)
           case DispatcherState.ShuttingDown =>
@@ -273,21 +279,21 @@ sealed trait DispatcherMetric extends GreyhoundMetric
 
 object DispatcherMetric {
 
-  case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
+  case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition, attributes: Map[String, String]) extends DispatcherMetric
 
-  case class StoppingWorker(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
+  case class StoppingWorker(group: Group, clientId: ClientId, partition: TopicPartition, drainTimeoutMs: Long, attributes: Map[String, String]) extends DispatcherMetric
 
-  case class WorkerStopped(group: Group, clientId: ClientId, partition: TopicPartition, durationMs: Long) extends DispatcherMetric
+  case class WorkerStopped(group: Group, clientId: ClientId, partition: TopicPartition, durationMs: Long, attributes: Map[String, String]) extends DispatcherMetric
 
-  case class SubmittingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V]) extends DispatcherMetric
+  case class SubmittingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], attributes: Map[String, String]) extends DispatcherMetric
 
-  case class HandlingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], timeInQueue: Long) extends DispatcherMetric
+  case class HandlingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], timeInQueue: Long, attributes: Map[String, String]) extends DispatcherMetric
 
-  case class RecordHandled[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], duration: Duration) extends DispatcherMetric
+  case class RecordHandled[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], duration: Duration, attributes: Map[String, String]) extends DispatcherMetric
 
-  case class TookRecordFromQueue(record: Record, group: Group, clientId: ClientId) extends DispatcherMetric
+  case class TookRecordFromQueue(record: Record, group: Group, clientId: ClientId, attributes: Map[String, String]) extends DispatcherMetric
 
-  case class WorkerWaitingForResume(group: Group, clientId: ClientId, partition: TopicPartition) extends DispatcherMetric
+  case class WorkerWaitingForResume(group: Group, clientId: ClientId, partition: TopicPartition, attributes: Map[String, String]) extends DispatcherMetric
 
 }
 

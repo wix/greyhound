@@ -2,9 +2,9 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.{Clock, Duration, ZoneId}
 import java.util.concurrent.atomic.AtomicReference
-
-import com.wixpress.dst.greyhound.core.{Offset, TopicPartition}
-import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.CommittedMissingOffsets
+import com.wixpress.dst.greyhound.core.TopicPartition
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed}
+import com.wixpress.dst.greyhound.core.consumer.SeekTo.{SeekToEnd, SeekToOffset}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import org.specs2.mock.Mockito
 import org.specs2.mutable.SpecificationWithJUnit
@@ -41,19 +41,19 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       timeout
     )
 
-    reported must contain(CommittedMissingOffsets(clientId, group, partitions, missingOffsets, elapsed = Duration.ZERO, seekForwardTo))
+    reported must contain(CommittedMissingOffsets(clientId, group, partitions, missingOffsets, elapsed = Duration.ZERO, missingOffsets))
   }
 
-  "seek to specified offsets if nothing committed" in new ctx(seekForwardTo = Map(p1 -> p1Pos)) {
-    givenCommittedOffsets(partitions, timeoutIfSeekForward)(Map(p2 -> p2Pos))
-    givenPositions(timeoutIfSeekForward, p1 -> (p1Pos + 100), p3 -> p3Pos)
+  "seek to specified offsets if nothing committed" in new ctx(seekTo = Map(p1 -> SeekToOffset(p1Pos))) {
+    givenCommittedOffsets(partitions, timeoutIfSeek)(Map(p2 -> p2Pos))
+    givenPositions(timeoutIfSeek, p1 -> (p1Pos + 100), p3 -> p3Pos)
 
     committer.initializeOffsets(partitions)
 
     val expected = Map(p1 -> p1Pos, p3 -> p3Pos)
     there was one(offsetOps).commit(
       expected,
-      timeoutIfSeekForward
+      timeoutIfSeek
     )
 
     there was one(offsetOps).seek(Map(p1 -> p1Pos))
@@ -61,65 +61,37 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
     there was no(offsetOps).position(===(p1), any())
 
     reported must
-      contain(CommittedMissingOffsets(clientId, group, partitions, expected, elapsed = Duration.ZERO, seekForwardTo, None))
+      contain(CommittedMissingOffsets(clientId, group, partitions, expected, elapsed = Duration.ZERO, expected))
   }
 
-  "seek to specified offsets if larger than committed" in new ctx(seekForwardTo = Map(p1 -> p1Pos)) {
-    givenCommittedOffsets(partitions, timeoutIfSeekForward)(Map(p1 -> (p1Pos - 1), p2 -> randomInt))
-    givenPositions(timeoutIfSeekForward, p3 -> p3Pos)
+  "seek to specified offsets" in new ctx(seekTo = Map(p1 -> SeekToOffset(p1Pos), p2 -> SeekToEnd)) {
+    givenCommittedOffsets(partitions, timeoutIfSeek)(Map(p1 -> (p1Pos - 1), p2 -> randomInt))
+    givenEndOffsets(Set(p2), timeoutIfSeek)(Map(p2 -> p2Pos))
+    givenPositions(timeoutIfSeek, p3 -> p3Pos)
 
     committer.initializeOffsets(partitions)
 
-    val expected = Map(p1 -> p1Pos, p3 -> p3Pos)
+    val expected = Map(p1 -> p1Pos, p3 -> p3Pos, p2 -> p2Pos)
     there was one(offsetOps).commit(
       expected,
-      timeoutIfSeekForward
+      timeoutIfSeek
     )
-    there was one(offsetOps).seek(Map(p1 -> p1Pos))
+    there was one(offsetOps).seek(Map(p1 -> p1Pos, p2 -> p2Pos))
 
     there was no(offsetOps).position(===(p1), any())
 
     reported must
-      contain(CommittedMissingOffsets(clientId, group, partitions, expected, elapsed = Duration.ZERO, seekForwardTo, None))
+      contain(CommittedMissingOffsets(clientId, group, partitions, expected, elapsed = Duration.ZERO, expected))
   }
 
-  "don't seek to specified offsets if smaller than committed" in new ctx(seekForwardTo = Map(p1 -> p1Pos)) {
-    givenCommittedOffsets(partitions, timeoutIfSeekForward)(Map(p1 -> (p1Pos + 1), p2 -> randomInt))
-    givenPositions(timeoutIfSeekForward, p3 -> p3Pos)
-
-    committer.initializeOffsets(partitions)
-
-    val expected = Map(p3 -> p3Pos)
-    there was one(offsetOps).commit(
-      expected,
-      timeoutIfSeekForward
-    )
-
-    there was no(offsetOps).position(===(p1), any())
-    there was no(offsetOps).seek(any())
-
-    reported must
-      contain(CommittedMissingOffsets(clientId, group, partitions, expected, elapsed = Duration.ZERO, seekForwardTo, None))
-  }
-
-  "report errors in `committed()`, but not fail (if no relevant seekForwardTo offsets)" in new ctx(seekForwardTo = Map(randomPartition -> randomInt)) {
-    val e = new RuntimeException(randomStr)
-    offsetOps.committed(any(), any()) throws e
-
-    committer.initializeOffsets(partitions)
-
-    reported must
-      contain(CommittedMissingOffsets(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, seekForwardTo, Some(e)))
-  }
-
-  "fail if operation fails and there are relevant seekForwardTo offsets" in new ctx(seekForwardTo = Map(p1 -> p1Pos)) {
+  "fail if operation fails and there are relevant seekTo offsets" in new ctx(seekTo = Map(p1 -> SeekToOffset(p1Pos))) {
     val e = new RuntimeException(randomStr)
     offsetOps.committed(any(), any()) throws e
 
     committer.initializeOffsets(partitions) must throwA(e)
 
     reported must
-      contain(CommittedMissingOffsets(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, seekForwardTo, Some(e)))
+      contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
   }
 
   "report errors in `commit()`, but not fail" in new ctx {
@@ -132,7 +104,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
     committer.initializeOffsets(partitions)
 
     reported must
-      contain(CommittedMissingOffsets(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, seekForwardTo, Some(e)))
+      contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
   }
 
   "report errors in `commit()`, but not fail" in new ctx {
@@ -143,26 +115,30 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
     committer.initializeOffsets(partitions)
 
     reported must
-      contain(CommittedMissingOffsets(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, seekForwardTo, Some(e)))
+      contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
   }
 
-  abstract class ctx(val seekForwardTo: Map[TopicPartition, Offset] = Map.empty) extends Scope {
+  abstract class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty) extends Scope {
     private val metricsLogRef = new AtomicReference(Seq.empty[GreyhoundMetric])
     def reported = metricsLogRef.get
     val timeout = Duration.ofMillis(123)
-    val timeoutIfSeekForward = Duration.ofMillis(231)
+    val timeoutIfSeek = Duration.ofMillis(231)
     def report(metric: GreyhoundMetric) = metricsLogRef.updateAndGet(_ :+ metric)
     val offsetOps = mock[UnsafeOffsetOperations]
     val group, clientId = randomStr
 
     val clock = Clock.fixed(java.time.Instant.EPOCH, ZoneId.of("UTC"))
 
-    val committer = new OffsetsInitializer(clientId, group, offsetOps, timeout, timeoutIfSeekForward, report, seekForwardTo, clock)
+    val committer = new OffsetsInitializer(clientId, group, offsetOps, timeout, timeoutIfSeek, report, if (seekTo == Map.empty) InitialOffsetsSeek.default else _ => seekTo, clock)
 
     def randomOffsets(partitions: Set[TopicPartition]) = partitions.map(p => p -> randomInt.toLong).toMap
 
     def givenCommittedOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration = timeout)(result: Map[TopicPartition, Long]) = {
       offsetOps.committed(partitions, timeout) returns result
+    }
+
+    def givenEndOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration = timeout)(result: Map[TopicPartition, Long]) = {
+      offsetOps.endOffsets(partitions, timeout) returns result
     }
 
     def givenPositions(positions: (TopicPartition, Long)*): Unit = {
@@ -174,6 +150,8 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
         offsetOps.position(tp, timeout) returns p
       }
     }
+
+
   }
 
   private def randomStr = Random.alphanumeric.take(5).mkString

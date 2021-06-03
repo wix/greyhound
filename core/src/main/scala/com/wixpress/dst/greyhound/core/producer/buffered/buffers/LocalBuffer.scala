@@ -17,7 +17,7 @@ trait LocalBuffer {
 
   def unsentRecordsCount: ZIO[Blocking, LocalBufferError, Int]
 
-  def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Long]
+  def oldestUnsent: ZIO[Blocking with Clock, LocalBufferError, Option[Long]]
 
   def close: ZIO[Blocking, LocalBufferError, Unit]
 
@@ -26,6 +26,10 @@ trait LocalBuffer {
   def take(upTo: Int): ZIO[Clock with Blocking, LocalBufferError, Seq[PersistedRecord]]
 
   def delete(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
+
+  def lastSequenceNumber: UIO[Long]
+
+  def firstSequenceNumber: ZIO[Blocking, LocalBufferError, Long]
 
   def markDead(messageId: PersistedMessageId): ZIO[Clock with Blocking, LocalBufferError, Boolean]
 
@@ -48,7 +52,9 @@ case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Durat
                                      shutdownFlushTimeout: Duration, retryInterval: Duration,
                                      strategy: ProduceStrategy = ProduceStrategy.Sync(10),
                                      localBufferBatchSize: Int = 100,
-                                     id: Int = Random.nextInt(100000)) {
+                                     id: Int = Random.nextInt(100000),
+                                     startFrom: Option[Long] = None,
+                                     allowAwaitingOnKafkaResult: Boolean = true) {
   def withStrategy(f: ProduceStrategy): LocalBufferProducerConfig = copy(strategy = f)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)

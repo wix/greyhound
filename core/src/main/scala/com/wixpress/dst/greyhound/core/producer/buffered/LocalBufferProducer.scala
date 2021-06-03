@@ -35,7 +35,9 @@ trait LocalBufferProducer[R] {
 
 case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolean, localBufferQueryCount: Int,
                                     failedRecords: Int, enqueued: Int, inflight: Int, lagMs: Long,
-                                    promises: Map[PersistedMessageId, Promise[ProducerError, RecordMetadata]]) {
+                                    promises: Map[PersistedMessageId, Promise[ProducerError, RecordMetadata]],
+                                    runningFiberCount: Int, lastSequenceNumberAppended: Long,
+                                    firstSequenceNumberAppended: Long, responsesQueued: Int) {
   def removePromises(ids: Iterable[PersistedMessageId]): LocalBufferProducerState =
     copy(promises = promises -- ids)
 
@@ -51,10 +53,10 @@ case class LocalBufferProducerState(maxRecordedConcurrency: Int, running: Boolea
 
 object LocalBufferProducerState {
   val empty = LocalBufferProducerState(maxRecordedConcurrency = 0, running = true,
-    localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, lagMs = 0L, promises = Map.empty)
+    localBufferQueryCount = 0, failedRecords = 0, enqueued = 0, inflight = 0, lagMs = 0L, promises = Map.empty, runningFiberCount = 0, lastSequenceNumberAppended = 0L, firstSequenceNumberAppended = 0L, responsesQueued = 0)
 
   val invalid = LocalBufferProducerState(maxRecordedConcurrency = -1, running = false,
-    localBufferQueryCount = -1, failedRecords = -1, enqueued = -1, inflight = -1, lagMs = -1L, promises = Map.empty)
+    localBufferQueryCount = -1, failedRecords = -1, enqueued = -1, inflight = -1, lagMs = -1L, promises = Map.empty, runningFiberCount = 0, lastSequenceNumberAppended = 0L, firstSequenceNumberAppended = 0L, responsesQueued = 0)
 }
 
 case class BufferedProduceResult(localMessageId: PersistedMessageId, kafkaResult: IO[ProducerError, RecordMetadata])
@@ -65,6 +67,8 @@ object LocalBufferProducer {
       unsent <- localBuffer.unsentRecordsCount
       state <- TRef.makeCommit(LocalBufferProducerState.empty.copy(enqueued = unsent))
       router <- ProduceFlusher.make(producer, config.giveUpAfter, config.retryInterval, config.strategy)
+      responsesQueue <- Queue.bounded[Response](10000)
+      _ <- drainResponsesForever(responsesQueue, config, state)(localBuffer)
       fiber <- ZIO.whenM(localBuffer.isOpen)(localBuffer.take(config.localBufferBatchSize)
         .timed
         .tap { case (d, msgs) => report(LocalBufferRetrievedBatch(msgs.size, d.toMillis, config.id)) }
@@ -74,21 +78,14 @@ object LocalBufferProducer {
             ZIO.foreach(msgs)(record =>
               router.produceAsync(producerRecord(record))
                 .tap(_
-                  .tapBoth(
-                    error => updateReferences(Left(error), state, record) *>
-                      localBuffer.markDead(record.id) *>
-                      report(ResilientProducerFailedNonRetriable(error, config.id, record.topic, record.id, record.submitted)),
-                    metadata =>
-                      updateReferences(Right(metadata), state, record) *>
-                        localBuffer.delete(record.id) *>
-                        report(ResilientProducerSentRecord(record.topic, metadata.partition, metadata.offset, config.id, record.id)))
-                  .ignore
-                  .fork)
+                  .tapBoth(error => responsesQueue.offer(Response(record.id, record.submitted, record.topic, Left(error))),
+                    metadata => responsesQueue.offer(Response(record.id, record.submitted, record.topic, Right(metadata))))
+                  .forkDaemon)
             ).flatMap(ZIO.collectAll(_))
               .as(msgs)
         )
         .tap(r => ZIO.whenCase(r.size) {
-          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(10.millis) // this waits until there are more messages in buffer
+          case 0 => state.get.flatMap(state => STM.check(state.enqueued > 0 || !state.running)).commit.delay(100.millis) // this waits until there are more messages in buffer
           case x if x <= 10 => sleep(10.millis)
         })
         .catchAllCause { e: Cause[Throwable] =>
@@ -102,7 +99,7 @@ object LocalBufferProducer {
           UIO(Random.nextLong).flatMap(generatedMsgId =>
             report(ResilientProducerAppendingMessage(record.topic, generatedMsgId, config.id)) *>
               state.update(_.updateEnqueuedCount(1)).commit *>
-              enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId)
+              enqueueRecordToBuffer(localBuffer, state, record, generatedMsgId, config)
                 .catchAll(error => directSendToKafkaIfUnordered(router, record, config, state, error)))
 
       override def produce[K, V](record: ProducerRecord[K, V],
@@ -122,12 +119,18 @@ object LocalBufferProducer {
         for {
           stateRef <- state.get.commit
           concurrency <- router.recordedConcurrency
+          runningFiberCount <- router.fiberCount
           failedCount <- localBuffer.failedRecordsCount.catchAll(_ => UIO(-1))
+          lastSeqNum <- localBuffer.lastSequenceNumber
+          firstSeqNum <- localBuffer.firstSequenceNumber.catchAll(_ => UIO(-1L))
           inflight <- localBuffer.inflightRecordsCount.catchAll(_ => UIO(-1))
           unsent <- localBuffer.unsentRecordsCount.catchAll(_ => UIO(-1))
-          lagMs <- localBuffer.oldestUnsent.catchAll(_ => UIO(-1L))
+          responsesQueued <- responsesQueue.size
+          now <- UIO(System.currentTimeMillis)
+          lagMs <- localBuffer.oldestUnsent.map(_.map(now - _).getOrElse(0L)).catchAll(_ => UIO(-1L))
         } yield stateRef.copy(maxRecordedConcurrency = concurrency, failedRecords = failedCount,
-          enqueued = unsent, inflight = inflight, lagMs = lagMs)
+          enqueued = unsent, inflight = inflight, lagMs = lagMs, runningFiberCount = runningFiberCount,
+          lastSequenceNumberAppended = lastSeqNum, firstSequenceNumberAppended = firstSeqNum, responsesQueued = responsesQueued)
 
       override def close: URIO[ZEnv with GreyhoundMetrics with R, LocalBufferProducerState] =
         state.modify(s => (s.enqueued + s.inflight, s.copy(running = false))).commit.flatMap(toFlush =>
@@ -147,6 +150,24 @@ object LocalBufferProducer {
     })
       .toManaged((m: LocalBufferProducer[R]) => m.close.ignore)
 
+  private def drainResponsesForever[R](responsesQueue: Queue[Response], config: LocalBufferProducerConfig, state: TRef[LocalBufferProducerState])(localBuffer: LocalBuffer) =
+    ZIO.foreach((0 until 10).toSet)(_ =>
+      responsesQueue.take
+        .flatMap {
+          case Response(id, submitted, topic, Left(error)) =>
+            updateReferences(Left(error), state, id, config) *>
+              localBuffer.markDead(id) *>
+              report(ResilientProducerFailedNonRetriable(error, config.id, topic, id, submitted))
+          case Response(id, _, topic, Right(metadata)) =>
+            updateReferences(Right(metadata), state, id, config) *>
+              localBuffer.delete(id) *>
+              report(ResilientProducerSentRecord(topic, metadata.partition, metadata.offset, config.id, id))
+        }
+        .catchAllCause(t => report(LocalBufferProducerResponseUpdateFailed(t.squashTrace)))
+        .repeatWhileM(_ => state.get.map(s => s.running || s.enqueued > 0).commit)
+        .forkDaemon
+    )
+
   private def directSendToKafkaIfUnordered[R](router: ProducerR[R], record: ProducerRecord[Chunk[Byte], Chunk[Byte]], config: LocalBufferProducerConfig, state: TRef[LocalBufferProducerState], error: LocalBufferError): ZIO[Blocking with R, LocalBufferError, BufferedProduceResult] =
     config.strategy match {
       case _: Unordered => state.update(_.updateEnqueuedCount(-1)).commit *>
@@ -157,10 +178,11 @@ object LocalBufferProducer {
     }
 
   private def enqueueRecordToBuffer(localBuffer: LocalBuffer, state: TRef[LocalBufferProducerState],
-                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
+                                    record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long,
+                                    config: LocalBufferProducerConfig): ZIO[Clock with Blocking, LocalBufferError, BufferedProduceResult] =
     Promise.make[producer.ProducerError, producer.RecordMetadata].flatMap(promise =>
       localBuffer.enqueue(persistedRecord(record, generatedMessageId))
-        .tap(id => state.update(_.withPromise(id, promise)).commit)
+        .tap(id => ZIO.when(config.allowAwaitingOnKafkaResult)(state.update(_.withPromise(id, promise)).commit))
         .map { id => BufferedProduceResult(id, promise.await) })
 
   private def persistedRecord(record: ProducerRecord[Chunk[Byte], Chunk[Byte]], generatedMessageId: Long) = {
@@ -181,15 +203,14 @@ object LocalBufferProducer {
 
   private def updateReferences(result: Either[ProducerError, RecordMetadata],
                                state: TRef[LocalBufferProducerState],
-                               msg: PersistedRecord): URIO[ZEnv, Unit] =
+                               id: PersistedMessageId,
+                               config: LocalBufferProducerConfig): URIO[ZEnv, Unit] =
     state.updateAndGet(_.updateEnqueuedCount(-1)).commit
-      .flatMap(_.promises.get(msg.id).map(promise =>
+      .flatMap(s => ZIO.when(config.allowAwaitingOnKafkaResult)(s.promises.get(id).map(promise =>
         promise.complete(ZIO.fromEither(result)) *>
-          state.update(_.removePromise(msg.id))
-            .commit
-            .delay(1.minutes)
-            .forkDaemon)
-        .getOrElse(ZIO.unit))
+          state.update(_.removePromise(id))
+            .commit)
+        .getOrElse(ZIO.unit)))
       .unit
 
   private def producerRecord(msg: PersistedRecord): ProducerRecord[Chunk[Byte], Chunk[Byte]] =
@@ -230,6 +251,13 @@ object LocalBufferProducerMetric {
 
   case class LocalBufferProducerCaughtError(e: Throwable) extends LocalBufferProducerMetric
 
+  case class LocalBufferProducerInternalFiberDied(cause: Throwable) extends LocalBufferProducerMetric
+
+  case class LocalBufferProducerResponseUpdateFailed(cause: Throwable) extends LocalBufferProducerMetric
+
+  case class LocalBufferProducerProduceHardError(cause: Throwable) extends LocalBufferProducerMetric
+
 }
 
 
+private case class Response(id: PersistedMessageId, submitted: Long, topic: Topic, result: Either[ProducerError, RecordMetadata])

@@ -12,7 +12,8 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{Top
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
-import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, CountDownLatch, eventuallyTimeoutFail, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, eventuallyTimeoutFail, eventuallyZ}
+import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.core.zioutils.Gate
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.{clientId, _}
@@ -391,7 +392,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           tasksDurationFiber <- waitForTasksDuration.get.tap(d => STM.check(d > 0.millis)).commit.fork
           _ <- innerGate.toggle(true).delay(delay) /*and now handler will complete */
           tasksDuration <- tasksDurationFiber.join
-        } yield tasksDuration must between(delay, delay * 3)
+        } yield tasksDuration must between(delay * 0.9, delay * 3)
       }
     } yield test
   }
