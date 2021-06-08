@@ -16,7 +16,7 @@ import zio.clock.Clock
 import zio.duration._
 
 import scala.collection.JavaConverters._
-import scala.util.Random
+import scala.util.{Random, Try}
 
 trait Consumer {
   def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Blocking with GreyhoundMetrics with R1, Unit]
@@ -255,7 +255,7 @@ object UnsafeOffsetOperations {
 
     override def seek(offsets: Map[TopicPartition, Offset]): Unit =
       offsets.foreach {
-        case (tp, offset) => consumer.seek(tp.asKafka, offset)
+        case (tp, offset) => Try(consumer.seek(tp.asKafka, offset))
       }
 
     override def endOffsets(partitions: Set[TopicPartition],
