@@ -1,10 +1,11 @@
 package com.wixpress.dst.greyhound.testkit
 
 import java.util.Properties
-
 import com.wixpress.dst.greyhound.core.TopicConfig
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.MetricResult
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
 import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
@@ -12,6 +13,7 @@ import zio.blocking.{Blocking, effectBlocking}
 import zio.{RIO, RManaged, Task}
 
 import scala.reflect.io.Directory
+import scala.util.Random
 
 trait ManagedKafka {
   def bootstrapServers: String
@@ -28,7 +30,7 @@ object ManagedKafka {
   def make(config: ManagedKafkaConfig): RManaged[Blocking with GreyhoundMetrics, ManagedKafka] = for {
     _ <- embeddedZooKeeper(config.zooKeeperPort)
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
-    _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, 1234, logDir, config.saslAttributes))
+    _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
     admin <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
 
@@ -54,8 +56,10 @@ object ManagedKafka {
   private def embeddedZooKeeper(port: Int) = {
     val acquire = GreyhoundMetrics.report(StartingZooKeeper(port)) *> effectBlocking(new TestingServer(port))
     acquire.toManaged { server =>
-      GreyhoundMetrics.report(StoppingZooKeeper) *>
-        effectBlocking(server.stop()).ignore
+      GreyhoundMetrics.report(StoppingZooKeeper(port)) *>
+        effectBlocking(server.stop())
+          .reporting(StoppedZooKeeper(port, _))
+          .ignore
     }
   }
 
@@ -67,14 +71,16 @@ object ManagedKafka {
       _ <- effectBlocking(server.startup())
     } yield server
     acquire.toManaged { server =>
-      GreyhoundMetrics.report(StoppingKafka) *>
-        effectBlocking(server.shutdown()).ignore
+      GreyhoundMetrics.report(StoppingKafka(config.port)) *>
+        effectBlocking(server.shutdown())
+          .reporting(StoppedKafka(config.port, _))
+          .ignore
     }
   }
 
 }
 
-case class ManagedKafkaConfig(kafkaPort: Int, zooKeeperPort: Int, saslAttributes: Map[String, String])
+case class ManagedKafkaConfig(kafkaPort: Int, zooKeeperPort: Int, saslAttributes: Map[String, String], brokerId: Int = Random.nextInt(100000))
 
 object ManagedKafkaConfig {
   val Default: ManagedKafkaConfig = ManagedKafkaConfig(6667, 2181, Map.empty)
@@ -84,10 +90,11 @@ case class KafkaServerConfig(port: Int,
                              zooKeeperPort: Int,
                              brokerId: Int,
                              logDir: Directory,
-                             saslAttributes: Map[String, String]) {
+                             extraProperties: Map[String, String]) {
 
   def toKafkaConfig: KafkaConfig = KafkaConfig.fromProps {
     val props = new Properties
+    props.setProperty("broker.id",brokerId.toString)
     props.setProperty("port", port.toString)
     props.setProperty("log.dir", logDir.path)
     props.setProperty("zookeeper.connect", s"localhost:$zooKeeperPort")
@@ -110,8 +117,8 @@ case class KafkaServerConfig(port: Int,
     props.setProperty("transaction.max.timeout.ms", "15000")
     props.setProperty("reserved.broker.max.id", "99999999")
     props.setProperty("auto.create.topics.enable", "false")
-    if (saslAttributes.nonEmpty) {
-      saslAttributes.foreach(attribs => {
+    if (extraProperties.nonEmpty) {
+      extraProperties.foreach(attribs => {
         props.setProperty(attribs._1, attribs._2)
       })
     }
@@ -131,10 +138,14 @@ object ManagedKafkaMetric {
 
   case class StartingZooKeeper(port: Int) extends ManagedKafkaMetric
 
-  case object StoppingZooKeeper extends ManagedKafkaMetric
+  case class StoppingZooKeeper(port: Int) extends ManagedKafkaMetric
+
+  case class StoppedZooKeeper(port: Int, result: MetricResult[Throwable, Unit]) extends ManagedKafkaMetric
 
   case class StartingKafka(port: Int) extends ManagedKafkaMetric
 
-  case object StoppingKafka extends ManagedKafkaMetric
+  case class StoppingKafka(port: Int) extends ManagedKafkaMetric
+
+  case class StoppedKafka(port: Int, result: MetricResult[Throwable, Unit]) extends ManagedKafkaMetric
 
 }
