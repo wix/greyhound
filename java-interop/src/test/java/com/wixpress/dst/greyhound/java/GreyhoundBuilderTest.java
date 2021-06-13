@@ -1,5 +1,6 @@
 package com.wixpress.dst.greyhound.java;
 
+import com.wixpress.dst.greyhound.core.consumer.batched.BatchRetryConfig;
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecordBatch;
 import com.wixpress.dst.greyhound.core.producer.KafkaError;
 import com.wixpress.dst.greyhound.java.testkit.DefaultEnvironment;
@@ -16,11 +17,13 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import scala.Option;
+import scala.collection.JavaConverters;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.wixpress.dst.greyhound.java.BatchRecordHandlers.aBlockingBatchRecordHandler;
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
@@ -315,22 +318,19 @@ public class GreyhoundBuilderTest {
 
     @Test
     public void configure_batch_consumer() throws Exception {
-        int numOfMessages = getRandom(10);
+        int numOfMessages = getRandom(5, 10);
         CountDownLatch lock = new CountDownLatch(numOfMessages);
         String messagePrefix = UUID.randomUUID().toString();
         GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
         GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
-        GreyhoundBatchConsumer<String, String> batchConsumer = GreyhoundBatchConsumer.with(
-                topic,
-                group,
-                aBlockingBatchRecordHandler((ConsumerRecordBatch<String, String> handle) -> {
-                    for (int i = 0; i < handle.records().size(); i++) {
-                        lock.countDown();
-                    }
-                }),
-                new StringDeserializer(),
-                new StringDeserializer()
-        ).withOffsetReset(OffsetReset.Earliest);
+
+        BatchRecordHandler<String, String> handler = aBlockingBatchRecordHandler((ConsumerRecordBatch<String, String> handle) -> {
+            for (int i = 0; i < handle.records().size(); i++) {
+                lock.countDown();
+            }
+        });
+
+        GreyhoundBatchConsumer<String, String> batchConsumer = batchConsumerFor(handler).withOffsetReset(OffsetReset.Earliest);
         GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config)
                 .withBatchConsumer(batchConsumer);
 
@@ -342,6 +342,43 @@ public class GreyhoundBuilderTest {
             }
 
             boolean consumedAll = lock.await(3000, TimeUnit.MILLISECONDS);
+
+            assertTrue(consumedAll);
+        }
+    }
+
+    @Test
+    public void configure_batch_consumer_with_retries() throws Exception {
+        GreyhoundConfig config = new GreyhoundConfig(environment.kafka().bootstrapServers());
+        GreyhoundProducerBuilder producerBuilder = new GreyhoundProducerBuilder(config);
+
+        String message = UUID.randomUUID().toString();
+        CountDownLatch oneSuccessOneFailureCounter = new CountDownLatch(2);
+
+        final AtomicBoolean shouldFail = new AtomicBoolean(true);
+        BatchRecordHandler<String, String> batchHandler = aBlockingBatchRecordHandler((ConsumerRecordBatch<String, String> handle) -> {
+            for (int i = 0; i < handle.records().size(); i++) {
+                String recordMessage = JavaConverters.seqAsJavaList(handle.records()).get(i).value();
+                if (recordMessage.equals(message)) {
+                    oneSuccessOneFailureCounter.countDown();
+
+                    if (shouldFail.getAndSet(false)) {
+                        throw new RuntimeException("BATCH FAILED!");
+                    }
+                }
+            }
+
+        });
+
+        GreyhoundBatchConsumer<String, String> batchConsumer = batchConsumerFor(batchHandler)
+                .withRetryConfig(new BatchRetryConfig(Duration.of(10, ChronoUnit.MILLIS)));
+
+        GreyhoundConsumersBuilder consumersBuilder = new GreyhoundConsumersBuilder(config).withBatchConsumer(batchConsumer);
+        try (GreyhoundConsumers ignored = consumersBuilder.build();
+             GreyhoundProducer producer = producerBuilder.build()) {
+            produceTo(producer, topic, message);
+
+            boolean consumedAll = oneSuccessOneFailureCounter.await(3000, TimeUnit.MILLISECONDS);
 
             assertTrue(consumedAll);
         }
@@ -396,6 +433,16 @@ public class GreyhoundBuilderTest {
         return producerBuilder.build();
     }
 
+    private GreyhoundBatchConsumer<String, String> batchConsumerFor(BatchRecordHandler<String, String> handler) {
+        return GreyhoundBatchConsumer.with(
+                topic,
+                group,
+                handler,
+                new StringDeserializer(),
+                new StringDeserializer()
+        );
+    }
+
     private <K, V> RecordHandler<K, V> failingRecordHandler(ConcurrentLinkedQueue<ConsumerRecord<K, V>> invocations,
                                                             int timesToFail,
                                                             CompletableFuture<ConsumerRecord<K, V>> done) {
@@ -415,8 +462,8 @@ public class GreyhoundBuilderTest {
         assertEquals(topic, record.topic());
     }
 
-    private int getRandom(int max) {
+    private int getRandom(int min, int max) {
         Random r = new Random();
-        return r.nextInt(max);
+        return min + r.nextInt(max - min);
     }
 }

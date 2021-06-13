@@ -30,7 +30,7 @@ object GreyhoundBatchConsumer {
       initialOffsetsSeek = InitialOffsetsSeek.default, // hide from api
       retryConfig = None,
       keyDeserializer = keyDeserializer,
-      valueDeserializer = valueDeserializer
+      valueDeserializer = valueDeserializer,
     )
 }
 
@@ -69,5 +69,8 @@ case class GreyhoundBatchConsumer[K >: AnyRef, V](
 
   def withOffsetReset(offsetReset: OffsetReset) =
     copy(offsetReset = offsetReset)
+
+  def withRetryConfig(batchRetryConfig: BatchRetryConfig) =
+    copy(retryConfig = Option(batchRetryConfig))
 
 }
