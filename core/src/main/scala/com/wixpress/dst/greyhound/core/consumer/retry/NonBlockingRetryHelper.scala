@@ -134,9 +134,13 @@ object NonBlockingRetryHelper {
   }
 }
 
+object DelayHeaders {
+  val Backoff = "backOffTimeMs"
+}
+
 object RetryHeader {
   val Submitted = "submitTimestamp"
-  val Backoff = "backOffTimeMs"
+  val Backoff = DelayHeaders.Backoff
   val OriginalTopic = "GH_OriginalTopic"
   val RetryAttempt = "GH_RetryAttempt"
 }
