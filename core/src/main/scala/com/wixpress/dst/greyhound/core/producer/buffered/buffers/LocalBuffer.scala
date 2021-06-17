@@ -54,7 +54,8 @@ case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Durat
                                      localBufferBatchSize: Int = 100,
                                      id: Int = Random.nextInt(100000),
                                      startFrom: Option[Long] = None,
-                                     allowAwaitingOnKafkaResult: Boolean = true) {
+                                     allowAwaitingOnKafkaResult: Boolean = true,
+                                     considerDeadWhenEnqueuedCount: Int = 30000) {
   def withStrategy(f: ProduceStrategy): LocalBufferProducerConfig = copy(strategy = f)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
