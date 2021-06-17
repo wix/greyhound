@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.core.producer.buffered.buffers.ProduceStrategy
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId
 import com.wixpress.dst.greyhound.core.producer.buffered.buffers.buffers.PersistedMessageId.notPersisted
-import com.wixpress.dst.greyhound.core.{Offset, Partition, Serializer, Topic, producer}
+import com.wixpress.dst.greyhound.core._
 import zio._
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
@@ -21,6 +21,8 @@ import scala.util.Random
 
 
 trait LocalBufferProducer[R] {
+  def alive: URIO[ZEnv with GreyhoundMetrics with R, Boolean]
+
   def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult]
 
   def produce[K, V](record: ProducerRecord[K, V],
@@ -147,6 +149,9 @@ object LocalBufferProducer {
                 case _ => localBuffer.cleanup
               } *>
             (state.get.commit <* localBuffer.close)).catchAll(_ => ZIO.succeed(LocalBufferProducerState.invalid))
+
+      override def alive: URIO[zio.ZEnv with GreyhoundMetrics with R, Boolean] =
+        localBuffer.inflightRecordsCount.map(_ >= 0).resurrect.catchAll(_ => UIO(false))
     })
       .toManaged((m: LocalBufferProducer[R]) => m.close.ignore)
 
