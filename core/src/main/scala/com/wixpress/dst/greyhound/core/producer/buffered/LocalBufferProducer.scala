@@ -151,7 +151,7 @@ object LocalBufferProducer {
             (state.get.commit <* localBuffer.close)).catchAll(_ => ZIO.succeed(LocalBufferProducerState.invalid))
 
       override def alive: URIO[zio.ZEnv with GreyhoundMetrics with R, Boolean] =
-        localBuffer.inflightRecordsCount.map(_ >= 0).resurrect.catchAll(_ => UIO(false))
+        state.get.commit.map(_.enqueued < config.considerDeadWhenEnqueuedCount)
     })
       .toManaged((m: LocalBufferProducer[R]) => m.close.ignore)
 
