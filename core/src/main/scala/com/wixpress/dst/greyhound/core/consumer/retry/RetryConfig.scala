@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.retry.ExponentialBackoffCalculator.exponentialBackoffs
-import com.wixpress.dst.greyhound.core.producer.ProducerRecord
+import com.wixpress.dst.greyhound.core.producer.{Encryptor, NoOpEncryptor, ProducerRecord}
 import zio.Chunk
 import zio.duration.{Duration => ZDuration}
 
@@ -10,7 +10,8 @@ import scala.concurrent.duration._
 
 case class RetryConfig(perTopic: PartialFunction[Topic, RetryConfigForTopic],
                        forPatternSubscription: Option[RetryConfigForTopic],
-                       produceRetryBackoff: Duration = 5.seconds
+                       produceRetryBackoff: Duration = 5.seconds,
+                       produceEncryptor: Encryptor = NoOpEncryptor
                       ) {
   def blockingBackoffs(topic: Topic) =
     get(topic)(_.blockingBackoffs)(ifEmpty = () => Nil)

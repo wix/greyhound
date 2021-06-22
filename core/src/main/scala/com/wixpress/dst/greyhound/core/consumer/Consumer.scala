@@ -2,10 +2,9 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
 import java.{lang, time, util}
-
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Decryptor, NoOpDecryptor, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.serialization.Deserializer
@@ -91,7 +90,7 @@ object Consumer {
       override def poll(timeout: Duration): RIO[Blocking, Records] =
         withConsumerBlocking { c =>
           c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
-        }
+        }.flatMap(ZIO.foreach(_)(cfg.decryptor.decrypt))
 
       override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
@@ -189,7 +188,8 @@ case class ConsumerConfig(bootstrapServers: String,
                           extraProperties: Map[String, String] = Map.empty,
                           additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
                           initialSeek: InitialOffsetsSeek =InitialOffsetsSeek.default,
-                          consumerAttributes: Map[String, String] = Map.empty
+                          consumerAttributes: Map[String, String] = Map.empty,
+                          decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor
                          ) extends CommonGreyhoundConfig {
 
 

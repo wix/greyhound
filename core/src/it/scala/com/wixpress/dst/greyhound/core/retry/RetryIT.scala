@@ -7,8 +7,8 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{Top
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.fixedRetryTopic
 import com.wixpress.dst.greyhound.core.consumer.retry._
-import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, eventuallyZ}
+import com.wixpress.dst.greyhound.core.producer.{Encryptor, ProducerRecord}
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, eventuallyTimeout, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig, TopicPartition}
 import com.wixpress.dst.greyhound.testenv.ITEnv
@@ -34,19 +34,24 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       group <- randomGroup
 
       invocations <- Ref.make(0)
-      done <- Promise.make[Nothing, Unit]
+      done <- Promise.make[Nothing, ConsumerRecord[String, String]]
       retryConfig = ZRetryConfig.perTopicRetries {
         case `topic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
         case `anotherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
-      }
+      }.copy(produceEncryptor = dummyEncryptor)
 
+      toProduce = ProducerRecord(topic, "bar", Some("foo"))
       retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
-      success <- RecordConsumer.make(configFor(kafka, group, retryConfig, topic, anotherTopic), retryHandler).use_ {
-        producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *>
-          producer.produce(ProducerRecord(anotherTopic, "bar", Some("foo")), StringSerde, StringSerde) *>
+      successful <- RecordConsumer.make(configFor(kafka, group, retryConfig, topic, anotherTopic), retryHandler).use_ {
+        producer.produce(toProduce, StringSerde, StringSerde) *>
+          producer.produce(toProduce.copy(topic = anotherTopic), StringSerde, StringSerde) *>
           done.await.timeout(20.seconds)
       }
-    } yield success must beSome
+    } yield successful must beSome(like[ConsumerRecord[String, String]] {
+      case record => (record.value === toProduce.value.get) and
+        (record.key === toProduce.key) and
+        (record.headers.headers.get(EncryptedHeader) must beSome)
+    })
   }
 
   "configure a handler with blocking retry policy" in {
@@ -192,7 +197,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
       _ <- kafka.createTopic(TopicConfig("topic-111", 1, 1, CleanupPolicy.Delete(1.hour.toMillis)))
       group <- randomGroup
       invocations <- Ref.make(0)
-      done <- Promise.make[Nothing, Unit]
+      done <- Promise.make[Nothing, ConsumerRecord[String, String]]
       retryConfig = ZRetryConfig.retryForPattern(RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(Seq(1.second, 1.second, 1.seconds))))
       retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
       success <- RecordConsumer.make(RecordConsumerConfig(kafka.bootstrapServers, group,
@@ -323,15 +328,15 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  private def failingRecordHandler(invocations: Ref[Int], done: Promise[Nothing, Unit]) =
-    RecordHandler { _: ConsumerRecord[String, String] =>
+  private def failingRecordHandler(invocations: Ref[Int], done: Promise[Nothing, ConsumerRecord[String, String]]) =
+    RecordHandler { r : ConsumerRecord[String, String] =>
       invocations.updateAndGet(_ + 1).flatMap { n =>
         if (n < 4) {
           println(s"failling.. $n")
           ZIO.fail(new RuntimeException("Oops!"))
         } else {
           println(s"success!  $n")
-          done.succeed(()) // Succeed on final retry
+          done.succeed(r) // Succeed on final retry
         }
       }
     }
@@ -361,6 +366,13 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
 
   private def fastConsumerMetadataFetching = Map("metadata.max.age.ms" -> "0")
+
+  private lazy val EncryptedHeader = "Encrypted"
+  private lazy val dummyEncryptor = new Encryptor {
+    override def encrypt[K](record: ProducerRecord[K, Chunk[Byte]]): Task[ProducerRecord[K, Chunk[Byte]]] =
+      UIO(record.copy(headers = record.headers + (EncryptedHeader, Chunk.fromArray("true".getBytes))))
+  }
+
 }
 
 case class SomeException() extends Exception("expected!", null, true, false)
