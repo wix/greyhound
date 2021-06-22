@@ -1,10 +1,9 @@
 package com.wixpress.dst.greyhound.core.consumer.batched
 
 import java.time.Duration
-
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer._
-import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, ConsumerRecordBatch, ConsumerSubscription}
+import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, ConsumerRecordBatch, ConsumerSubscription, Decryptor, NoOpDecryptor}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
 import zio.duration._
@@ -103,7 +102,9 @@ object BatchConsumer {
       config.extraProperties,
       assignmentsListener *> config.userProvidedListener,
       config.initialOffsetsSeek,
-      config.consumerAttributes)
+      config.consumerAttributes,
+      config.decryptor
+    )
   }
 
   private def trackAssignments(assignments: Ref[Set[TopicPartition]]) = {
@@ -133,7 +134,8 @@ case class BatchConsumerConfig(bootstrapServers: String,
                                userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
                                resubscribeTimeout: Duration = 30.seconds,
                                initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
-                               consumerAttributes: Map[String, String] = Map.empty
+                               consumerAttributes: Map[String, String] = Map.empty,
+                               decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor
                               )
 
 object BatchConsumerConfig {

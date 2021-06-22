@@ -74,17 +74,17 @@ private[retry] object NonBlockingRetryRecordHandler {
                                          retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]],
                                          record:  ConsumerRecord[_, _]) = {
       consumerShutdown.interruptOnShutdown(
-        producer.produce(retryRecord).tapError(
-          e =>
-            report(
-              RetryProduceFailedWillRetry(
-                retryRecord.topic,
-                retryAttempt,
-                retryConfig.produceRetryBackoff.toMillis,
-                record,
-                e)) *>
-              sleep(fromScala(retryConfig.produceRetryBackoff))
-        ).eventually.ignore
+        retryConfig.produceEncryptor.encrypt(retryRecord).flatMap(producer.produce).tapError(
+            e =>
+              report(
+                RetryProduceFailedWillRetry(
+                  retryRecord.topic,
+                  retryAttempt,
+                  retryConfig.produceRetryBackoff.toMillis,
+                  record,
+                  e)) *>
+                sleep(fromScala(retryConfig.produceRetryBackoff))
+          ).eventually.ignore
       )
     }
   }
