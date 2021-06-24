@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHa
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.fixedRetryTopic
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.producer.{Encryptor, ProducerRecord}
-import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, eventuallyTimeout, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.AcquiredManagedResource
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig, TopicPartition}
 import com.wixpress.dst.greyhound.testenv.ITEnv
