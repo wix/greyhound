@@ -49,7 +49,7 @@ object BatchConsumer {
 
     override def clientId: ClientId = config.clientId
 
-    override def state: Task[BatchConsumerExposedState] = assignments.get.zipWith(eventLoop.state) { case (partitions, evs) =>
+    override def state: UIO[BatchConsumerExposedState] = assignments.get.zipWith(eventLoop.state) { case (partitions, evs) =>
       BatchConsumerExposedState(evs, clientId, partitions)
     }
 

@@ -27,7 +27,7 @@ trait RecordConsumerProperties[+STATE] {
 
   def clientId: ClientId
 
-  def state: Task[STATE]
+  def state: UIO[STATE]
 
   def topology: UIO[RecordConsumerTopology]
 }
