@@ -4,12 +4,12 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:git.bzl","git_repository")
 
 # TODO: move to wix_oss_infra
-skylib_version = "0.8.0"
+skylib_version = "1.0.3"
 http_archive(
     name = "bazel_skylib",
     type = "tar.gz",
     url = "https://github.com/bazelbuild/bazel-skylib/releases/download/{}/bazel-skylib.{}.tar.gz".format (skylib_version, skylib_version),
-    sha256 = "2ef429f5d7ce7111263289644d233707dba35e39696377ebab8b0bc701f7818e",
+    sha256 = "1c531376ac7e5a180e0237938a2536de0c54d93f5c278634818e0efc952dd56c",
 )
 
 wix_oss_infra_version="7f9d2dbc56cf659c07899281f9dd9eed135b8960"
@@ -22,9 +22,15 @@ http_archive(
      sha256 = wix_oss_infra_version_sha256,
 )
 
-load("@wix_oss_infra//dependencies/rules_scala:rules_scala.bzl", "rules_scala")
-rules_scala()
+rules_scala_version = "5df8033f752be64fbe2cedfd1bdbad56e2033b15"
 
+http_archive(
+    name = "io_bazel_rules_scala",
+    sha256 = "b7fa29db72408a972e6b6685d1bc17465b3108b620cb56d9b1700cf6f70f624a",
+    strip_prefix = "rules_scala-%s" % rules_scala_version,
+    type = "zip",
+    url = "https://github.com/bazelbuild/rules_scala/archive/%s.zip" % rules_scala_version,
+)
 load("@wix_oss_infra//test-agent/src/shared:tests_external_repository.bzl", "tests_external_repository")
 tests_external_repository(name = "tests", jdk_version="11")
 
@@ -32,20 +38,18 @@ load("@wix_oss_infra//dependencies/google_protobuf:google_protobuf.bzl", "google
 google_protobuf()
 
 
-# TODO: move to wix_oss_infra
-scala_version = "2.12.6"
+load("@io_bazel_rules_scala//:scala_config.bzl", "scala_config")
+scala_config(scala_version = "2.13.6")
+
 load("@io_bazel_rules_scala//scala:scala.bzl", "scala_repositories")
-scala_repositories((scala_version, {
-    "scala_compiler": "3023b07cc02f2b0217b2c04f8e636b396130b3a8544a8dfad498a19c3e57a863",
-    "scala_library": "f81d7144f0ce1b8123335b72ba39003c4be2870767aca15dd0888ba3dab65e98",
-    "scala_reflect": "ffa70d522fc9f9deec14358aa674e6dd75c9dfa39d4668ef15bb52f002ce99fa"
-}))
+scala_repositories()
 
 # TODO: move to wix_oss_infra
 load("@io_bazel_rules_scala//specs2:specs2_junit.bzl", "specs2_junit_repositories")
 specs2_junit_repositories(scala_version)
 
-register_toolchains("@wix_oss_infra//toolchains:wix_defaults_global_toolchain")
+load("@io_bazel_rules_scala//scala:toolchains.bzl", "scala_register_toolchains")
+scala_register_toolchains()
 
 load("@greyhound//central-sync:dependencies.bzl", "graknlabs_bazel_distribution")
 graknlabs_bazel_distribution()
