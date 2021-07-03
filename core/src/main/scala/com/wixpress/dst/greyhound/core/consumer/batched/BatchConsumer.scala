@@ -7,7 +7,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, Cons
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
 import zio.duration._
-import zio.{Chunk, Has, Promise, RIO, Ref, Task, UIO, URIO, ZEnv, ZManaged, duration}
+import zio.{Chunk, Has, Promise, RIO, Ref, UIO, URIO, ZEnv, ZManaged, duration}
 
 import scala.reflect.ClassTag
 import scala.util.Random
