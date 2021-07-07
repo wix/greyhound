@@ -3,16 +3,16 @@ package com.wixpress.dst.greyhound.core
 import java.util.concurrent.{TimeUnit, TimeoutException}
 import java.util.regex.Pattern
 import java.util.regex.Pattern.compile
-
 import com.wixpress.dst.greyhound.core.Serdes._
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.PollingFailed
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.OffsetReset.{Earliest, Latest}
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, Decryptor, RecordHandler}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
-import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, eventuallyTimeoutFail, eventuallyZ}
+import com.wixpress.dst.greyhound.core.testkit.{AwaitableRef, BaseTestWithSharedEnv, TestMetrics, eventuallyTimeoutFail, eventuallyZ}
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.core.zioutils.Gate
 import com.wixpress.dst.greyhound.testenv.ITEnv
@@ -395,6 +395,41 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         } yield tasksDuration must between(delay * 0.9, delay * 3)
       }
     } yield test
+  }
+
+  "rewind positions on poll failure" in {
+    type BinaryRecord = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
+    type BinaryDecryptor = Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]]
+    for {
+      TestResources(kafka, producer) <- getShared
+      topic <- kafka.createRandomTopic(prefix = "poll-fail")
+      group <- randomGroup
+      failToDecrypt <- Ref.make(false)
+      messages <- AwaitableRef.make[Seq[ConsumerRecord[String, String]]](Nil)
+      handler = RecordHandler(
+        (cr: ConsumerRecord[String, String]) => ZIO.debug(s"***** Consumed: $cr") *> messages.update(_ :+ cr))
+        .withDeserializers(StringSerde, StringSerde)
+        .ignore
+      cId <- clientId
+      decryptor: BinaryDecryptor = (record: BinaryRecord) =>
+        ZIO.whenM(failToDecrypt.get)(ZIO.fail(new RuntimeException)).as(record)
+
+      pollFailedMetrics <- TestMetrics.queue.map(_.filterOutput(_.isInstanceOf[PollingFailed]))
+
+      config = configFor(kafka, group, topic).copy(clientId = cId, decryptor = decryptor)
+      aRecord = (i: Int) => ProducerRecord(topic, s"payload-$i", Some(s"key-$i"))
+      _ <- RecordConsumer.make(config, handler).use { consumer =>
+        val Seq(rec1, rec2) = (1 to 2) map aRecord
+        consumer.resubscribe(ConsumerSubscription.topics(topic)) *>
+          producer.produce(rec1, StringSerde, StringSerde) *>
+          messages.await(_.exists(_.value == rec1.value.get)) *>
+          failToDecrypt.set(true) *>
+          producer.produce(rec2, StringSerde, StringSerde) *>
+          pollFailedMetrics.take *>
+          failToDecrypt.set(false) *>
+          messages.await(_.exists(_.value == rec2.value.get), 5.seconds)
+      }
+    } yield ok
   }
 
   private def makeConsumer[E](kafka: ManagedKafka, topic: String, group: String,

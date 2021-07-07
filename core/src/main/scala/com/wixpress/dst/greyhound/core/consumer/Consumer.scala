@@ -6,6 +6,7 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Decryptor, NoOpDecryptor, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
@@ -67,6 +68,7 @@ object Consumer {
   def make(cfg: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
     semaphore <- Semaphore.make(1).toManaged_
     consumer <- makeConsumer(cfg, semaphore)
+    metrics <- ZIO.environment[GreyhoundMetrics].toManaged_
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
     // we also may want to seek forward to some given initial offsets
@@ -88,9 +90,25 @@ object Consumer {
           .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
       override def poll(timeout: Duration): RIO[Blocking, Records] =
-        withConsumerBlocking { c =>
-          c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_))
-        }.flatMap(ZIO.foreach(_)(cfg.decryptor.decrypt))
+        withConsumerM { c =>
+          rewindPositionsOnError(c) {
+            effectBlocking(c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_)))
+              .flatMap(ZIO.foreach(_)(cfg.decryptor.decrypt))
+          }
+        }
+
+      private def rewindPositionsOnError[R, A](c: KafkaConsumer[Chunk[Byte], Chunk[Byte]])(op: ZIO[R, Throwable, A]) = {
+        def rewind(positions: Iterable[(TopicPartition, Offset)]) =
+          seekUnsafe(positions)(c)
+          .resurrect
+          .reporting(ConsumerMetric.RewindOffsetsOnPollError(cfg.clientId, cfg.groupId, positions.toMap, _))
+          .provideSome[Blocking](_ ++ metrics)
+          .ignore
+        for {
+          positions <- allPositionsUnsafe
+          result <- op.tapCause(_ => rewind(positions))
+        } yield result
+      }
 
       override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
@@ -121,15 +139,27 @@ object Consumer {
         }
 
       override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
-        withConsumer(_.seek(new KafkaTopicPartition(partition.topic, partition.partition), offset)).refineOrDie {
+        withConsumerM(seekUnsafe(Seq(partition -> offset)))
+
+      private def seekUnsafe(positions: Iterable[(TopicPartition, Offset)])(c: KafkaConsumer[Chunk[Byte], Chunk[Byte]]) = {
+        Task(positions.foreach {
+          case (partition, offset) => c.seek(partition.asKafka, offset)
+        }).refineOrDie {
           case e: IllegalStateException => e
         }
+      }
 
       override def position(topicPartition: TopicPartition): Task[Offset] =
         withConsumer(_.position(topicPartition.asKafka))
 
       override def assignment: Task[Set[TopicPartition]] = {
         withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
+      }
+
+      private def allPositionsUnsafe = effectBlocking {
+        consumer.assignment().asScala.toSet
+          .map((tp: KafkaTopicPartition) => TopicPartition(tp) -> consumer.position(tp))
+          .toMap
       }
 
       override def config: ConsumerConfig = cfg
@@ -139,6 +169,9 @@ object Consumer {
 
       private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
         semaphore.withPermit(effectBlocking(f(consumer)))
+
+      private def withConsumerM[R, A, E](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => ZIO[R, E, A]): ZIO[R, E, A] =
+        semaphore.withPermit(f(consumer))
 
       override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = {
         val kafkaTopicPartitionsOnTimestamp = topicPartitionsOnTimestamp.map { case (tp, ts) => tp.asKafka -> ts }
@@ -153,6 +186,8 @@ object Consumer {
         }
     }
   }
+
+
 
   private def listener[R1](onAssignFirstDo: Set[TopicPartition] => Unit, rebalanceListener: RebalanceListener[R1]) =
     ZIO.runtime[Blocking with R1].map { runtime =>
