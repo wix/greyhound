@@ -6,6 +6,7 @@ import com.wixpress.dst.greyhound.core.{TopicPartition, _}
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.MetricResult
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -184,5 +185,11 @@ object ConsumerMetric {
                                            offsets: Map[TopicPartition, Offset],
                                            elapsed: Duration,
                                            error: Throwable) extends ConsumerMetric
+
+  case class RewindOffsetsOnPollError(clientId: ClientId,
+                                      group: Group,
+                                      positions: Map[TopicPartition, Offset],
+                                      result: MetricResult[Throwable, Unit]
+                                     ) extends ConsumerMetric
 
 }
