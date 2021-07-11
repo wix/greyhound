@@ -140,16 +140,34 @@ object AdminClient {
   }
 
   private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, Map[String, String]]] =
-    effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)).map(result =>
-      Try(result.all().get(30, SECONDS).asScala).getOrElse(Map.empty).map { case (resource, config) =>
-        (resource.name, config.entries().asScala.map(entry => entry.name -> entry.value).toMap)
-      }.toMap)
+    effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)) flatMap { result =>
+      ZIO.collectAll(
+        result.values.asScala.toMap.map { case (resource, kf) =>
+          kf.asZio
+           .map { config =>
+             resource.name -> config.entries().asScala.map(entry => entry.name -> entry.value).toMap
+           }
+            // TODO remove once IPFT fix their stuff
+            .resurrect
+            .orElse(UIO(resource.name -> Map.empty[String, String]))
+        }
+      ).map(_.toMap)
+    }
 
   private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, (Int, Int)]] =
-    effectBlocking(client.describeTopics(topics.asJavaCollection)).map(result =>
-      Try(result.all().get(30, SECONDS).asScala).getOrElse(Map.empty).mapValues(desc =>
-        (Try(desc.partitions().asScala.minBy(_.replicas().size)).map(_.replicas().size()).getOrElse(0),
-          desc.partitions().size())).toMap)
+    effectBlocking(client.describeTopics(topics.asJavaCollection))
+      .flatMap { result =>
+        ZIO.collectAll(result.values.asScala.toMap.map { case (topic, kf) =>
+          kf.asZio
+            .map(desc => topic -> (
+             desc.partitions.asScala.map(_.replicas.size).sorted.headOption.getOrElse(0) -> desc.partitions.size
+            ))
+            // TODO remove once IPFT fix their stuff
+            .resurrect
+            .orElse(UIO(topic -> (0 -> 0)))
+          }
+        ).map(_.toMap)
+      }
 
   def isTopicExistsError(e: Throwable): Boolean = e.isInstanceOf[TopicExistsException] ||
     Option(e.getCause).exists(_.isInstanceOf[TopicExistsException])

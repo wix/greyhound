@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.CleanupPolicy.Delete
-import com.wixpress.dst.greyhound.core.admin.{GroupState, PartitionOffset}
+import com.wixpress.dst.greyhound.core.admin.{GroupState, PartitionOffset, TopicPropertiesResult}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
@@ -10,7 +10,10 @@ import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
+import org.apache.kafka.common.config
+import org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG
 import org.apache.kafka.common.errors.InvalidTopicException
+import org.specs2.matcher.MatchResult
 import zio.duration.Duration.fromScala
 import zio.{Chunk, Ref, UIO, UManaged}
 
@@ -164,8 +167,26 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
           (stateAfterShutdown === Some(GroupState(Set.empty)))
       }
     }
+
+    "propertiesFor" in {
+      val topics = (1 to 3).map(i =>
+        aTopicConfig(partitions = i, props = Map(RETENTION_MS_CONFIG -> (i * 100000).toString))
+      )
+      for {
+        TestResources(kafka, _) <- getShared
+        _ <- kafka.adminClient.createTopics(topics.toSet)
+        topicProps <- kafka.adminClient.propertiesFor(topics.map(_.name).toSet)
+      } yield {
+        topics.foldLeft(ok) { case (acc, tc) => acc and {
+          topicProps.get(tc.name) aka s"properties for ${tc.name}" must beSome(beLike[TopicPropertiesResult] {
+            case tpr => (tpr.partitions aka s"${tc.name} partitions"  must_=== tc.partitions) and
+              (tpr.properties aka s"${tc.name} properties" must containAllOf(tc.propertiesMap.toSeq))
+          })
+        }}
+      }
+    }
   }
 
-  private def aTopicConfig(name: String = s"topic-${System.currentTimeMillis}", partitions: Int = 1) =
-    TopicConfig(name, partitions, 1, Delete(1.hour.toMillis))
+  private def aTopicConfig(name: String = s"topic-${System.nanoTime}", partitions: Int = 1, props: Map[String, String] = Map.empty) =
+    TopicConfig(name, partitions, 1, Delete(1.hour.toMillis), props)
 }
