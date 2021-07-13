@@ -10,10 +10,8 @@ import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
-import org.apache.kafka.common.config
 import org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG
 import org.apache.kafka.common.errors.InvalidTopicException
-import org.specs2.matcher.MatchResult
 import zio.duration.Duration.fromScala
 import zio.{Chunk, Ref, UIO, UManaged}
 
