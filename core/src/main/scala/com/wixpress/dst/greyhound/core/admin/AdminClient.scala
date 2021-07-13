@@ -14,7 +14,6 @@ import zio._
 import zio.blocking.{Blocking, effectBlocking}
 
 import scala.collection.JavaConverters._
-import scala.util.Try
 
 trait AdminClient {
   def listTopics(): RIO[Blocking, Set[String]]
