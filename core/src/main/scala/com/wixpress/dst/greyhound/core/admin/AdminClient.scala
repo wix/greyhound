@@ -1,9 +1,9 @@
 package com.wixpress.dst.greyhound.core.admin
 
 import java.util.concurrent.TimeUnit.SECONDS
-
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
+import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
@@ -37,10 +37,25 @@ trait AdminClient {
   def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]]
 }
 
-case class TopicPropertiesResult(partitions: Int, properties: Map[String, String], replications: Int)
-
+sealed trait TopicPropertiesResult {
+  def topic: Topic
+  def toOption: Option[TopicPropertiesResult.TopicProperties]
+  def getOrThrow: TopicPropertiesResult.TopicProperties = toOption.getOrElse(throw new TopicDoesnExistException(topic))
+  def getOrFail: IO[TopicDoesnExistException, TopicProperties] =
+    ZIO.fromOption(toOption).orElseFail(throw new TopicDoesnExistException(topic))
+}
 object TopicPropertiesResult {
-  def empty = TopicPropertiesResult(0, Map.empty, 0)
+  case class TopicProperties(topic: Topic, partitions: Int, properties: Map[String, String], replications: Int) extends TopicPropertiesResult {
+    override def toOption: Option[TopicPropertiesResult.TopicProperties] = Some(this)
+  }
+  case class TopicDoesnExist(topic: Topic) extends TopicPropertiesResult {
+    override def toOption: Option[TopicPropertiesResult.TopicProperties] = None
+  }
+  def apply(topic: Topic, partitions: Int, properties: Map[String, String], replications: Int): TopicProperties =
+    TopicProperties(topic, partitions, properties, replications)
+
+  class TopicDoesnExistException(topic: String) extends
+    RuntimeException(s"Failed to fetch properties for non existent topic: $topic")
 }
 
 case class PartitionOffset(offset: Long)
@@ -79,10 +94,14 @@ object AdminClient {
 
         override def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
           (describeConfigs(client, topics) zipPar describePartitions(client, topics)).map {
-            case (propertiesMap, partitionsAndReplicationPerTopic) =>
-              partitionsAndReplicationPerTopic.map { case (topic, (replication, partitions)) =>
-                (topic, TopicPropertiesResult(partitions, propertiesMap.getOrElse(topic, Map.empty), replication))
-              }
+            case (configsPerTopic, partitionsAndReplicationPerTopic) =>
+              partitionsAndReplicationPerTopic
+                .map(pair => pair -> configsPerTopic.getOrElse(pair._1, TopicPropertiesResult.TopicDoesnExist(pair._1)))
+                .map {
+                  case ((topic, TopicProperties(_, partitions, _, replication)), TopicProperties(_, _, propertiesMap, _)) =>
+                    topic -> TopicPropertiesResult(topic, partitions, propertiesMap, replication)
+                  case ((topic, _), _) => topic -> TopicPropertiesResult.TopicDoesnExist(topic)
+                }
           }
 
 
@@ -138,32 +157,39 @@ object AdminClient {
     }
   }
 
-  private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, Map[String, String]]] =
+  private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
     effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)) flatMap { result =>
       ZIO.collectAll(
         result.values.asScala.toMap.map { case (resource, kf) =>
           kf.asZio
            .map { config =>
-             resource.name -> config.entries().asScala.map(entry => entry.name -> entry.value).toMap
+             resource.name -> TopicPropertiesResult.TopicProperties(resource.name,
+               0,
+               config.entries().asScala.map(entry => entry.name -> entry.value).toMap,
+               0)
+           }.catchSome {
+             case _:  UnknownTopicOrPartitionException => UIO(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
            }
-            // TODO remove once IPFT fix their stuff
-            .resurrect
-            .orElse(UIO(resource.name -> Map.empty[String, String]))
         }
       ).map(_.toMap)
     }
 
-  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, (Int, Int)]] =
+  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
     effectBlocking(client.describeTopics(topics.asJavaCollection))
       .flatMap { result =>
         ZIO.collectAll(result.values.asScala.toMap.map { case (topic, kf) =>
           kf.asZio
-            .map(desc => topic -> (
-             desc.partitions.asScala.map(_.replicas.size).sorted.headOption.getOrElse(0) -> desc.partitions.size
-            ))
-            // TODO remove once IPFT fix their stuff
-            .resurrect
-            .orElse(UIO(topic -> (0 -> 0)))
+            .map { desc =>
+              val replication = desc.partitions.asScala.map(_.replicas.size).sorted.headOption.getOrElse(0)
+              topic -> TopicPropertiesResult.TopicProperties(
+                topic,
+                desc.partitions.size,
+                Map.empty,
+                replication
+              )
+            }.catchSome {
+              case _:  UnknownTopicOrPartitionException => UIO(topic -> TopicPropertiesResult.TopicDoesnExist(topic))
+            }
           }
         ).map(_.toMap)
       }

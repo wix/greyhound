@@ -43,7 +43,7 @@ object AdminClient {
 
       override def propertiesFor(topic: Topic): Future[TopicPropertiesResult] =
         runtime.unsafeRunToFuture(AdminClientCore.make(config).use { client =>
-          client.propertiesFor(Set(topic)).map(_.getOrElse(topic, TopicPropertiesResult.empty))
+          client.propertiesFor(Set(topic)).map(_.getOrElse(topic, TopicPropertiesResult.TopicDoesnExist(topic)))
         })
     })
   }
