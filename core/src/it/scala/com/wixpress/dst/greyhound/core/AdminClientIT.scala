@@ -170,17 +170,19 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       val topics = (1 to 3).map(i =>
         aTopicConfig(partitions = i, props = Map(RETENTION_MS_CONFIG -> (i * 100000).toString))
       )
+      val nonExistentTopic = "non-existent-topic"
       for {
         TestResources(kafka, _) <- getShared
         _ <- kafka.adminClient.createTopics(topics.toSet)
-        topicProps <- kafka.adminClient.propertiesFor(topics.map(_.name).toSet)
+        topicProps <- kafka.adminClient.propertiesFor(topics.map(_.name).toSet + nonExistentTopic)
       } yield {
         topics.foldLeft(ok) { case (acc, tc) => acc and {
           topicProps.get(tc.name) aka s"properties for ${tc.name}" must beSome(beLike[TopicPropertiesResult] {
-            case tpr => (tpr.partitions aka s"${tc.name} partitions"  must_=== tc.partitions) and
+            case tpr: TopicPropertiesResult.TopicProperties => (tpr.partitions aka s"${tc.name} partitions"  must_=== tc.partitions) and
               (tpr.properties aka s"${tc.name} properties" must containAllOf(tc.propertiesMap.toSeq))
           })
-        }}
+        }} and (topicProps.get(nonExistentTopic) must beSome(TopicPropertiesResult.TopicDoesnExist(nonExistentTopic)))
+
       }
     }
   }
