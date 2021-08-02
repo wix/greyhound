@@ -63,9 +63,10 @@ private[retry] object BlockingRetryRecordHandler {
 
       def handleAndMaybeBlockOnErrorFor(interval: Option[Duration]): ZIO[Clock with R with GreyhoundMetrics with Blocking, Nothing, LastHandleResult] = {
         handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false)).catchAll {
-          case ex: NonRetriableException =>
-            report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, ex.cause))
-              .as(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
+          case NonRetriableException(cause) =>
+            handleNonRetriable(record, topicPartition, cause)
+          case Right(NonRetriableException(cause)) =>
+            handleNonRetriable(record, topicPartition, cause)
           case error => interval.map { interval =>
             report(BlockingRetryHandlerInvocationFailed(topicPartition, record.offset, error.toString)) *>
               blockOnErrorFor(interval)
@@ -80,7 +81,7 @@ private[retry] object BlockingRetryRecordHandler {
           case _ => ((), state)
         }.getOrElse(((), state)))
 
-      if (nonBlockingHandler.isHandlingRetryTopicMessage(group,record)) {
+      if (nonBlockingHandler.isHandlingRetryTopicMessage(group, record)) {
         UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       } else {
         val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs(record.topic)().map(Some(_)) :+ None
@@ -93,4 +94,8 @@ private[retry] object BlockingRetryRecordHandler {
       }
     }
   }
+
+  private def handleNonRetriable[K, V, E, R](record: ConsumerRecord[K, V], topicPartition: TopicPartition, cause: Exception) =
+    report(NoRetryOnNonRetryableFailure(topicPartition, record.offset, cause))
+      .as(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
 }
