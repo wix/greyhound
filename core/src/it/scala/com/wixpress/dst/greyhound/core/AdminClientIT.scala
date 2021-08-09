@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.CleanupPolicy.Delete
-import com.wixpress.dst.greyhound.core.admin.{GroupState, PartitionOffset, TopicPropertiesResult}
+import com.wixpress.dst.greyhound.core.admin.{ConfigPropOp, GroupState, PartitionOffset, TopicPropertiesResult}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
@@ -10,7 +10,8 @@ import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
-import org.apache.kafka.common.config.TopicConfig.RETENTION_MS_CONFIG
+import org.apache.kafka.common.config
+import org.apache.kafka.common.config.TopicConfig.{DELETE_RETENTION_MS_CONFIG, MAX_MESSAGE_BYTES_CONFIG, RETENTION_MS_CONFIG, SEGMENT_BYTES_CONFIG}
 import org.apache.kafka.common.errors.InvalidTopicException
 import zio.duration.Duration.fromScala
 import zio.{Chunk, Ref, UIO, UManaged}
@@ -184,6 +185,34 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         }} and (topicProps.get(nonExistentTopic) must beSome(TopicPropertiesResult.TopicDoesnExist(nonExistentTopic)))
 
       }
+    }
+
+    "increase partitions" in {
+        val topic = aTopicConfig()
+        for {
+          TestResources(kafka, _) <- getShared
+          _ <- kafka.adminClient.createTopics(Set(topic))
+          _ <- kafka.adminClient.increasePartitions(topic.name, topic.partitions + 1)
+          props <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
+        } yield props.partitions === 2
+    }
+
+    "set topic properties" in {
+      val topic = aTopicConfig(props = Map(MAX_MESSAGE_BYTES_CONFIG -> "1000000", DELETE_RETENTION_MS_CONFIG -> "123456841"))
+      for {
+        TestResources(kafka, _) <- getShared
+        _ <- kafka.adminClient.createTopics(Set(topic))
+        _ <- kafka.adminClient.updateTopicConfigProperties(topic.name, Map(
+          MAX_MESSAGE_BYTES_CONFIG -> ConfigPropOp.Set("2000000"),
+          RETENTION_MS_CONFIG -> ConfigPropOp.Set("3000000"),
+          DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
+        ))
+        props <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
+      } yield (props.properties.toSeq must contain(
+        MAX_MESSAGE_BYTES_CONFIG -> "2000000", RETENTION_MS_CONFIG -> "3000000"
+      )) &&
+        // the deleted property will still have value, but this will be broker level default
+        (props.properties(DELETE_RETENTION_MS_CONFIG) must not(equalTo("123456841")))
     }
   }
 

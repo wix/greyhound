@@ -6,7 +6,8 @@ import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
-import org.apache.kafka.clients.admin.{NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.clients.admin.AlterConfigOp.OpType
+import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
@@ -35,6 +36,16 @@ trait AdminClient {
   def deleteTopic(topic: Topic): RIO[Blocking, Unit]
 
   def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]]
+
+  def increasePartitions(topic: Topic, newCount: Int): RIO[Blocking, Unit]
+
+  def updateTopicConfigProperties(topic: Topic, configProperties: Map[String, ConfigPropOp]): RIO[Blocking, Unit]
+}
+
+sealed trait ConfigPropOp
+object ConfigPropOp {
+  case object Delete extends ConfigPropOp
+  case class Set(value: String) extends ConfigPropOp
 }
 
 sealed trait TopicPropertiesResult {
@@ -152,6 +163,24 @@ object AdminClient {
             desc <- effectBlocking(client.describeConsumerGroups(groupIds.asJava).all())
             all <- desc.asZio
           } yield all.asScala.toMap.mapValues(ConsumerGroupDescription.apply)
+        }
+
+        override def increasePartitions(topic: Topic,
+                                        newCount: Int): RIO[Blocking, Unit] = {
+          effectBlocking(client.createPartitions(Map(topic -> NewPartitions.increaseTo(newCount)).asJava))
+            .flatMap(_.all().asZio).unit
+        }
+
+        override def updateTopicConfigProperties(topic: Topic,
+                                                 configProperties: Map[String, ConfigPropOp]): RIO[Blocking, Unit] = {
+          val resource = new ConfigResource(ConfigResource.Type.TOPIC, topic)
+          val ops = configProperties.map { case (key, value) =>
+            value match {
+              case ConfigPropOp.Delete =>  new AlterConfigOp(new ConfigEntry(key, null), OpType.DELETE)
+              case ConfigPropOp.Set(value) => new AlterConfigOp(new ConfigEntry(key, value), OpType.SET)
+            }
+          }.asJavaCollection
+          effectBlocking(client.incrementalAlterConfigs(Map(resource -> ops).asJava)).flatMap(_.all().asZio).unit
         }
       }
     }
