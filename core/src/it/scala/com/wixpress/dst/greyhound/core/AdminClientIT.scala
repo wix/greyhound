@@ -212,7 +212,7 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         MAX_MESSAGE_BYTES_CONFIG -> "2000000", RETENTION_MS_CONFIG -> "3000000"
       )) &&
         // the deleted property will still have value, but this will be broker level default
-        (props.properties(DELETE_RETENTION_MS_CONFIG) must not(equalTo("123456841")))
+        (props.propertiesThat(_.isTopicSpecific).get(DELETE_RETENTION_MS_CONFIG) must beNone)
     }
   }
 
