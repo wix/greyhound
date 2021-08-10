@@ -7,6 +7,7 @@ import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnEx
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
+import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
 import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
@@ -56,17 +57,23 @@ sealed trait TopicPropertiesResult {
     ZIO.fromOption(toOption).orElseFail(throw new TopicDoesnExistException(topic))
 }
 object TopicPropertiesResult {
-  case class TopicProperties(topic: Topic, partitions: Int, properties: Map[String, String], replications: Int) extends TopicPropertiesResult {
+  case class TopicProperties(topic: Topic, partitions: Int, configEntries: Seq[TopicConfigEntry], replications: Int) extends TopicPropertiesResult {
+    val properties = propertiesThat((_:TopicConfigEntry) => true)
+    def propertiesThat(filter: TopicConfigEntry => Boolean) = configEntries.filter(filter).map(e => e.key -> e.value).toMap
     override def toOption: Option[TopicPropertiesResult.TopicProperties] = Some(this)
   }
   case class TopicDoesnExist(topic: Topic) extends TopicPropertiesResult {
     override def toOption: Option[TopicPropertiesResult.TopicProperties] = None
   }
-  def apply(topic: Topic, partitions: Int, properties: Map[String, String], replications: Int): TopicProperties =
-    TopicProperties(topic, partitions, properties, replications)
+  def apply(topic: Topic, partitions: Int, configEntries: Seq[TopicConfigEntry], replications: Int): TopicProperties =
+    TopicProperties(topic, partitions, configEntries, replications)
 
   class TopicDoesnExistException(topic: String) extends
     RuntimeException(s"Failed to fetch properties for non existent topic: $topic")
+}
+
+case class TopicConfigEntry(key: String, value: String, source: ConfigSource) {
+  def isTopicSpecific: Boolean = source == ConfigSource.DYNAMIC_TOPIC_CONFIG
 }
 
 case class PartitionOffset(offset: Long)
@@ -194,7 +201,7 @@ object AdminClient {
            .map { config =>
              resource.name -> TopicPropertiesResult.TopicProperties(resource.name,
                0,
-               config.entries().asScala.map(entry => entry.name -> entry.value).toMap,
+               config.entries().asScala.map(entry => TopicConfigEntry(entry.name, entry.value, entry.source)).toSeq,
                0)
            }.catchSome {
              case _:  UnknownTopicOrPartitionException => UIO(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
@@ -213,7 +220,7 @@ object AdminClient {
               topic -> TopicPropertiesResult.TopicProperties(
                 topic,
                 desc.partitions.size,
-                Map.empty,
+                Seq.empty,
                 replication
               )
             }.catchSome {
