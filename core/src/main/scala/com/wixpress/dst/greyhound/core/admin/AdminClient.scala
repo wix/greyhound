@@ -9,7 +9,8 @@ import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopic
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
 import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
-import org.apache.kafka.common.config.ConfigResource
+import org.apache.kafka.common.config.{ConfigResource}
+import org.apache.kafka.clients.admin.{Config, ConfigEntry}
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
 import zio._
@@ -40,7 +41,11 @@ trait AdminClient {
 
   def increasePartitions(topic: Topic, newCount: Int): RIO[Blocking, Unit]
 
-  def updateTopicConfigProperties(topic: Topic, configProperties: Map[String, ConfigPropOp]): RIO[Blocking, Unit]
+  /**
+   * @param useNonIncrementalAlter - [[org.apache.kafka.clients.admin.AdminClient.incrementalAlterConfigs()]] is not supported by older brokers (< 2.3),
+   *                               so if this is true, use the deprecated non incremental alter
+   */
+  def updateTopicConfigProperties(topic: Topic, configProperties: Map[String, ConfigPropOp], useNonIncrementalAlter: Boolean = false): RIO[Blocking, Unit]
 }
 
 sealed trait ConfigPropOp
@@ -179,11 +184,35 @@ object AdminClient {
         }
 
         override def updateTopicConfigProperties(topic: Topic,
-                                                 configProperties: Map[String, ConfigPropOp]): RIO[Blocking, Unit] = {
+                                                 configProperties: Map[String, ConfigPropOp],
+                                                 useNonIncrementalAlter: Boolean = false
+                                                ): RIO[Blocking, Unit] = {
+          if(useNonIncrementalAlter) updateTopicConfigUsingAlter(topic, configProperties)
+          updateTopicConfigIncremental(topic, configProperties)
+        }
+
+        private def updateTopicConfigUsingAlter(topic: Topic,
+                                     configProperties: Map[String, ConfigPropOp]) = {
+          val resource = new ConfigResource(ConfigResource.Type.TOPIC, topic)
+          for {
+            described <- describeConfigs(client, Set(topic))
+            beforeProps <- described.values.head.getOrFail
+            beforeConfig = beforeProps.propertiesThat(_.isTopicSpecific)
+            configToSet = configProperties.foldLeft(beforeConfig) {
+              case (acc, (key, ConfigPropOp.Delete)) => acc - key
+              case (acc, (key, ConfigPropOp.Set(value))) => acc + (key -> value)
+            }
+            configJava = new Config(configToSet.map { case (k, v) => new ConfigEntry(k, v) }.toList.asJava)
+            _ <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava)).flatMap(_.all().asZio)
+          } yield ()
+        }
+
+        private def updateTopicConfigIncremental(topic: Topic,
+                                                 configProperties: Map[String, ConfigPropOp]) = {
           val resource = new ConfigResource(ConfigResource.Type.TOPIC, topic)
           val ops = configProperties.map { case (key, value) =>
             value match {
-              case ConfigPropOp.Delete =>  new AlterConfigOp(new ConfigEntry(key, null), OpType.DELETE)
+              case ConfigPropOp.Delete => new AlterConfigOp(new ConfigEntry(key, null), OpType.DELETE)
               case ConfigPropOp.Set(value) => new AlterConfigOp(new ConfigEntry(key, value), OpType.SET)
             }
           }.asJavaCollection
@@ -192,6 +221,8 @@ object AdminClient {
       }
     }
   }
+
+
 
   private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
     effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)) flatMap { result =>

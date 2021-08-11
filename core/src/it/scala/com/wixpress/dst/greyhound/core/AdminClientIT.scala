@@ -13,6 +13,7 @@ import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResourc
 import org.apache.kafka.common.config
 import org.apache.kafka.common.config.TopicConfig.{DELETE_RETENTION_MS_CONFIG, MAX_MESSAGE_BYTES_CONFIG, RETENTION_MS_CONFIG, SEGMENT_BYTES_CONFIG}
 import org.apache.kafka.common.errors.InvalidTopicException
+import org.specs2.specification.core.Fragments
 import zio.duration.Duration.fromScala
 import zio.{Chunk, Ref, UIO, UManaged}
 
@@ -197,22 +198,28 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         } yield props.partitions === 2
     }
 
-    "set topic properties" in {
-      val topic = aTopicConfig(props = Map(MAX_MESSAGE_BYTES_CONFIG -> "1000000", DELETE_RETENTION_MS_CONFIG -> "123456841"))
-      for {
-        TestResources(kafka, _) <- getShared
-        _ <- kafka.adminClient.createTopics(Set(topic))
-        _ <- kafka.adminClient.updateTopicConfigProperties(topic.name, Map(
-          MAX_MESSAGE_BYTES_CONFIG -> ConfigPropOp.Set("2000000"),
-          RETENTION_MS_CONFIG -> ConfigPropOp.Set("3000000"),
-          DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
-        ))
-        props <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
-      } yield (props.properties.toSeq must contain(
-        MAX_MESSAGE_BYTES_CONFIG -> "2000000", RETENTION_MS_CONFIG -> "3000000"
-      )) &&
-        // the deleted property will still have value, but this will be broker level default
-        (props.propertiesThat(_.isTopicSpecific).get(DELETE_RETENTION_MS_CONFIG) must beNone)
+    Fragments.foreach(Seq(false, true)) { nonIncremental =>
+      s"set topic properties [nonIncremental: $nonIncremental]" in {
+        val topic = aTopicConfig(
+          props = Map(
+            MAX_MESSAGE_BYTES_CONFIG -> "1000000",
+            DELETE_RETENTION_MS_CONFIG -> "123456841"))
+        for {
+          TestResources(kafka, _) <- getShared
+          _ <- kafka.adminClient.createTopics(Set(topic))
+          _ <- kafka.adminClient.updateTopicConfigProperties(
+            topic.name, Map(
+              MAX_MESSAGE_BYTES_CONFIG -> ConfigPropOp.Set("2000000"),
+              RETENTION_MS_CONFIG -> ConfigPropOp.Set("3000000"),
+              DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
+            ), nonIncremental)
+          props <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
+        } yield (props.properties.toSeq must contain(
+          MAX_MESSAGE_BYTES_CONFIG -> "2000000", RETENTION_MS_CONFIG -> "3000000"
+        )) &&
+          // the deleted property will still have value, but this will be broker level default
+          (props.propertiesThat(_.isTopicSpecific).get(DELETE_RETENTION_MS_CONFIG) must beNone)
+      }
     }
   }
 
