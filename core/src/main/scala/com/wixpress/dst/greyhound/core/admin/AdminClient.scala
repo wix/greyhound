@@ -4,17 +4,20 @@ import java.util.concurrent.TimeUnit.SECONDS
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
-import org.apache.kafka.common.config.{ConfigResource}
+import org.apache.kafka.clients.admin.{AlterConfigOp, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.clients.admin.{Config, ConfigEntry}
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
+import GreyhoundMetrics._
+import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicPartitionsIncreased}
 
 import scala.collection.JavaConverters._
 
@@ -39,13 +42,18 @@ trait AdminClient {
 
   def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]]
 
-  def increasePartitions(topic: Topic, newCount: Int): RIO[Blocking, Unit]
+  def increasePartitions(topic: Topic, newCount: Int): RIO[Blocking with GreyhoundMetrics, Unit]
 
   /**
    * @param useNonIncrementalAlter - [[org.apache.kafka.clients.admin.AdminClient.incrementalAlterConfigs()]] is not supported by older brokers (< 2.3),
    *                               so if this is true, use the deprecated non incremental alter
    */
-  def updateTopicConfigProperties(topic: Topic, configProperties: Map[String, ConfigPropOp], useNonIncrementalAlter: Boolean = false): RIO[Blocking, Unit]
+  def updateTopicConfigProperties(topic: Topic,
+                                  configProperties: Map[String, ConfigPropOp],
+                                  useNonIncrementalAlter: Boolean = false): RIO[Blocking with GreyhoundMetrics, Unit]
+
+  def attributes: Map[String, String]
+
 }
 
 sealed trait ConfigPropOp
@@ -86,7 +94,8 @@ case class PartitionOffset(offset: Long)
 case class GroupState(activeTopicsPartitions: Set[TopicPartition])
 
 object AdminClient {
-  def make(config: AdminClientConfig): RManaged[Blocking, AdminClient] = {
+  def make(config: AdminClientConfig,
+           clientAttributes: Map[String, String] = Map.empty): RManaged[Blocking, AdminClient] = {
     val acquire = effectBlocking(KafkaAdminClient.create(config.properties))
     ZManaged.make(acquire)(client => effectBlocking(client.close()).ignore).map { client =>
       new AdminClient {
@@ -178,23 +187,27 @@ object AdminClient {
         }
 
         override def increasePartitions(topic: Topic,
-                                        newCount: Int): RIO[Blocking, Unit] = {
+                                        newCount: Int): RIO[Blocking with GreyhoundMetrics, Unit] = {
           effectBlocking(client.createPartitions(Map(topic -> NewPartitions.increaseTo(newCount)).asJava))
             .flatMap(_.all().asZio).unit
+            .reporting(TopicPartitionsIncreased(topic, newCount, attributes, _))
         }
 
         override def updateTopicConfigProperties(topic: Topic,
                                                  configProperties: Map[String, ConfigPropOp],
                                                  useNonIncrementalAlter: Boolean = false
-                                                ): RIO[Blocking, Unit] = {
-          if(useNonIncrementalAlter) updateTopicConfigUsingAlter(topic, configProperties)
-          updateTopicConfigIncremental(topic, configProperties)
+                                                ): RIO[Blocking with GreyhoundMetrics, Unit] = {
+          if (useNonIncrementalAlter) updateTopicConfigUsingAlter(topic, configProperties)
+          else updateTopicConfigIncremental(topic, configProperties)
         }
+
+        override def attributes: Map[String, String] = clientAttributes
 
         private def updateTopicConfigUsingAlter(topic: Topic,
                                      configProperties: Map[String, ConfigPropOp]) = {
           val resource = new ConfigResource(ConfigResource.Type.TOPIC, topic)
-          for {
+          (
+            for {
             described <- describeConfigs(client, Set(topic))
             beforeProps <- described.values.head.getOrFail
             beforeConfig = beforeProps.propertiesThat(_.isTopicSpecific)
@@ -203,8 +216,10 @@ object AdminClient {
               case (acc, (key, ConfigPropOp.Set(value))) => acc + (key -> value)
             }
             configJava = new Config(configToSet.map { case (k, v) => new ConfigEntry(k, v) }.toList.asJava)
-            _ <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava)).flatMap(_.all().asZio)
-          } yield ()
+            _ <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava))
+              .flatMap(_.all().asZio)
+            } yield ()
+          ).reporting(TopicConfigUpdated(topic, configProperties, incremental = false, attributes, _))
         }
 
         private def updateTopicConfigIncremental(topic: Topic,
@@ -216,7 +231,9 @@ object AdminClient {
               case ConfigPropOp.Set(value) => new AlterConfigOp(new ConfigEntry(key, value), OpType.SET)
             }
           }.asJavaCollection
-          effectBlocking(client.incrementalAlterConfigs(Map(resource -> ops).asJava)).flatMap(_.all().asZio).unit
+          effectBlocking(client.incrementalAlterConfigs(Map(resource -> ops).asJava))
+            .flatMap(_.all().asZio).unit
+            .reporting(TopicConfigUpdated(topic, configProperties, incremental = true, attributes, _))
         }
       }
     }
