@@ -1,12 +1,13 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.CleanupPolicy.Delete
+import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicConfigUpdated
 import com.wixpress.dst.greyhound.core.admin.{ConfigPropOp, GroupState, PartitionOffset, TopicPropertiesResult}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.testkit.BaseTestWithSharedEnv
+import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
@@ -214,11 +215,15 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
               DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
             ), nonIncremental)
           props <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
+          updatedEvents <- TestMetrics.reportedOf[TopicConfigUpdated]()
         } yield (props.properties.toSeq must contain(
           MAX_MESSAGE_BYTES_CONFIG -> "2000000", RETENTION_MS_CONFIG -> "3000000"
         )) &&
           // the deleted property will still have value, but this will be broker level default
-          (props.propertiesThat(_.isTopicSpecific).get(DELETE_RETENTION_MS_CONFIG) must beNone)
+          (props.propertiesThat(_.isTopicSpecific).get(DELETE_RETENTION_MS_CONFIG) must beNone) &&
+          (updatedEvents must contain(like[TopicConfigUpdated] {
+            case tcu => tcu.incremental === !nonIncremental
+          }))
       }
     }
   }
