@@ -7,6 +7,7 @@ import org.apache.kafka.common.header.{Header => KafkaHeader, Headers => KafkaHe
 import zio.{Chunk, Task, ZIO}
 
 import scala.collection.JavaConverters._
+import scala.util.Try
 
 case class Headers(headers: Map[Header, Chunk[Byte]] = Map.empty) {
   def +(header: KafkaHeader): Headers =
@@ -29,7 +30,7 @@ object Headers {
 
   def from(headers: Map[Header, String]): Headers =
     Headers(headers.mapValues(value =>
-      Chunk.fromArray(value.getBytes(UTF_8))))
+      Chunk.fromArray(Try(value.getBytes(UTF_8)).getOrElse(new Array[Byte](0)))))
 
   def from(headers: (Header, String)*): Headers =
     from(headers.toMap)
