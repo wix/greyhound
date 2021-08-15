@@ -45,7 +45,7 @@ private[retry] object NonBlockingRetryRecordHandler {
         WaitingBeforeRetry(record.topic, retryAttempt)
       ) *>
         consumerShutdown.interruptOnShutdown(retryAttempt.sleep)
-        .reporting(r => DoneWaitingBeforeRetry(record.topic, retryAttempt, r.duration, r.failed))
+        .reporting(r => DoneWaitingBeforeRetry(record.topic, record.partition, record.offset, retryAttempt, r.duration, r.failed))
     }
 
     override def isHandlingRetryTopicMessage(group: Group, record: ConsumerRecord[K, V]): Boolean = {
