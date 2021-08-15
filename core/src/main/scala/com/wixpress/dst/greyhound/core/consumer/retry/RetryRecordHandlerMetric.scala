@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
-import com.wixpress.dst.greyhound.core.{Topic, TopicPartition}
+import com.wixpress.dst.greyhound.core.{Offset, Partition, Topic, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import zio.duration.Duration
 
@@ -21,6 +21,8 @@ object RetryRecordHandlerMetric {
                                 retryAttempt: RetryAttempt) extends RetryRecordHandlerMetric
 
   case class DoneWaitingBeforeRetry(retryTopic: Topic,
+                                    partition: Partition,
+                                    offset: Offset,
                                     retryAttempt: RetryAttempt,
                                     waitedFor: Duration,
                                     interrupted: Boolean = false
