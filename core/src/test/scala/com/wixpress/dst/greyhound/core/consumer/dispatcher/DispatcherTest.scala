@@ -148,14 +148,6 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     } yield invocations must equalTo(1))
   }
 
-  private def submit(dispatcher: Dispatcher[Clock], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]): URIO[TestClock with Env, SubmitResult] = {
-    dispatcher.submit(record).tap(_ => TestClock.adjust(10.millis))
-  }
-
-  private def waitUntilRecordHandled(timeout: Duration)(metrics: Seq[GreyhoundMetric]) =
-    ZIO.when(metrics.collect { case r: RecordHandled[_, _] => r }.nonEmpty)(ZIO.fail(TimeoutWaitingForHandledMetric))
-      .retry(Schedule.duration(timeout))
-
   "resume handling" in new ctx() {
     run(for {
       ref <- Ref.make(0)
@@ -171,6 +163,14 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
       invocations <- ref.get
     } yield invocations must equalTo(1))
   }
+
+  private def submit(dispatcher: Dispatcher[Clock], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]): URIO[TestClock with Env, SubmitResult] = {
+    dispatcher.submit(record).tap(_ => TestClock.adjust(10.millis))
+  }
+
+  private def waitUntilRecordHandled(timeout: Duration)(metrics: Seq[GreyhoundMetric]) =
+    ZIO.when(metrics.collect { case r: RecordHandled[_, _] => r }.nonEmpty)(ZIO.fail(TimeoutWaitingForHandledMetric))
+      .retry(Schedule.duration(timeout))
 
   private def resume(dispatcher: Dispatcher[Nothing]) = {
     dispatcher.resume *> TestClock.adjust(10.millis)
