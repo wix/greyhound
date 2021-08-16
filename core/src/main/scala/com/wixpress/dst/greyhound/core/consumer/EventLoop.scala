@@ -7,6 +7,7 @@ import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -31,13 +32,15 @@ object EventLoop {
               handler: Handler[R],
               clientId: ClientId,
               config: EventLoopConfig = EventLoopConfig.Default,
-              consumerAttributes: Map[String, String] = Map.empty
+              consumerAttributes: Map[String, String] = Map.empty,
+              workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]
              ): RManaged[R with Env, EventLoop[GreyhoundMetrics with Blocking]] = {
     val start = for {
       _ <- report(StartingEventLoop(clientId, group, consumerAttributes))
       offsets <- Offsets.make
       handle = handler.andThen(offsets.update).handle(_)
-      dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark, config.drainTimeout, config.delayResumeOfPausedPartition, consumerAttributes)
+      dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark, config.drainTimeout,
+        config.delayResumeOfPausedPartition, consumerAttributes, workersShutdownRef)
       positionsRef <- Ref.make(Map.empty[TopicPartition, Offset])
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned <- Promise.make[Nothing, Unit]

@@ -1,7 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.util.regex.Pattern
-
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
@@ -10,11 +8,14 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topi
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic, TopicPartition}
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.duration._
+
+import java.util.regex.Pattern
 
 class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
 
@@ -37,7 +38,9 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
       }
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       handler = RecordHandler(promise.succeed)
-      handled <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId").use_(promise.await)
+      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      handled <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer),
+        handler, "clientId", workersShutdownRef = ref).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception)))
   }
@@ -60,7 +63,9 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
             case _ => promise.succeed(offsets).unit
           }
       }
-      committed <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), RecordHandler.empty, "clientId").use_(promise.await)
+      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      committed <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer),
+        RecordHandler.empty, "clientId", workersShutdownRef = ref).use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic, record.partition) -> (offset + 1)))))
@@ -73,7 +78,9 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
         override def poll(timeout: Duration): Task[Records] =
           ZIO.dieMessage("cough :(")
       }
-      died <- EventLoop.make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId").use { eventLoop =>
+      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      died <- EventLoop.make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId",
+        workersShutdownRef = ref).use { eventLoop =>
         eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(alive => !alive)).unit
       }.catchAllCause(_ => ZIO.unit).timeout(5.second)
     } yield died must beSome

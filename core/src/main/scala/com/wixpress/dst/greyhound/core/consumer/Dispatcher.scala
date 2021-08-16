@@ -1,7 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.concurrent.TimeUnit
-
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
@@ -9,6 +8,8 @@ import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic, TopicPartition}
 import zio._
 import zio.clock.Clock
@@ -43,7 +44,8 @@ object Dispatcher {
               highWatermark: Int,
               drainTimeout: Duration = 15.seconds,
               delayResumeOfPausedPartition: Long = 0,
-              consumerAttributes: Map[String, String] = Map.empty
+              consumerAttributes: Map[String, String] = Map.empty,
+              workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]
              ): UIO[Dispatcher[R]] =
     for {
       state <- Ref.make[DispatcherState](DispatcherState.Running)
@@ -126,6 +128,8 @@ object Dispatcher {
               _ <- report(StartingWorker(group, clientId, partition, consumerAttributes))
               worker <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout, consumerAttributes)
               _ <- workers.update(_ + (partition -> worker))
+              shutdownPromise <- AwaitShutdown.make
+              _ <- workersShutdownRef.update(_.updated(partition, shutdownPromise))
             } yield worker
           }
         }
@@ -141,6 +145,8 @@ object Dispatcher {
         ZIO.foreachPar_(workers) {
           case (partition, worker) =>
             report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
+              workersShutdownRef.get.flatMap(_.get(partition).fold(UIO.unit)(
+                promise => promise.onShutdown.shuttingDown)) *>
               worker.shutdown.timed.map(_._1).flatMap(duration =>
                 report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
         }

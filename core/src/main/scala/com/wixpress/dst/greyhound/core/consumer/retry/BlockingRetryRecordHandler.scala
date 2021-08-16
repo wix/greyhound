@@ -4,7 +4,7 @@ import java.util.concurrent.TimeUnit
 import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, DoneBlockingBeforeRetry, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
@@ -25,7 +25,7 @@ private[retry] object BlockingRetryRecordHandler {
                         retryConfig: RetryConfig,
                         blockingState: Ref[Map[BlockingTarget, BlockingState]],
                         nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R],
-                        consumerShutdown: AwaitShutdown
+                        awaitShutdown: TopicPartition => UIO[AwaitShutdown]
                        ): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
@@ -49,9 +49,9 @@ private[retry] object BlockingRetryRecordHandler {
         for {
           start <- currentTime(TimeUnit.MILLISECONDS)
           continueBlocking <- if (interval.toMillis > 100L) {
-            consumerShutdown.interruptOnShutdown(
+            awaitShutdown(record.topicPartition).flatMap(_.interruptOnShutdown(
               pollBlockingStateWithSuspensions(interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
-            )
+            ).reporting(r => DoneBlockingBeforeRetry(record.topic, record.partition, record.offset, r.duration, r.failed)))
           } else {
             for {
               shouldBlock <- blockingStateResolver.resolve(record)

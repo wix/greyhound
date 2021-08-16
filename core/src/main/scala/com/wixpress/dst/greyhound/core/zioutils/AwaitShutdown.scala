@@ -12,6 +12,12 @@ trait AwaitShutdown { self =>
     override def isShutDown: UIO[Boolean] = self.isShutDown
     override def awaitShutdown: UIO[Nothing] = self.awaitShutdown.tapCause(c => f(c.squashTrace))
   }
+
+  def or(other: AwaitShutdown) = new AwaitShutdown {
+    override def isShutDown: UIO[Boolean] = self.isShutDown.zip(other.isShutDown).map(pair => pair._1 || pair._2)
+
+    override def awaitShutdown: UIO[Nothing] = self.awaitShutdown raceFirst other.awaitShutdown
+  }
 }
 
 object AwaitShutdown {
