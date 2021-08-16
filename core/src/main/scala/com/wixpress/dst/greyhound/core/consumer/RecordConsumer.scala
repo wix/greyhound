@@ -15,6 +15,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import zio._
 import zio.blocking.Blocking
 import zio.clock.Clock
@@ -57,7 +58,7 @@ object RecordConsumer {
    */
   def make[R, E](config: RecordConsumerConfig, handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     for {
-      shutdown <- AwaitShutdown.make.toManaged_
+      consumerShutdown <- AwaitShutdown.make.toManaged_
       _ <- GreyhoundMetrics.report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers, config.consumerAttributes)).toManaged_
       _ <- validateRetryPolicy(config)
       consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
@@ -70,7 +71,9 @@ object RecordConsumer {
       ).toManaged_
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
       blockingStateResolver = BlockingStateResolver(blockingState)
-      handlerWithRetries <- addRetriesToHandler(config, handler, blockingState, nonBlockingRetryHelper, shutdown.awaitShutdown)
+      workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty).toManaged_
+      combinedAwaitShutdown = combineAwaitShutdowns(consumerShutdown, workersShutdownRef)
+      handlerWithRetries <- addRetriesToHandler(config, handler, blockingState, nonBlockingRetryHelper, combinedAwaitShutdown)
       eventLoop <- EventLoop.make(
         group = config.group,
         initialSubscription = initialSubscription,
@@ -78,9 +81,10 @@ object RecordConsumer {
         handler = handlerWithRetries,
         config = config.eventLoopConfig,
         clientId = config.clientId,
-        consumerAttributes = config.consumerAttributes
+        consumerAttributes = config.consumerAttributes,
+        workersShutdownRef = workersShutdownRef
       )
-      _ <- shutdown.toManaged // this will be called first on release
+      _ <- consumerShutdown.toManaged // this will be called first on release
     } yield new RecordConsumer[R with Env] {
       override def pause: URIO[R with Env, Unit] =
         eventLoop.pause
@@ -141,6 +145,13 @@ object RecordConsumer {
         zio.ZIO.foreach(toOffsets.toSeq) { case (tp, offset) => consumer.seek(tp, offset) }.unit
     }
 
+  private def combineAwaitShutdowns(consumerShutdown: ShutdownPromise, workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]) =
+    (tp: TopicPartition) => {
+      workersShutdownRef.get.map(workers =>
+        workers.get(tp).fold(consumerShutdown.awaitShutdown)(_.awaitShutdown or consumerShutdown.awaitShutdown)
+      )
+    }
+
   private def consumerConfig[E, R](config: RecordConsumerConfig) = {
     ConsumerConfig(
       config.bootstrapServers,
@@ -170,14 +181,15 @@ object RecordConsumer {
                                         handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
                                         blockingState: Ref[Map[BlockingTarget, BlockingState]],
                                         nonBlockingRetryHelper: NonBlockingRetryHelper,
-                                        consumerShutdown: AwaitShutdown
+                                        awaitShutdown: TopicPartition => UIO[AwaitShutdown]
                                        ) =
     config.retryConfig match {
       case Some(retryConfig) =>
         Producer.makeR[R](ProducerConfig(config.bootstrapServers,
           retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties + ("max.request.size" -> "4194304")))
           .map(producer => ReportingProducer(producer))
-          .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription, blockingState, nonBlockingRetryHelper, consumerShutdown))
+          .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription,
+            blockingState, nonBlockingRetryHelper, awaitShutdown))
       case None =>
         ZManaged.succeed(handler.withErrorHandler((e, record) =>
           report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))))

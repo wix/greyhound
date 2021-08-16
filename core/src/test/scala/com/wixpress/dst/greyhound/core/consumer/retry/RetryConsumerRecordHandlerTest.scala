@@ -300,14 +300,15 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
       }
     }.updateService[Clock.Service](_ => Clock.Service.live)
 
-    "on shutdown, interrupt wait for non-blocking retry" in {
+    "on consumer or worker shutdown, interrupt wait for non-blocking retry" in {
       for {
         producer <- FakeProducer.make
         topic <- randomTopicName
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHelper = alwaysBackOffRetryHelper(3.seconds)
         handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
-          val retryHandler = RetryRecordHandler.withRetries(group, failingHandler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, retryHelper, awaitShutdown)
+          val retryHandler = RetryRecordHandler.withRetries(group, failingHandler, ZRetryConfig.nonBlockingRetry(1.second),
+            producer, Topics(Set(topic)), blockingState, retryHelper, awaitShutdown = _ => UIO(awaitShutdown))
           for {
             key <- bytes
             value <- bytes
@@ -331,7 +332,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
       handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
         val retryHandler = RetryRecordHandler.withRetries(group, failingHandlerWith(handleCountRef),
           ZRetryConfig.finiteBlockingRetry(10.seconds), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic),
-          awaitShutdown.tapShutdown(_ => UIO(println("interrupting await shutdown")))
+          _ => UIO(awaitShutdown.tapShutdown(_ => UIO(println("interrupting await shutdown"))))
         )
          for {
            key <- bytes
@@ -355,7 +356,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
       handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
         val retryHandler = RetryRecordHandler.withRetries(group, failingHandler, ZRetryConfig.nonBlockingRetry(1.second), producer, Topics(Set(topic)), blockingState, FakeRetryHelper(topic) ,
-          awaitShutdown)
+          _ => UIO(awaitShutdown))
         for {
           key <- bytes
           value <- bytes

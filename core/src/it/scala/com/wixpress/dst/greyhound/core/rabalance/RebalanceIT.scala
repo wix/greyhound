@@ -1,18 +1,20 @@
 package com.wixpress.dst.greyhound.core.rabalance
 
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommitFailed, CommittedOffsets, PartitionsRevoked, PolledRecords}
-import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{Topics, topics}
 import com.wixpress.dst.greyhound.core.consumer._
+import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{Topics, topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.retry.{Blocking, InterruptibleRetryMetric, NonBlocking, RetryConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.core.{Group, Topic}
 import com.wixpress.dst.greyhound.testenv.ITEnv
-import com.wixpress.dst.greyhound.testkit.ManagedKafka
-import zio.duration._
 import com.wixpress.dst.greyhound.testenv.ITEnv._
+import com.wixpress.dst.greyhound.testkit.ManagedKafka
+import org.specs2.specification.core.Fragments
 import zio._
+import zio.duration._
 
 
 class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
@@ -57,6 +59,48 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
       allInvocations must equalTo(allMessages)
     }
   }
+
+  Fragments.foreach(Seq(Blocking, NonBlocking)) { retryType =>
+    s"interrrupt $retryType retries on revoked partitions" in {
+      for {
+        TestResources(kafka, producer) <- getShared
+        topic <- kafka.createRandomTopic(prefix = "rebalance-dont-reprocess")
+        group <- randomGroup
+
+        metricsQueue <- TestMetrics.queue
+        retryInterrupted <- Promise.make[Nothing, Unit]
+
+        _ <- metricsQueue.take.flatMap {
+          case m: PartitionsRevoked => UIO(println(s">>>===>>> [${m.clientId}] $m"))
+          case d: InterruptibleRetryMetric if d.interrupted => UIO(println(s">>>===>>> [interrupted: ${d.interrupted}] $d")) *> retryInterrupted.succeed()
+          case _ => ZIO.unit
+        }.repeat(Schedule.forever).fork
+
+        produce = producer.produce(ProducerRecord(topic, Chunk.empty))
+
+        keepConsumersAlive <- Promise.make[Nothing, Unit]
+        handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+          UIO(println(s">>>===>>> boom!")) *> ZIO.fail(new RuntimeException("boom!"))
+        }
+        consumer = RecordConsumer.make(configFor(topic, group, kafka).copy(
+          offsetReset = OffsetReset.Earliest, retryConfig = retryType match {
+            case Blocking => Some(RetryConfig.infiniteBlockingRetry(30.seconds.asScala))
+            case NonBlocking => Some(RetryConfig.nonBlockingRetry(30.seconds.asScala))
+          }), handler)
+
+        startProducing <- Promise.make[Nothing, Unit]
+        _ <- consumer.use_(startProducing.succeed(()) *> keepConsumersAlive.await).fork
+        _ <- startProducing.await *> ZIO.foreachPar(0 until 100: Seq[Int])(_ => produce)
+
+        _ <- consumer.use_(keepConsumersAlive.await).fork
+
+        _ <- retryInterrupted.await.timeoutFail(TimeoutInterruptingRetryHandler)(30.seconds)
+      } yield {
+        ok
+      }
+    }
+  }
+
 
   "should successfully commit on revoke" in {
     for {
@@ -209,3 +253,4 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
 
 case class TimeoutJoiningConsumer() extends RuntimeException
+case class TimeoutInterruptingRetryHandler() extends RuntimeException

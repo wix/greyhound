@@ -9,12 +9,13 @@ import com.wixpress.dst.greyhound.core.consumer.SubmitResult.Rejected
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit._
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import org.specs2.specification.Scope
 import zio.clock.Clock
 import zio.duration._
 import zio.test.environment.TestClock
-import zio.{test, _}
+import zio.{Ref, test, _}
 
 class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
   sequential
@@ -28,7 +29,8 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
   "handle submitted records" in new ctx() {
     run(for {
       promise <- Promise.make[Nothing, Record]
-      dispatcher <- Dispatcher.make("group", "clientId", promise.succeed, lowWatermark, highWatermark)
+      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      dispatcher <- Dispatcher.make("group", "clientId", promise.succeed, lowWatermark, highWatermark, workersShutdownRef = ref)
       _ <- submit(dispatcher, record)
       handled <- promise.await
     } yield handled must equalTo(record))
@@ -42,7 +44,8 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
       slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
         clock.sleep(1.second) *> latch.countDown
       }
-      dispatcher <- Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark)
+      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      dispatcher <- Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark, workersShutdownRef = ref)
       _ <- ZIO.foreach_(0 until partitions) { partition =>
         submit(dispatcher, record.copy(partition = partition))
       }
@@ -53,7 +56,8 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
 
   "reject records when high watermark is reached" in new ctx() {
     run(for {
-      dispatcher <- Dispatcher.make[Clock]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark)
+      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      dispatcher <- Dispatcher.make[Clock]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref)
       _ <-  submit(dispatcher, record.copy(offset = 0L)) // Will be polled
       _ <-  submit(dispatcher, record.copy(offset = 1L))
       _ <-  submit(dispatcher, record.copy(offset = 2L))
@@ -68,7 +72,8 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     run(
       for {
         queue <- Queue.bounded[Record](1)
-        dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))), lowWatermark, highWatermark)
+        ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+        dispatcher <- Dispatcher.make[Clock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))), lowWatermark, highWatermark, workersShutdownRef = ref)
         _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
            submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
         }
@@ -84,8 +89,9 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     run(
       for {
         queue <- Queue.bounded[Record](1)
+        ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
         dispatcher <- Dispatcher.make[TestClock]("group", "clientId", (record) =>  queue.offer(record).flatMap(result => UIO(println(s"block resume paused partitions -queue.offer result: ${result}"))),
-          lowWatermark, highWatermark, delayResumeOfPausedPartition = 6500)
+          lowWatermark, highWatermark, delayResumeOfPausedPartition = 6500, workersShutdownRef = ref)
         _ <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
           submit(dispatcher, ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L))
         }
@@ -121,7 +127,9 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
   "pause handling" in new ctx() {
     run(for {
       ref <- Ref.make(0)
-      dispatcher <- Dispatcher.make[Clock]("group", "clientId", _ => ref.update(_ + 1), lowWatermark, highWatermark)
+      workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      dispatcher <- Dispatcher.make[Clock]("group", "clientId", _ => ref.update(_ + 1),
+        lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
       _ <- pause(dispatcher)
       _ <- submit(dispatcher, record) // Will be queued
       invocations <- ref.get
@@ -131,13 +139,15 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
   "complete executing task before pausing" in new ctx() {
     run(for {
       ref <- Ref.make(0)
+      workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
       promise <- Promise.make[Nothing, Unit]
       handler = { _: Record =>
         clock.sleep(1.second) *>
           ref.update(_ + 1) *>
           promise.succeed(())
       }
-      dispatcher <- Dispatcher.make[Clock]("group", "clientId", handler, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make[Clock]("group", "clientId", handler,
+        lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
       _ <- submit(dispatcher, record) // Will be handled
       _ <- TestMetrics.reported.flatMap(waitUntilRecordHandled(3.seconds))
       _ <- pause(dispatcher)
@@ -151,11 +161,13 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
   "resume handling" in new ctx() {
     run(for {
       ref <- Ref.make(0)
+      workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
       promise <- Promise.make[Nothing, Unit]
       handler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
         ref.update(_ + 1) *> promise.succeed(())
       }
-      dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark)
+      dispatcher <- Dispatcher.make("group", "clientId", handler, lowWatermark, highWatermark,
+        workersShutdownRef = workersShutdownRef)
       _ <- pause(dispatcher)
       _ <- submit(dispatcher, record)
       _ <- resume(dispatcher)

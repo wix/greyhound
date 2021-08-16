@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
-import com.wixpress.dst.greyhound.core.Group
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper._
@@ -10,10 +9,11 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.producer.{ProducerR, ProducerRecord}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
+import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
 import zio.blocking.Blocking
 import zio.clock.{Clock, sleep}
 import zio.duration.Duration.fromScala
-import zio.{Chunk, ZIO}
+import zio.{Chunk, UIO, ZIO}
 
 trait NonBlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any]
@@ -29,22 +29,27 @@ private[retry] object NonBlockingRetryRecordHandler {
                         retryConfig: RetryConfig,
                         subscription: ConsumerSubscription,
                         nonBlockingRetryHelper: NonBlockingRetryHelper,
-                        consumerShutdown: AwaitShutdown)
+                        awaitShutdown: TopicPartition => UIO[AwaitShutdown])
                        (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): NonBlockingRetryRecordHandler[V, K, R] = new NonBlockingRetryRecordHandler[V, K, R] {
     override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
       nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
-        ZIO.foreach_(retryAttempt)(delayRetry(record, consumerShutdown)) *> handler.handle(record).catchAll {
-          case Right(_: NonRetriableException) => ZIO.unit
-          case error => maybeRetry(retryAttempt, error, record)
-        }
+        maybeDelayRetry(record, retryAttempt) *>
+          handler.handle(record).catchAll {
+            case Right(_: NonRetriableException) => ZIO.unit
+            case error => maybeRetry(retryAttempt, error, record)
+          }
       }
     }
 
-    private def delayRetry(record: ConsumerRecord[_, _], consumerShutdown: AwaitShutdown)(retryAttempt: RetryAttempt) =  {
+    private def maybeDelayRetry(record: ConsumerRecord[K, V], retryAttempt: Option[RetryAttempt]) = {
+      ZIO.foreach_(retryAttempt)(delayRetry(record, awaitShutdown))
+    }
+
+    private def delayRetry(record: ConsumerRecord[_, _], awaitShutdown: TopicPartition => UIO[AwaitShutdown])(retryAttempt: RetryAttempt) =  {
       report(
         WaitingBeforeRetry(record.topic, retryAttempt)
       ) *>
-        consumerShutdown.interruptOnShutdown(retryAttempt.sleep)
+        awaitShutdown(record.topicPartition).flatMap(_.interruptOnShutdown(retryAttempt.sleep))
         .reporting(r => DoneWaitingBeforeRetry(record.topic, record.partition, record.offset, retryAttempt, r.duration, r.failed))
     }
 
@@ -73,7 +78,7 @@ private[retry] object NonBlockingRetryRecordHandler {
     private def producerToRetryTopic[E1](retryAttempt: Option[RetryAttempt],
                                          retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]],
                                          record:  ConsumerRecord[_, _]) = {
-      consumerShutdown.interruptOnShutdown(
+      awaitShutdown(record.topicPartition).flatMap(_.interruptOnShutdown(
         retryConfig.produceEncryptor.encrypt(retryRecord).flatMap(producer.produce).tapError(
             e =>
               report(
@@ -85,7 +90,7 @@ private[retry] object NonBlockingRetryRecordHandler {
                   e)) *>
                 sleep(fromScala(retryConfig.produceRetryBackoff))
           ).eventually.ignore
-      )
+      ))
     }
   }
 }

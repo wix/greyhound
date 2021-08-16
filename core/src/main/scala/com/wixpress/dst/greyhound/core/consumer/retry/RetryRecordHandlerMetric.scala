@@ -7,6 +7,9 @@ import zio.duration.Duration
 
 
 sealed trait RetryRecordHandlerMetric extends GreyhoundMetric
+sealed trait InterruptibleRetryMetric extends GreyhoundMetric {
+  val interrupted: Boolean
+}
 
 object RetryRecordHandlerMetric {
 
@@ -26,12 +29,19 @@ object RetryRecordHandlerMetric {
                                     retryAttempt: RetryAttempt,
                                     waitedFor: Duration,
                                     interrupted: Boolean = false
-                                   ) extends RetryRecordHandlerMetric
+                                   ) extends RetryRecordHandlerMetric with InterruptibleRetryMetric
 
   case class RetryProduceFailedWillRetry(retryTopic: Topic,
                                          retryAttempt: Option[RetryAttempt],
                                          willRetryAfterMs: Long,
                                          record: ConsumerRecord[_, _],
                                          error: Throwable) extends RetryRecordHandlerMetric
+
+  case class DoneBlockingBeforeRetry(topic: Topic,
+                                     partition: Partition,
+                                     offset: Offset,
+                                     waitedFor: Duration,
+                                    interrupted: Boolean = false
+                                   ) extends RetryRecordHandlerMetric with InterruptibleRetryMetric
 
 }
