@@ -59,6 +59,7 @@ object GreyhoundMetrics {
 
   case class MetricResult[+E, +A](result: Exit[E, A], duration: Duration) {
     def map[B](f: A => B) = copy(result = result.map(f))
+    def mapExit[B, E1 >: E](f: Exit[E, A] => Exit[E1, B]) = copy(result = f(result))
     def mapError[E1](f: E => E1) = copy(result = result.mapError(f))
     def toTry(implicit ev: E <:< Throwable): Try[A] =
       result.fold(c => Failure(c.squashTrace), Success.apply)

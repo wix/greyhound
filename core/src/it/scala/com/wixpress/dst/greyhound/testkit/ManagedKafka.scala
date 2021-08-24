@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.blocking.{Blocking, effectBlocking}
-import zio.{RIO, RManaged, Task}
+import zio.{RIO, RManaged, Task, ZIO}
 
 import scala.reflect.io.Directory
 import scala.util.Random
@@ -29,6 +29,7 @@ object ManagedKafka {
 
   def make(config: ManagedKafkaConfig): RManaged[Blocking with GreyhoundMetrics, ManagedKafka] = for {
     _ <- embeddedZooKeeper(config.zooKeeperPort)
+    metrics <- ZIO.environment[GreyhoundMetrics].toManaged_
     logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
     _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
     admin <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
@@ -37,10 +38,10 @@ object ManagedKafka {
     override val bootstrapServers: String = s"localhost:${config.kafkaPort}"
 
     override def createTopic(config: TopicConfig): RIO[Blocking, Unit] =
-      adminClient.createTopics(Set(config)).unit
+      adminClient.createTopics(Set(config)).unit.provideSome(metrics ++ _)
 
     override def createTopics(configs: TopicConfig*): RIO[Blocking, Unit] =
-      adminClient.createTopics(configs.toSet).unit
+      adminClient.createTopics(configs.toSet).unit.provideSome(metrics ++ _)
 
     override def adminClient: AdminClient = admin
   }
