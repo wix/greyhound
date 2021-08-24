@@ -2,6 +2,7 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.{Topic, TopicConfig}
 import com.wixpress.dst.greyhound.core.admin.{AdminClientConfig, TopicPropertiesResult, AdminClient => AdminClientCore}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import zio.ZIO
 import zio.blocking.Blocking
 
@@ -22,7 +23,7 @@ object AdminClient {
   import GreyhoundRuntime.executionContext
 
   def create(config: AdminClientConfig): AdminClient = GreyhoundRuntime.Live.unsafeRun {
-    ZIO.runtime[Blocking].map(runtime => new AdminClient {
+    ZIO.runtime[Blocking with GreyhoundMetrics].map(runtime => new AdminClient {
       override def createTopics(configs: Set[TopicConfig]): Future[Map[String, Option[Throwable]]] =
         runtime.unsafeRunToFuture {
           AdminClientCore.make(config).use { client =>

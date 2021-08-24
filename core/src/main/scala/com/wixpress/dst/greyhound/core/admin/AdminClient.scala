@@ -17,7 +17,8 @@ import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrParti
 import zio._
 import zio.blocking.{Blocking, effectBlocking}
 import GreyhoundMetrics._
-import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicPartitionsIncreased}
+import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
+import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreateResult, TopicCreated, TopicPartitionsIncreased}
 
 import scala.collection.JavaConverters._
 
@@ -26,7 +27,7 @@ trait AdminClient {
 
   def topicExists(topic: String): RIO[Blocking, Boolean]
 
-  def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking, Map[String, Option[Throwable]]]
+  def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]]
 
   def numberOfBrokers: RIO[Blocking, Int]
 
@@ -109,11 +110,14 @@ object AdminClient {
             }.getOrElse(UIO(false))
           }
 
-        override def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking, Map[String, Option[Throwable]]] =
+        override def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]] =
           effectBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
             ZIO.foreach(result.values.asScala.toSeq) {
               case (topic, topicResult) =>
-                topicResult.asZio.either.map(topic -> _.left.toOption.filterNot(ignoreErrors))
+                topicResult.asZio.unit
+                  .reporting(res => TopicCreated(topic, attributes, res.mapExit(fromExit(isTopicExistsError))))
+                  .either
+                  .map(topic -> _.left.toOption.filterNot(ignoreErrors))
             }.map(_.toMap)
           }
 
