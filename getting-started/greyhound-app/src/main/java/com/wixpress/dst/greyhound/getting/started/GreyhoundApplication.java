@@ -19,8 +19,10 @@ import org.springframework.web.bind.annotation.RestController;
 import scala.collection.immutable.HashMap;
 
 import java.time.Duration;
-import java.util.Date;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 import static com.wixpress.dst.greyhound.java.RecordHandlers.aBlockingRecordHandler;
 
@@ -32,6 +34,11 @@ public class GreyhoundApplication implements CommandLineRunner {
 	public static final	String TOPIC = "greyhound-topic";
 	public static final	String SLOW_GROUP = "greyhound-group-slow";
 	public static final	String FAST_GROUP = "greyhound-group-fast";
+
+	public static final	String BATCH_TOPIC = "greyhound-batch-topic";
+	public static final	String BATCH_GROUP = "greyhound-batch-group-fast";
+	public static final	String NON_BATCH_GROUP = "greyhound-non-batch-group";
+
 	public static final	int PARTITIONS = 8; // The number of partitions is the number of max parallelism
 
 	private final HashMap<String, String> EMPTY_MAP = new HashMap<>();
@@ -40,11 +47,25 @@ public class GreyhoundApplication implements CommandLineRunner {
 	private GreyhoundProducer producer;
 	private GreyhoundConsumers consumers;
 
+
 	private int currentNumOfMessages;
-	private long produceStartTime;
-	private long lastConsumeTime;
+	private long slowConsumerStartTime;
+	private long fastConsumerStartTime;
 	private AtomicInteger slowCounter;
 	private AtomicInteger fastCounter;
+	private AtomicBoolean slowConsumerStarted;
+	private AtomicBoolean fastConsumerStarted;
+
+	private int batchNumOfMessages;
+	private long nonBatchConsumerStartTime;
+	private long batchConsumerStartTime;
+	private AtomicInteger nonBatchCounter;
+	private AtomicInteger batchCounter;
+	private AtomicBoolean nonBatchConsumerStarted;
+	private AtomicBoolean batchConsumerStarted;
+
+	private final OperationsRecorder nonBatchOperationsRecorder = new OperationsRecorder();
+	private final OperationsRecorder batchOperationsRecorder = new OperationsRecorder();
 
 	public GreyhoundApplication() {
 	}
@@ -58,23 +79,45 @@ public class GreyhoundApplication implements CommandLineRunner {
 	@RequestMapping("/produce")
 	public String produce(@RequestParam("numOfMessages") int numOfMessages/*,
 						  @RequestParam(value = "maxParallelism", defaultValue = "1") int maxParallelism*/) {
-		// Save some details so we can measure time it toke to consume all messages and reduce the parallelism
+		// Save some details so we can measure time it took to consume all messages and reduce the parallelism
 		currentNumOfMessages = numOfMessages;
 		slowCounter = new AtomicInteger(currentNumOfMessages);
 		fastCounter = new AtomicInteger(currentNumOfMessages);
-		produceStartTime = System.currentTimeMillis();
+		slowConsumerStarted = new AtomicBoolean(false);
+		fastConsumerStarted = new AtomicBoolean(false);
 
-		// Produce the messages
-		for (int i=0;i<numOfMessages;i++) {
+		String message = produceMessages(numOfMessages, TOPIC);
+
+		System.out.println(message);
+		return message;
+	}
+
+	@RequestMapping("/produce-batch")
+	public String produceBatch(@RequestParam("numOfMessages") int numOfMessages) {
+		// Save some details so we can measure time it took to consume all messages
+		batchNumOfMessages = numOfMessages;
+		nonBatchCounter = new AtomicInteger(batchNumOfMessages);
+		batchCounter = new AtomicInteger(batchNumOfMessages);
+		nonBatchConsumerStarted = new AtomicBoolean(false);
+		batchConsumerStarted = new AtomicBoolean(false);
+		nonBatchOperationsRecorder.reset();
+		batchOperationsRecorder.reset();
+
+		String message = produceMessages(numOfMessages, BATCH_TOPIC);
+
+		System.out.println(message);
+		return message;
+	}
+
+	private String produceMessages(int numOfMessages, String topic) {
+		long produceStart = System.currentTimeMillis();
+		for (int i = 0; i < numOfMessages; i++) {
 			producer.produce(
-					new ProducerRecord<>(TOPIC, i%8, i, "message"+i),
+					new ProducerRecord<>(topic, i % 8, i, "message" + i),
 					new IntegerSerializer(),
 					new StringSerializer());
 		}
-
-		String message = "produced " + numOfMessages + " messages at " + new Date(produceStartTime);
-		System.out.println(message);
-		return message;
+		return "produced " + numOfMessages + " messages in " + (System.currentTimeMillis() - produceStart) + " millis at " + new Date(produceStart);
 	}
 
 	/// Application Startup ///
@@ -86,7 +129,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 	public void run(String... args) {
 		// Configure Greyhound
 		GreyhoundConfig config = new GreyhoundConfig(BOOT_START_SERVERS);
-		createTopic(); //Not necessary for topic with default configurations
+		createTopics(new String[]{TOPIC, BATCH_TOPIC}); //Not necessary for topic with default configurations
 		createProducer(config);
 		createConsumers(config);
 	}
@@ -96,14 +139,16 @@ public class GreyhoundApplication implements CommandLineRunner {
 		producer = new GreyhoundProducerBuilder(config).build();
 	}
 
-	private void createTopic() {
+	private void createTopics(String[] topics) {
 		adminClient = AdminClient.create(new AdminClientConfig(BOOT_START_SERVERS, EMPTY_MAP));
-		adminClient.createTopic(new TopicConfig(
-				TOPIC,
-				PARTITIONS,
-				1,
-				new CleanupPolicy.Delete(Duration.ofHours(1).toMillis()),
-				EMPTY_MAP)).isCompleted();
+		for (String topic : topics) {
+			adminClient.createTopic(new TopicConfig(
+					topic,
+					PARTITIONS,
+					1,
+					new CleanupPolicy.Delete(Duration.ofHours(1).toMillis()),
+					EMPTY_MAP)).isCompleted();
+		}
 	}
 
 	private void createConsumers(GreyhoundConfig config) {
@@ -112,29 +157,87 @@ public class GreyhoundApplication implements CommandLineRunner {
 						aConsumer(SLOW_GROUP, 1))
 				.withConsumer(
 						aConsumer(FAST_GROUP, 8))
+				.withConsumer(
+						aNonBatchConsumer())
+				.withBatchConsumer(
+						aBatchConsumer())
 				.build();
 	}
 
 	private GreyhoundConsumer<Integer, String> aConsumer(String group, int maxParallelism) {
-		GreyhoundConsumer<Integer, String> consumer = GreyhoundConsumer.with(
+		return GreyhoundConsumer.with(
 				TOPIC,
 				group,
 				aBlockingRecordHandler(record -> {
-					if (getCounterBy(group).get() == currentNumOfMessages)
-						System.out.println("started consuming for '" +  group + "'...");
+					if (getStartedFlagBy(group).compareAndSet(false, true)) {
+						setStartTimeBy(group);
+						System.out.println("started consuming for '" + group + "'...");
+					}
 					int count = getCounterBy(group).decrementAndGet();
 					artificialDelay();
 					if (count == 0) {
-						lastConsumeTime = System.currentTimeMillis();
+						long lastConsumeTime = System.currentTimeMillis();
 						System.out.println("----------------------------------------------------------------------");
 						System.out.println("Consumer with MaxParallelism = " + maxParallelism + " - All messages consumed in "
-								+ (lastConsumeTime - produceStartTime) + " millis at " + new Date(lastConsumeTime));
+								+ (lastConsumeTime - getStartTimeBy(group)) + " millis at " + new Date(lastConsumeTime));
 					}
 				}),
 				new IntegerDeserializer(),
 				new StringDeserializer())
 				.withMaxParallelism(maxParallelism);
-		return consumer;
+	}
+
+	private GreyhoundConsumer<Integer, String> aNonBatchConsumer() {
+		return GreyhoundConsumer.with(
+				BATCH_TOPIC,
+				NON_BATCH_GROUP,
+				aBlockingRecordHandler(record -> {
+					if (nonBatchConsumerStarted.compareAndSet(false, true)) {
+						nonBatchConsumerStartTime = System.currentTimeMillis();
+						System.out.println("started regular consumer processing...");
+					}
+					nonBatchOperationsRecorder.recordOperation(record.partition(), 1);
+					artificialDelay();
+					int count = nonBatchCounter.decrementAndGet();
+					if (count == 0) {
+						long lastConsumeTime = System.currentTimeMillis();
+						System.out.println("----------------------------------------------------------------------");
+						System.out.println("Regular consumer processed " + nonBatchOperationsRecorder.totalEntries() + " messages in " + nonBatchOperationsRecorder.totalOperations() + " operations, "
+								+ "consumed in " + (lastConsumeTime - nonBatchConsumerStartTime) + " millis at " + new Date(lastConsumeTime) + "\n"
+								+ "Operations per partition:\n"
+								+ nonBatchOperationsRecorder.operationsPerPartitionEntries().stream().map(e -> "Partition " + e.getKey() + " - " + e.getValue().stream().reduce(0, Integer::sum)).collect(Collectors.joining(" operation(s) \n", "", " operation(s)")));
+					}
+				}),
+				new IntegerDeserializer(),
+				new StringDeserializer())
+				.withMaxParallelism(PARTITIONS);
+	}
+
+	private GreyhoundBatchConsumer<Integer, String> aBatchConsumer() {
+		return GreyhoundBatchConsumer.with(
+				BATCH_TOPIC,
+				BATCH_GROUP,
+				BatchRecordHandlers.aBlockingBatchRecordHandler(batchRecord -> {
+					if (batchConsumerStarted.compareAndSet(false, true)) {
+						batchConsumerStartTime = System.currentTimeMillis();
+						System.out.println("started batch consumer processing...");
+					}
+					int sizeOfBatch = batchRecord.records().size();
+					batchOperationsRecorder.recordOperation(batchRecord.partition(), sizeOfBatch);
+					artificialDelay();
+					int count = batchCounter.updateAndGet(acc -> acc - sizeOfBatch);
+					if (count == 0) {
+						long lastConsumeTime = System.currentTimeMillis();
+						System.out.println("----------------------------------------------------------------------");
+						System.out.println("Batch consumer processed " + batchOperationsRecorder.totalEntries() + " messages in " + batchOperationsRecorder.totalOperations() + " operations, "
+								+ "consumed in " + (lastConsumeTime - batchConsumerStartTime) + " millis at " + new Date(lastConsumeTime) + "\n"
+								+ "Batch operations and sizes per partition:\n"
+								+ batchOperationsRecorder.operationsPerPartitionEntries().stream().map(e -> "Partition " + e.getKey() + " - " + e.getValue().size() + " operation(s) with size(s): " + e.getValue()).collect(Collectors.joining("\n")));
+					}
+				}),
+				new IntegerDeserializer(),
+				new StringDeserializer()
+		);
 	}
 
 	private AtomicInteger getCounterBy(String group) {
@@ -142,6 +245,27 @@ public class GreyhoundApplication implements CommandLineRunner {
 			return slowCounter;
 		else
 			return fastCounter;
+	}
+
+	private AtomicBoolean getStartedFlagBy(String group) {
+		if (group.equals(SLOW_GROUP))
+			return slowConsumerStarted;
+		else
+			return fastConsumerStarted;
+	}
+
+	private void setStartTimeBy(String group) {
+		if (group.equals(SLOW_GROUP))
+			slowConsumerStartTime = System.currentTimeMillis();
+		else
+			fastConsumerStartTime = System.currentTimeMillis();
+	}
+
+	private long getStartTimeBy(String group) {
+		if (group.equals(SLOW_GROUP))
+			return slowConsumerStartTime;
+		else
+			return fastConsumerStartTime;
 	}
 
 	private void artificialDelay() {
