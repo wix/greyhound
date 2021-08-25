@@ -48,7 +48,6 @@ public class GreyhoundApplication implements CommandLineRunner {
 	private GreyhoundConsumers consumers;
 
 
-	private int currentNumOfMessages;
 	private long slowConsumerStartTime;
 	private long fastConsumerStartTime;
 	private AtomicInteger slowCounter;
@@ -56,7 +55,6 @@ public class GreyhoundApplication implements CommandLineRunner {
 	private AtomicBoolean slowConsumerStarted;
 	private AtomicBoolean fastConsumerStarted;
 
-	private int batchNumOfMessages;
 	private long nonBatchConsumerStartTime;
 	private long batchConsumerStartTime;
 	private AtomicInteger nonBatchCounter;
@@ -80,9 +78,8 @@ public class GreyhoundApplication implements CommandLineRunner {
 	public String produce(@RequestParam("numOfMessages") int numOfMessages/*,
 						  @RequestParam(value = "maxParallelism", defaultValue = "1") int maxParallelism*/) {
 		// Save some details so we can measure time it took to consume all messages and reduce the parallelism
-		currentNumOfMessages = numOfMessages;
-		slowCounter = new AtomicInteger(currentNumOfMessages);
-		fastCounter = new AtomicInteger(currentNumOfMessages);
+		slowCounter = new AtomicInteger(numOfMessages);
+		fastCounter = new AtomicInteger(numOfMessages);
 		slowConsumerStarted = new AtomicBoolean(false);
 		fastConsumerStarted = new AtomicBoolean(false);
 
@@ -95,9 +92,8 @@ public class GreyhoundApplication implements CommandLineRunner {
 	@RequestMapping("/produce-batch")
 	public String produceBatch(@RequestParam("numOfMessages") int numOfMessages) {
 		// Save some details so we can measure time it took to consume all messages
-		batchNumOfMessages = numOfMessages;
-		nonBatchCounter = new AtomicInteger(batchNumOfMessages);
-		batchCounter = new AtomicInteger(batchNumOfMessages);
+		nonBatchCounter = new AtomicInteger(numOfMessages);
+		batchCounter = new AtomicInteger(numOfMessages);
 		nonBatchConsumerStarted = new AtomicBoolean(false);
 		batchConsumerStarted = new AtomicBoolean(false);
 		nonBatchOperationsRecorder.reset();
