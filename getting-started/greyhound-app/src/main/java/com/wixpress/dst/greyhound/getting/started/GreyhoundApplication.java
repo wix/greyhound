@@ -227,7 +227,7 @@ public class GreyhoundApplication implements CommandLineRunner {
 						System.out.println("----------------------------------------------------------------------");
 						System.out.println("Batch consumer processed " + batchOperationsRecorder.totalEntries() + " messages in " + batchOperationsRecorder.totalOperations() + " operations, "
 								+ "consumed in " + (lastConsumeTime - batchConsumerStartTime) + " millis at " + new Date(lastConsumeTime) + "\n"
-								+ "Batch operations and sizes per partition:\n"
+								+ "Operations and sizes per partition:\n"
 								+ batchOperationsRecorder.operationsPerPartitionEntries().stream().map(e -> "Partition " + e.getKey() + " - " + e.getValue().size() + " operation(s) with size(s): " + e.getValue()).collect(Collectors.joining("\n")));
 					}
 				}),
