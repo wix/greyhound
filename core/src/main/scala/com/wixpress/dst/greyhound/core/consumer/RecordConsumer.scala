@@ -110,7 +110,7 @@ object RecordConsumer {
       } yield RecordConsumerExposedState(elState, config.clientId, blockingStateMap)
 
       override def topology: UIO[RecordConsumerTopology] =
-        consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(config.group, subscription))
+        consumerSubscriptionRef.get.map(subscription => RecordConsumerTopology(config.group, subscription, config.consumerAttributes))
 
       override def group: Group = config.group
 
@@ -228,7 +228,7 @@ case class RecordConsumerExposedState(eventLoopState: EventLoopExposedState, con
   def eventLoopLatestOffsets = eventLoopState.latestOffsets
 }
 
-case class RecordConsumerTopology(group: Group, subscription: ConsumerSubscription)
+case class RecordConsumerTopology(group: Group, subscription: ConsumerSubscription, attributes: Map[String, String] = Map.empty)
 
 case class RecordConsumerConfig(bootstrapServers: String,
                                 group: Group,
