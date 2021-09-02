@@ -1,17 +1,18 @@
 package com.wixpress.dst.greyhound.core.admin
 
+import java.util
 import java.util.concurrent.TimeUnit.SECONDS
+
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Topic, TopicConfig, TopicPartition}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Offset, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AlterConfigOp, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
-import org.apache.kafka.clients.admin.{Config, ConfigEntry}
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
 import zio._
@@ -19,9 +20,10 @@ import zio.blocking.{Blocking, effectBlocking}
 import GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreateResult, TopicCreated, TopicPartitionsIncreased}
+import org.apache.kafka.common
 
 import scala.collection.JavaConverters._
-
+import scala.collection.JavaConverters._
 trait AdminClient {
   def listTopics(): RIO[Blocking, Set[String]]
 
@@ -42,6 +44,8 @@ trait AdminClient {
   def deleteTopic(topic: Topic): RIO[Blocking, Unit]
 
   def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]]
+
+  def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None): RIO[Blocking, Map[TopicPartition, Offset]]
 
   def increasePartitions(topic: Topic, newCount: Int): RIO[Blocking with GreyhoundMetrics, Unit]
 
@@ -188,6 +192,14 @@ object AdminClient {
             desc <- effectBlocking(client.describeConsumerGroups(groupIds.asJava).all())
             all <- desc.asZio
           } yield all.asScala.toMap.mapValues(ConsumerGroupDescription.apply)
+        }
+
+        override def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None): RIO[Blocking, Map[TopicPartition, Offset]] = {
+          val maybePartitions: util.List[common.TopicPartition] = onlyPartitions.map(_.map(_.asKafka).toList.asJava).orNull
+          for {
+            desc <- effectBlocking(client.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions)))
+            res <- effectBlocking(desc.partitionsToOffsetAndMetadata().get())
+          } yield res.asScala.toMap.map { case (tp, o) => (TopicPartition(tp), o.offset()) }
         }
 
         override def increasePartitions(topic: Topic,

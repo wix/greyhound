@@ -119,10 +119,10 @@ object RecordConsumer {
           assigned <- Ref.make[AssignedPartitions](Set.empty)
           promise <- Promise.make[Nothing, AssignedPartitions]
           rebalanceListener = eventLoop.rebalanceListener *> listener *> new RebalanceListener[R1] {
-            override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
+            override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
               DelayedRebalanceEffect.zioUnit
 
-            override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R1, Any] = for {
+            override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] = for {
               allAssigned <- assigned.updateAndGet(_ => partitions)
               _ <- consumerSubscriptionRef.set(subscription)
               _ <- promise.succeed(allAssigned)

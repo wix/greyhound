@@ -105,10 +105,10 @@ object EventLoopTest {
 trait EmptyConsumer extends Consumer {
 
   override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[R1, Unit] =
-    rebalanceListener.onPartitionsAssigned(Set(TopicPartition("", 0))).unit
+    rebalanceListener.onPartitionsAssigned(this, Set(TopicPartition("", 0))).unit
 
   override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R1, Unit] =
-    rebalanceListener.onPartitionsAssigned(topics.map(TopicPartition(_, 0))).unit
+    rebalanceListener.onPartitionsAssigned(this, topics.map(TopicPartition(_, 0))).unit
 
   override def poll(timeout: Duration): Task[Records] =
     ZIO.succeed(Iterable.empty)
@@ -139,4 +139,6 @@ trait EmptyConsumer extends Consumer {
   override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
   override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = UIO(Map.empty)
+
+  override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] = UIO(Map.empty)
 }
