@@ -25,7 +25,7 @@ package object consumer {
       case (tp, offset) => tp.asKafka -> new OffsetAndMetadata(offset)
     }.asJava
 
-  def kafkaPartitions(partitions: Set[TopicPartition]): util.Collection[KafkaTopicPartition] = {
-    partitions.map(_.asKafka).asJavaCollection
+  def kafkaPartitions(partitions: Set[TopicPartition]): util.Set[KafkaTopicPartition] = {
+    partitions.map(_.asKafka).asJava
   }
 }

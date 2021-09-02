@@ -38,13 +38,13 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   private def listener[R1](r: R1 with GreyhoundMetrics with Blocking, rebalanceListener: RebalanceListener[R1]) = {
     new RebalanceListener[Any] {
-      override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[DelayedRebalanceEffect] =
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): UIO[DelayedRebalanceEffect] =
         (GreyhoundMetrics.report(PartitionsRevoked(clientId, group, partitions, config.consumerAttributes)) *>
-          rebalanceListener.onPartitionsRevoked(partitions)).provide(r)
+          rebalanceListener.onPartitionsRevoked(consumer, partitions)).provide(r)
 
-      override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): UIO[Any] =
         (GreyhoundMetrics.report(PartitionsAssigned(clientId, group, partitions, config.consumerAttributes)) *>
-          rebalanceListener.onPartitionsAssigned(partitions)).provide(r)
+          rebalanceListener.onPartitionsAssigned(consumer, partitions)).provide(r)
     }
   }
 
@@ -114,6 +114,9 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
     internal.endOffsets(partitions)
+
+  override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
+    internal.committedOffsets(partitions)
 
   override def position(topicPartition: TopicPartition): Task[Offset] =
     internal.position(topicPartition)

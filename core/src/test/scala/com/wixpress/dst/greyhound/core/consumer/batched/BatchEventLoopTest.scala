@@ -32,7 +32,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
           for {
             _ <- givenRecords(consumerRecords)
             handledRecords <- handled.await(_.size >= topicPartitions.size)
-            offsets <- committedOffsets.await(_.size >= topicPartitions.size)
+            offsets <- committedOffsetsRef.await(_.size >= topicPartitions.size)
             metrics <- TestMetrics.reported
           } yield {
             assert(handledRecords)(containsRecordsByPartition(consumerRecords)) &&
@@ -54,7 +54,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
             _ <- givenHandleError(failOnPartition(0, cause))
             _ <- givenRecords(consumerRecords)
             handledRecords <- handled.await(_.nonEmpty)
-            offsets <- committedOffsets.await(_.nonEmpty)
+            offsets <- committedOffsetsRef.await(_.nonEmpty)
             _ <- live(zio.clock.sleep(500.millis))
             state <- loop.state
           } yield {
@@ -80,7 +80,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
               _ <- givenHandleError(failOnPartition(0, cause))
               _ <- givenRecords(consumerRecords)
               handled1 <- handled.await(_.nonEmpty)
-              offsets1 <- committedOffsets.await(_.nonEmpty)
+              offsets1 <- committedOffsetsRef.await(_.nonEmpty)
               _ <- live(zio.clock.sleep(500.millis))
               state1 <- loop.state
               _ <- givenHandleError(_ => None)
@@ -88,7 +88,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
               _ <- TestClock.adjust(retry.backoff + 1.milli)
 
               handled2 <- handled.await(_.size > 1)
-              offsets2 <- committedOffsets.await(_.size > 1)
+              offsets2 <- committedOffsetsRef.await(_.size > 1)
               state2 <- loop.state
             } yield {
               val goodRecords = consumerRecords.filterNot(_.partition == 0)
@@ -137,7 +137,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
 
   class ctx(val handled: AwaitableRef[Vector[Seq[Consumer.Record]]],
             queue: Queue[Seq[Consumer.Record]],
-            val committedOffsets: AwaitableRef[Map[TopicPartition, Offset]],
+            val committedOffsetsRef: AwaitableRef[Map[TopicPartition, Offset]],
             handlerErrorsRef: Ref[TriggerErrors]
            ) {
     val group, clientId = randomStr
@@ -150,12 +150,12 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
 
       override def commit(offsets: Map[TopicPartition, Offset]): Task[Unit] = {
         UIO(println(s"commit($offsets)")) *>
-          committedOffsets.update(_ ++ offsets)
+          committedOffsetsRef.update(_ ++ offsets)
       }
 
       override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] = {
         ZIO.runtime[Any].flatMap { rt =>
-          UIO(DelayedRebalanceEffect(rt.unsafeRunTask(committedOffsets.update(_ ++ offsets))))
+          UIO(DelayedRebalanceEffect(rt.unsafeRunTask(committedOffsetsRef.update(_ ++ offsets))))
         }
       }
     }

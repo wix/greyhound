@@ -187,11 +187,11 @@ object BatchEventLoop {
                        partitionsAssigned: Promise[Nothing, Unit]): RebalanceListener[Any] = {
     config.rebalanceListener *>
       new RebalanceListener[Any] {
-        override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] = {
+        override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] = {
           state.partitionsRevoked(partitions).as(DelayedRebalanceEffect.unit)
         }
 
-        override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
+        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): UIO[Any] =
           partitionsAssigned.succeed(())
       }
   }

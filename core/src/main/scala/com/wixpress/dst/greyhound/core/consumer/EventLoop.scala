@@ -122,18 +122,18 @@ object EventLoop {
                        config: EventLoopConfig,
                        dispatcher: Dispatcher[_],
                        partitionsAssigned: Promise[Nothing, Unit],
-                       group: Group, consumer: Consumer, clientId: ClientId, offsets: Offsets) = {
+                       group: Group, consumer0: Consumer, clientId: ClientId, offsets: Offsets) = {
     config.rebalanceListener *>
       new RebalanceListener[ZEnv with GreyhoundMetrics] {
-        override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[ZEnv with GreyhoundMetrics, DelayedRebalanceEffect] = {
+        override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[ZEnv with GreyhoundMetrics, DelayedRebalanceEffect] = {
           pausedPartitionsRef.set(Set.empty) *>
             dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
               ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumer.config.consumerAttributes)))
             } *>
-            commitOffsetsOnRebalance(consumer, offsets)
+            commitOffsetsOnRebalance(consumer0, offsets)
         }
 
-        override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] =
+        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): UIO[Any] =
           partitionsAssigned.succeed(())
       }
   }

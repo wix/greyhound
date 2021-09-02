@@ -4,23 +4,23 @@ import com.wixpress.dst.greyhound.core.TopicPartition
 import zio.{UIO, URIO, ZIO}
 
 trait RebalanceListener[-R] { self =>
-  def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R, DelayedRebalanceEffect]
-  def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R, Any]
+  def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R, DelayedRebalanceEffect]
+  def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R, Any]
 
   def *>[R1] (other: RebalanceListener[R1]) = new RebalanceListener[R with R1] {
-    override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[R with R1, DelayedRebalanceEffect] =
+    override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R with R1, DelayedRebalanceEffect] =
       for {
-        ef1 <-  self.onPartitionsRevoked(partitions)
-        ef2 <- other.onPartitionsRevoked(partitions)
+        ef1 <-  self.onPartitionsRevoked(consumer, partitions)
+        ef2 <- other.onPartitionsRevoked(consumer, partitions)
       } yield ef1 *> ef2
 
-    override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[R with R1, Any] =
-      self.onPartitionsAssigned(partitions) *> other.onPartitionsAssigned(partitions)
+    override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R with R1, Any] =
+      self.onPartitionsAssigned(consumer, partitions) *> other.onPartitionsAssigned(consumer, partitions)
   }
 
   def provide(r: R) = new RebalanceListener[Any] {
-    override def onPartitionsRevoked(partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] = self.onPartitionsRevoked(partitions).provide(r)
-    override def onPartitionsAssigned(partitions: Set[TopicPartition]): URIO[Any, Any] = self.onPartitionsAssigned(partitions).provide(r)
+    override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] = self.onPartitionsRevoked(consumer, partitions).provide(r)
+    override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, Any] = self.onPartitionsAssigned(consumer, partitions).provide(r)
   }
 }
 
@@ -65,9 +65,15 @@ object DelayedRebalanceEffect {
 
 object RebalanceListener {
   val Empty = RebalanceListener()
+  def make(onAssigned: (Consumer, Set[TopicPartition]) => UIO[Any] = (_,_) => ZIO.unit, onRevoked: (Consumer, Set[TopicPartition]) => UIO[Any] = (_,_) => ZIO.unit): RebalanceListener[Any] =
+    new RebalanceListener[Any] {
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): UIO[DelayedRebalanceEffect] = onRevoked(consumer, partitions).as(DelayedRebalanceEffect.unit)
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): UIO[Any] = onAssigned(consumer, partitions)
+    }
+
   def apply(onAssigned: Set[TopicPartition] => UIO[Any] = _ => ZIO.unit, onRevoked: Set[TopicPartition] => UIO[Any] = _ => ZIO.unit): RebalanceListener[Any] =
     new RebalanceListener[Any] {
-      override def onPartitionsRevoked(partitions: Set[TopicPartition]): UIO[DelayedRebalanceEffect] = onRevoked(partitions).as(DelayedRebalanceEffect.unit)
-      override def onPartitionsAssigned(partitions: Set[TopicPartition]): UIO[Any] = onAssigned(partitions)
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): UIO[DelayedRebalanceEffect] = onRevoked(partitions).as(DelayedRebalanceEffect.unit)
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): UIO[Any] = onAssigned(partitions)
     }
 }

@@ -2,11 +2,13 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
 import java.{lang, time, util}
+
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Decryptor, NoOpDecryptor, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
+import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
@@ -28,6 +30,8 @@ trait Consumer {
   def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit]
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
+
+  def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
   def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 
@@ -82,11 +86,11 @@ object Consumer {
   } yield {
     new Consumer {
       override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
+        listener(this, offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
       override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
-        listener(offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
+        listener(this, offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
       override def poll(timeout: Duration): RIO[Blocking, Records] =
@@ -113,6 +117,11 @@ object Consumer {
       override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
         .map(_.asScala.map { case (tp: KafkaTopicPartition, o: lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
+
+
+      override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
+        withConsumerBlocking(_.committed(kafkaPartitions(partitions)))
+          .map(_.asScala.collect { case (tp: KafkaTopicPartition, o: OffsetAndMetadata) => (TopicPartition(tp), o.offset)}.toMap)
 
       override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
@@ -187,20 +196,18 @@ object Consumer {
     }
   }
 
-
-
-  private def listener[R1](onAssignFirstDo: Set[TopicPartition] => Unit, rebalanceListener: RebalanceListener[R1]) =
+  private def listener[R1](consumer: Consumer, onAssignFirstDo: Set[TopicPartition] => Unit, rebalanceListener: RebalanceListener[R1]) =
     ZIO.runtime[Blocking with R1].map { runtime =>
       new ConsumerRebalanceListener {
         override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit = {
-          runtime.unsafeRun(rebalanceListener.onPartitionsRevoked(partitionsFor(partitions)))
+          runtime.unsafeRun(rebalanceListener.onPartitionsRevoked(consumer, partitionsFor(partitions)))
             .run() // this needs to be run in the same thread
         }
 
         override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit = {
           val assigned = partitionsFor(partitions)
           onAssignFirstDo(assigned)
-          runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(assigned))
+          runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(consumer, assigned))
         }
 
         private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
