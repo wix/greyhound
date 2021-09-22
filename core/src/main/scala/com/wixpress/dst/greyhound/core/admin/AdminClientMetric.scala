@@ -21,7 +21,7 @@ object AdminClientMetric {
                                       result: MetricResult[Throwable, Unit])
     extends AdminClientMetric
 
-  case class TopicCreated(topic: Topic, attributes: Map[String, String], result: MetricResult[Throwable, TopicCreateResult]) extends AdminClientMetric
+  case class TopicCreated(topic: Topic, partitions: Int, adminAttributes: Map[String, String], result: MetricResult[Throwable, TopicCreateResult]) extends AdminClientMetric
   sealed trait TopicCreateResult
   object TopicCreateResult {
     case object AlreadyExists extends TopicCreateResult

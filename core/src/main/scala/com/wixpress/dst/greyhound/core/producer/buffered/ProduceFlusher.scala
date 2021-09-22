@@ -1,8 +1,6 @@
 package com.wixpress.dst.greyhound.core.producer.buffered
 
-import java.lang.System.currentTimeMillis
-
-import zio.duration._
+import com.wixpress.dst.greyhound.core.Topic
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.buffered.Common.{nonRetriable, timeoutPassed}
@@ -14,6 +12,7 @@ import zio._
 import zio.blocking.Blocking
 import zio.duration.Duration
 
+import java.lang.System.currentTimeMillis
 import scala.util.Random
 
 trait ProduceFlusher[R] extends ProducerR[R] {
@@ -60,6 +59,9 @@ object ProduceFiberAsyncRouter {
       }
 
       override def fiberCount: UIO[Int] = runningFibers.get
+
+      override def partitionsFor(topic: Topic) =
+        producer.partitionsFor(topic)
     }
 
   private def fetchAndProduce[R](producer: ProducerR[R])(retryInterval: Duration, batchSize: Int) =
@@ -162,6 +164,8 @@ object ProduceFiberSyncRouter {
             usedFibers.update(_ + queueNum)
         ).map(_.await)
       }
+
+      override def partitionsFor(topic: Topic) = producer.partitionsFor(topic)
     }
 }
 

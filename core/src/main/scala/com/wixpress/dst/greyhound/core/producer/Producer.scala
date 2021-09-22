@@ -37,6 +37,8 @@ trait ProducerR[-R] { self =>
       .mapError(SerializationError)
       .flatMap(produceAsync)
 
+  def partitionsFor(topic: Topic): RIO[R with Blocking, Seq[PartitionInfo]]
+
   def shutdown: UIO[Unit] = UIO.unit
 
   def attributes: Map[String, String] = Map.empty
@@ -101,6 +103,14 @@ object Producer {
           } yield (produceCompletePromise.await)
 
         override def attributes: Map[String, String] = attrs
+
+        override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] = {
+          effectBlocking(
+            producer.partitionsFor(topic)
+              .asScala
+              .map(PartitionInfo.apply)
+          )
+        }
       }
     }
   }
@@ -117,6 +127,9 @@ object ProducerR {
       override def attributes: Map[String, String] = producer.attributes
 
       override def shutdown: UIO[Unit] = producer.shutdown
+
+      override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] =
+        producer.partitionsFor(topic).provideSome[Blocking](_.union[R1](env))
     }
     def onShutdown(onShutdown: => UIO[Unit]): ProducerR[R] = new ProducerR[R] {
       override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
@@ -125,6 +138,8 @@ object ProducerR {
       override def shutdown: UIO[Unit] = onShutdown *> producer.shutdown
 
       override def attributes: Map[String, String] = producer.attributes
+
+      override def partitionsFor(topic: Topic) = producer.partitionsFor(topic)
     }
 
     def tapBoth(onError: (Topic, Cause[ProducerError]) => URIO[R, Unit], onSuccess: RecordMetadata => URIO[R, Unit]) = new ProducerR[R] {
@@ -142,8 +157,24 @@ object ProducerR {
       override def shutdown: UIO[Unit] = producer.shutdown
 
       override def attributes: Map[String, String] = producer.attributes
+
+      override def partitionsFor(topic: Topic) = producer.partitionsFor(topic)
+    }
+
+    def map(f: ProducerRecord[Chunk[Byte], Chunk[Byte]] => ProducerRecord[Chunk[Byte], Chunk[Byte]]) = new ProducerR[R] {
+      override def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
+        producer.produceAsync(f(record))
+      }
+
+      override def partitionsFor(topic: Topic): RIO[R with Blocking, Seq[PartitionInfo]] = producer.partitionsFor(topic)
+
+      override def shutdown: UIO[Unit] = producer.shutdown
+
+      override def attributes: Map[String, String] = producer.attributes
     }
   }
+
+
 }
 
 case class ProducerConfig(bootstrapServers: String,
