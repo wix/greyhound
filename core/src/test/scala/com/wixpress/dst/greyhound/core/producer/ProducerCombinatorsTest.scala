@@ -1,12 +1,13 @@
 package com.wixpress.dst.greyhound.core.producer
 
+import com.wixpress.dst.greyhound.core.{PartitionInfo, Topic}
 import com.wixpress.dst.greyhound.core.producer.ProducerCombinatorsTest.SomeEnv
 import com.wixpress.dst.greyhound.core.testkit.FakeProducer
 import zio.blocking.Blocking
 import zio.test._
 import zio.test.Assertion._
 import zio.test.junit.JUnitRunnableSpec
-import zio.{Chunk, Has, IO, Ref, UIO, ZIO}
+import zio.{Chunk, Has, IO, RIO, Ref, UIO, ZIO}
 
 class ProducerCombinatorsTest extends JUnitRunnableSpec {
   def spec = suite("ProducerCombinatorsTest")(
@@ -22,17 +23,21 @@ class ProducerCombinatorsTest extends JUnitRunnableSpec {
           override def shutdown: UIO[Unit] = log.update(_ :+ "shutdown")
 
           override def attributes: Map[String, String] = Map("atr1" -> "val1")
+
+          override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] = UIO((1 to 3) map (p => PartitionInfo(topic, p, 1)))
         }
         producer = producerR.provide(Has(SomeEnv("the-env")))
         _ <- producer.produce(ProducerRecord("topic1", Chunk.empty))
         _ <- producer.shutdown
         logged <- log.get
+        partitions <- producer.partitionsFor("some-topic")
       } yield {
         assert(logged)(equalTo(List(
           "produce:the-env:topic1",
           "shutdown"
         ))) &&
-          assert(producer.attributes)(equalTo(Map("atr1" -> "val1")))
+          assert(producer.attributes)(equalTo(Map("atr1" -> "val1"))) &&
+          assert(partitions)(equalTo((1 to 3) map (p => PartitionInfo("some-topic", p, 1))))
       }
     },
     testM("tapBoth combinator") {

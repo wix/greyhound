@@ -25,10 +25,15 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
   "delegate to internal producer" in {
     for {
       internal <- FakeProducer.make
+      internalPartitions <- internal.partitionsFor("some-topic")
       producer = ReportingProducer(internal)
       _ <- producer.produce(record)
       produced <- internal.records.take
-    } yield produced must equalTo(record)
+      partitions <- producer.partitionsFor("some-topic")
+    } yield {
+      (produced must equalTo(record)) and
+        (partitions === internalPartitions)
+    }
   }
 
   "report metric when producing" in {
@@ -54,7 +59,7 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
       _ <- promise *> promise // evaluating the inner effect more than once should not report duplicate metrics
       metrics <- reportedMetrics
     } yield metrics.filter(_.isInstanceOf[RecordProduced]) must
-      exactly(RecordProduced(metadata, attributes.toMap, FiniteDuration(syncDelay + asyncDelay, TimeUnit.MILLISECONDS)))
+      exactly(RecordProduced(record, metadata, attributes.toMap, FiniteDuration(syncDelay + asyncDelay, TimeUnit.MILLISECONDS)))
   }
 
   "report metric when produce fails" in (

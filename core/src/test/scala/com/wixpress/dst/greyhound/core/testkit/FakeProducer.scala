@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.testkit
 
-import com.wixpress.dst.greyhound.core.{Offset, TopicPartition}
+import com.wixpress.dst.greyhound.core.{Offset, PartitionInfo, Topic, TopicPartition}
 import com.wixpress.dst.greyhound.core.producer.Producer.Producer
 import com.wixpress.dst.greyhound.core.producer._
 import zio._
@@ -45,6 +45,9 @@ case class FakeProducer(records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]]
   override def shutdown: UIO[Unit] = onShutDown
 
   def producedCount = counterRef.get
+
+  override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] =
+    UIO((1 to 3) map (p => PartitionInfo(topic, p, 1)))
 }
 
 object FakeProducer {

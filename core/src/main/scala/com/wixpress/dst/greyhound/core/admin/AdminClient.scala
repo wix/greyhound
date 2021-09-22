@@ -114,16 +114,18 @@ object AdminClient {
             }.getOrElse(UIO(false))
           }
 
-        override def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]] =
+        override def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]] = {
+          val configsByTopic = configs.map(c => c.name -> c).toMap
           effectBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
             ZIO.foreach(result.values.asScala.toSeq) {
               case (topic, topicResult) =>
                 topicResult.asZio.unit
-                  .reporting(res => TopicCreated(topic, attributes, res.mapExit(fromExit(isTopicExistsError))))
+                  .reporting(res => TopicCreated(topic, configsByTopic(topic).partitions, attributes, res.mapExit(fromExit(isTopicExistsError))))
                   .either
                   .map(topic -> _.left.toOption.filterNot(ignoreErrors))
             }.map(_.toMap)
           }
+        }
 
         override def numberOfBrokers: RIO[Blocking, Int] =
           effectBlocking(client.describeCluster()).flatMap(result =>
