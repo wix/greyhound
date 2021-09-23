@@ -195,4 +195,6 @@ object ConsumerMetric {
                                       result: MetricResult[Throwable, Unit]
                                      ) extends ConsumerMetric
 
+  case class ClosedConsumer(group: Group, clientId: ClientId, result: MetricResult[Throwable, Unit]) extends ConsumerMetric
+
 }
