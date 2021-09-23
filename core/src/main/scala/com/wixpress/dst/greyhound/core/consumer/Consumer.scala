@@ -2,9 +2,9 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.regex.Pattern
 import java.{lang, time, util}
-
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.ClosedConsumer
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Decryptor, NoOpDecryptor, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
@@ -215,9 +215,16 @@ object Consumer {
       }
     }
 
-  private def makeConsumer(config: ConsumerConfig, semaphore: Semaphore): RManaged[Blocking, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
+  private def makeConsumer(config: ConsumerConfig, semaphore: Semaphore): RManaged[Blocking with GreyhoundMetrics, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
     val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
-    ZManaged.make(acquire)(consumer => semaphore.withPermit(effectBlocking(consumer.close()).ignore))
+    def close(consumer: KafkaConsumer[_, _]) =
+      effectBlocking(consumer.close())
+      .reporting(ClosedConsumer(config.groupId, config.clientId, _))
+      .ignore
+
+    ZManaged.make(acquire)(consumer =>
+      semaphore.withPermit(close(consumer))
+    )
   }
 
 
