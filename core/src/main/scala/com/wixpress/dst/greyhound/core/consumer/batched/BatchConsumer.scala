@@ -23,6 +23,8 @@ trait BatchConsumer[-R] extends Resource[R] with RecordConsumerProperties[BatchC
   def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Env with R1, Map[TopicPartition, Offset]]
 
   def effectiveConfig: EffectiveConfig
+
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 }
 
 object BatchConsumer {
@@ -90,6 +92,9 @@ object BatchConsumer {
 
     override def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Env with R1, Map[TopicPartition, Offset]] =
       consumer.offsetsForTimes(topicPartitionsOnTimestamp.mapValues(_.toLong))
+
+    override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
+      consumer.endOffsets(partitions)
   }
 
   private def consumerConfig[R <: Has[_] : ClassTag](config: BatchConsumerConfig,
