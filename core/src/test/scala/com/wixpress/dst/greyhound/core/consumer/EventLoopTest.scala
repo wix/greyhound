@@ -132,6 +132,8 @@ trait EmptyConsumer extends Consumer {
 
   override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
+  override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
+
   override def position(topicPartition: TopicPartition): Task[Offset] = Task(-1L)
 
   override def config: ConsumerConfig = ConsumerConfig("", "")
