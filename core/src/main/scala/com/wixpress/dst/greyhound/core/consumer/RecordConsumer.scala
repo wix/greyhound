@@ -152,7 +152,7 @@ object RecordConsumer {
       )
     }
 
-  private def consumerConfig[E, R](config: RecordConsumerConfig) = {
+  def consumerConfig[E, R](config: RecordConsumerConfig) = {
     ConsumerConfig(
       config.bootstrapServers,
       config.group,

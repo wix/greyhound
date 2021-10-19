@@ -31,6 +31,8 @@ trait Consumer {
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
+  def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
+
   def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
   def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
@@ -118,6 +120,10 @@ object Consumer {
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
         .map(_.asScala.map { case (tp: KafkaTopicPartition, o: lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
 
+
+      override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
+        withConsumerBlocking(_.beginningOffsets(kafkaPartitions(partitions)))
+          .map(_.asScala.map { case (tp: KafkaTopicPartition, o: lang.Long) => (TopicPartition(tp), o.toLong)}.toMap)
 
       override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.committed(kafkaPartitions(partitions)))
