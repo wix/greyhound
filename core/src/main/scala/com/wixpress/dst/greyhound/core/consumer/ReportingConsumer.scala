@@ -115,6 +115,9 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
   override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
     internal.endOffsets(partitions)
 
+  override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
+    internal.beginningOffsets(partitions)
+
   override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
     internal.committedOffsets(partitions)
 
