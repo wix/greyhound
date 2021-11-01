@@ -40,7 +40,7 @@ object EventLoop {
       offsets <- Offsets.make
       handle = handler.andThen(offsets.update).handle(_)
       dispatcher <- Dispatcher.make(group, clientId, handle, config.lowWatermark, config.highWatermark, config.drainTimeout,
-        config.delayResumeOfPausedPartition, consumerAttributes, workersShutdownRef)
+        config.delayResumeOfPausedPartition, consumerAttributes, workersShutdownRef, config.startPaused)
       positionsRef <- Ref.make(Map.empty[TopicPartition, Offset])
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned <- Promise.make[Nothing, Unit]
@@ -198,7 +198,8 @@ case class EventLoopConfig(pollTimeout: Duration,
                            lowWatermark: Int,
                            highWatermark: Int,
                            rebalanceListener: RebalanceListener[Any],
-                           delayResumeOfPausedPartition: Long) // TODO parametrize?
+                           delayResumeOfPausedPartition: Long,
+                           startPaused: Boolean) // TODO parametrize?
 
 object EventLoopConfig {
   val Default = EventLoopConfig(
@@ -207,7 +208,8 @@ object EventLoopConfig {
     lowWatermark = 128,
     highWatermark = 256,
     rebalanceListener = RebalanceListener.Empty,
-    delayResumeOfPausedPartition = 0)
+    delayResumeOfPausedPartition = 0,
+    startPaused = false)
 }
 
 sealed trait EventLoopMetric extends GreyhoundMetric

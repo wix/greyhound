@@ -141,7 +141,7 @@ case class BatchConsumerConfig(bootstrapServers: String,
                                resubscribeTimeout: Duration = 30.seconds,
                                initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
                                consumerAttributes: Map[String, String] = Map.empty,
-                               decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor
+                               decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
                               )
 
 object BatchConsumerConfig {

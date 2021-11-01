@@ -45,10 +45,12 @@ object Dispatcher {
               drainTimeout: Duration = 15.seconds,
               delayResumeOfPausedPartition: Long = 0,
               consumerAttributes: Map[String, String] = Map.empty,
-              workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]
+              workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]],
+              startPaused: Boolean = false
              ): UIO[Dispatcher[R]] =
     for {
-      state <- Ref.make[DispatcherState](DispatcherState.Running)
+      p <- Promise.make[Nothing, Unit]
+      state <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
       workers <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
