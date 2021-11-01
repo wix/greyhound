@@ -186,7 +186,7 @@ object RecordConsumer {
     config.retryConfig match {
       case Some(retryConfig) =>
         Producer.makeR[R](ProducerConfig(config.bootstrapServers,
-          retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties + ("max.request.size" -> "4194304")))
+          retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties + ("max.request.size" -> "8000000")))
           .map(producer => ReportingProducer(producer))
           .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription,
             blockingState, nonBlockingRetryHelper, awaitShutdown))
