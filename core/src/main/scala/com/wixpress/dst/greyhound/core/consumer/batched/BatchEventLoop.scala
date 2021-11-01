@@ -174,9 +174,10 @@ object BatchEventLoop {
       fiberRef <- Ref.make(Option.empty[Fiber[_, _]])
       instrumentedHandler <- handlerWithMetrics(group, clientId, handler, consumer.config.consumerAttributes)
       env <- ZIO.environment[ExtraEnv]
+      _ <- ZIO.when(config.startPaused)(state.pause())
       eventLoop = new BatchEventLoopImpl[R](group, clientId, consumer, instrumentedHandler, retry, config, state, rebalanceListener, fiberRef, env)
       _ <- eventLoop.startPolling()
-      _ <- partitionsAssigned.await
+      _ <- ZIO.when(!config.startPaused)(partitionsAssigned.await)
     } yield eventLoop
 
     start.toManaged(_.shutDown())
@@ -225,7 +226,8 @@ case class EventLoopExposedState(running: Boolean, shutdown: Boolean, pendingRec
 
 case class BatchEventLoopConfig(pollTimeout: Duration,
                                 rebalanceListener: RebalanceListener[Any],
-                                parallelism: Int = 8
+                                parallelism: Int = 8,
+                                startPaused: Boolean
                                ) {
   def withParallelism(n: Int) = copy(parallelism = n)
 }
@@ -233,7 +235,8 @@ case class BatchEventLoopConfig(pollTimeout: Duration,
 object BatchEventLoopConfig {
   val Default = BatchEventLoopConfig(
     pollTimeout = 500.millis,
-    rebalanceListener = RebalanceListener.Empty)
+    rebalanceListener = RebalanceListener.Empty,
+    startPaused = false)
 }
 
 sealed trait BatchEventLoopMetric extends GreyhoundMetric
