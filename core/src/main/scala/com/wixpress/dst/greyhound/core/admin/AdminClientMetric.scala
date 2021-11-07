@@ -3,7 +3,6 @@ package com.wixpress.dst.greyhound.core.admin
 import com.wixpress.dst.greyhound.core.Topic
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.MetricResult
-import zio.Cause.Fail
 import zio.Exit
 
 trait AdminClientMetric extends GreyhoundMetric

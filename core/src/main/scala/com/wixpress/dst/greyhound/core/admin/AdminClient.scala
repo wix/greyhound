@@ -2,7 +2,6 @@ package com.wixpress.dst.greyhound.core.admin
 
 import java.util
 import java.util.concurrent.TimeUnit.SECONDS
-
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
@@ -11,7 +10,7 @@ import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Offset, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
@@ -19,15 +18,17 @@ import zio._
 import zio.blocking.{Blocking, effectBlocking}
 import GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
-import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreateResult, TopicCreated, TopicPartitionsIncreased}
+import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreated, TopicPartitionsIncreased}
 import org.apache.kafka.common
 
 import scala.collection.JavaConverters._
-import scala.collection.JavaConverters._
+
 trait AdminClient {
   def listTopics(): RIO[Blocking, Set[String]]
 
   def topicExists(topic: String): RIO[Blocking, Boolean]
+
+  def topicsExist(topics: Set[Topic]): ZIO[Blocking, Throwable, Map[Topic, Boolean]]
 
   def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]]
 
@@ -58,31 +59,40 @@ trait AdminClient {
                                   useNonIncrementalAlter: Boolean = false): RIO[Blocking with GreyhoundMetrics, Unit]
 
   def attributes: Map[String, String]
-
 }
 
 sealed trait ConfigPropOp
+
 object ConfigPropOp {
   case object Delete extends ConfigPropOp
+
   case class Set(value: String) extends ConfigPropOp
 }
 
 sealed trait TopicPropertiesResult {
   def topic: Topic
+
   def toOption: Option[TopicPropertiesResult.TopicProperties]
+
   def getOrThrow: TopicPropertiesResult.TopicProperties = toOption.getOrElse(throw new TopicDoesnExistException(topic))
+
   def getOrFail: IO[TopicDoesnExistException, TopicProperties] =
     ZIO.fromOption(toOption).orElseFail(throw new TopicDoesnExistException(topic))
 }
+
 object TopicPropertiesResult {
   case class TopicProperties(topic: Topic, partitions: Int, configEntries: Seq[TopicConfigEntry], replications: Int) extends TopicPropertiesResult {
-    val properties = propertiesThat((_:TopicConfigEntry) => true)
+    val properties = propertiesThat((_: TopicConfigEntry) => true)
+
     def propertiesThat(filter: TopicConfigEntry => Boolean) = configEntries.filter(filter).map(e => e.key -> e.value).toMap
+
     override def toOption: Option[TopicPropertiesResult.TopicProperties] = Some(this)
   }
+
   case class TopicDoesnExist(topic: Topic) extends TopicPropertiesResult {
     override def toOption: Option[TopicPropertiesResult.TopicProperties] = None
   }
+
   def apply(topic: Topic, partitions: Int, configEntries: Seq[TopicConfigEntry], replications: Int): TopicProperties =
     TopicProperties(topic, partitions, configEntries, replications)
 
@@ -112,6 +122,17 @@ object AdminClient {
               case Left(ex) => ZIO.fail(ex)
             }
             }.getOrElse(UIO(false))
+          }
+
+        override def topicsExist(topics: Set[Topic]): ZIO[Blocking, Throwable, Map[Topic, Boolean]] =
+          effectBlocking(client.describeTopics(topics.asJava)).flatMap { result =>
+            ZIO.foreach(result.values().asScala.toSeq) {
+              case (topic, topicResult) => topicResult.asZio.either.flatMap {
+                case Right(_) => UIO(topic -> true)
+                case Left(_: UnknownTopicOrPartitionException) => UIO(topic -> false)
+                case Left(ex) => ZIO.fail(ex)
+              }
+            }.map(_.toMap)
           }
 
         override def createTopics(configs: Set[TopicConfig], ignoreErrors: Throwable => Boolean = isTopicExistsError): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]] = {
@@ -222,22 +243,22 @@ object AdminClient {
         override def attributes: Map[String, String] = clientAttributes
 
         private def updateTopicConfigUsingAlter(topic: Topic,
-                                     configProperties: Map[String, ConfigPropOp]) = {
+                                                configProperties: Map[String, ConfigPropOp]) = {
           val resource = new ConfigResource(ConfigResource.Type.TOPIC, topic)
           (
             for {
-            described <- describeConfigs(client, Set(topic))
-            beforeProps <- described.values.head.getOrFail
-            beforeConfig = beforeProps.propertiesThat(_.isTopicSpecific)
-            configToSet = configProperties.foldLeft(beforeConfig) {
-              case (acc, (key, ConfigPropOp.Delete)) => acc - key
-              case (acc, (key, ConfigPropOp.Set(value))) => acc + (key -> value)
-            }
-            configJava = new Config(configToSet.map { case (k, v) => new ConfigEntry(k, v) }.toList.asJava)
-            _ <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava))
-              .flatMap(_.all().asZio)
+              described <- describeConfigs(client, Set(topic))
+              beforeProps <- described.values.head.getOrFail
+              beforeConfig = beforeProps.propertiesThat(_.isTopicSpecific)
+              configToSet = configProperties.foldLeft(beforeConfig) {
+                case (acc, (key, ConfigPropOp.Delete)) => acc - key
+                case (acc, (key, ConfigPropOp.Set(value))) => acc + (key -> value)
+              }
+              configJava = new Config(configToSet.map { case (k, v) => new ConfigEntry(k, v) }.toList.asJava)
+              _ <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava))
+                .flatMap(_.all().asZio)
             } yield ()
-          ).reporting(TopicConfigUpdated(topic, configProperties, incremental = false, attributes, _))
+            ).reporting(TopicConfigUpdated(topic, configProperties, incremental = false, attributes, _))
         }
 
         private def updateTopicConfigIncremental(topic: Topic,
@@ -258,20 +279,19 @@ object AdminClient {
   }
 
 
-
   private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
     effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)) flatMap { result =>
       ZIO.collectAll(
         result.values.asScala.toMap.map { case (resource, kf) =>
           kf.asZio
-           .map { config =>
-             resource.name -> TopicPropertiesResult.TopicProperties(resource.name,
-               0,
-               config.entries().asScala.map(entry => TopicConfigEntry(entry.name, entry.value, entry.source)).toSeq,
-               0)
-           }.catchSome {
-             case _:  UnknownTopicOrPartitionException => UIO(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
-           }
+            .map { config =>
+              resource.name -> TopicPropertiesResult.TopicProperties(resource.name,
+                0,
+                config.entries().asScala.map(entry => TopicConfigEntry(entry.name, entry.value, entry.source)).toSeq,
+                0)
+            }.catchSome {
+            case _: UnknownTopicOrPartitionException => UIO(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
+          }
         }
       ).map(_.toMap)
     }
@@ -290,9 +310,9 @@ object AdminClient {
                 replication
               )
             }.catchSome {
-              case _:  UnknownTopicOrPartitionException => UIO(topic -> TopicPropertiesResult.TopicDoesnExist(topic))
-            }
+            case _: UnknownTopicOrPartitionException => UIO(topic -> TopicPropertiesResult.TopicDoesnExist(topic))
           }
+        }
         ).map(_.toMap)
       }
 
