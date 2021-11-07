@@ -11,8 +11,7 @@ import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetri
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
-import org.apache.kafka.common.config
-import org.apache.kafka.common.config.TopicConfig.{DELETE_RETENTION_MS_CONFIG, MAX_MESSAGE_BYTES_CONFIG, RETENTION_MS_CONFIG, SEGMENT_BYTES_CONFIG}
+import org.apache.kafka.common.config.TopicConfig.{DELETE_RETENTION_MS_CONFIG, MAX_MESSAGE_BYTES_CONFIG, RETENTION_MS_CONFIG}
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.specs2.specification.core.Fragments
 import zio.duration.Duration.fromScala
@@ -52,6 +51,25 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         after <- kafka.adminClient.topicExists(topic1.name)
       } yield {
         after === true and before === false
+      }
+    }
+
+    "topics exist" in {
+      val topic1 = aTopicConfig()
+      val topic2 = aTopicConfig()
+      val topic3 = aTopicConfig()
+      val topics = Set[String](topic1.name, topic2.name, topic3.name)
+
+      for {
+        TestResources(kafka, _) <- getShared
+        before <- kafka.adminClient.topicExists(topic1.name)
+        _ <- kafka.adminClient.createTopics(Set(topic1))
+        _ <- kafka.adminClient.createTopics(Set(topic2))
+        topicsExists <- kafka.adminClient.topicsExist(topics)
+      } yield {
+        (topicsExists(topic1.name) must beTrue and (before must beFalse))  and
+          (topicsExists(topic2.name) must beTrue) and
+          (topicsExists(topic3.name) must beFalse)
       }
     }
 
