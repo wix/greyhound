@@ -149,10 +149,8 @@ object AdminClient {
         }
 
         override def numberOfBrokers: RIO[Blocking, Int] =
-          effectBlocking(client.describeCluster()).flatMap(result =>
-            effectBlocking {
-              result.nodes().get(30, SECONDS)
-            }.map(x => x.asScala.toSeq.size))
+          effectBlocking(client.describeCluster())
+            .flatMap(_.nodes().asZio.map(_.size))
 
 
         override def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
