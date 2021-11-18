@@ -187,7 +187,7 @@ object RecordConsumer {
       case Some(retryConfig) =>
         Producer.makeR[R](ProducerConfig(config.bootstrapServers,
           retryPolicy = ProducerRetryPolicy(Int.MaxValue, 3.seconds), extraProperties = config.kafkaAuthProperties + ("max.request.size" -> "8000000")))
-          .map(producer => ReportingProducer(producer))
+          .map(producer => ReportingProducer(producer, config.retryProducerAttributes))
           .map(producer => RetryRecordHandler.withRetries(config.group, handler, retryConfig, producer, config.initialSubscription,
             blockingState, nonBlockingRetryHelper, awaitShutdown))
       case None =>
@@ -241,7 +241,8 @@ case class RecordConsumerConfig(bootstrapServers: String,
                                 userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
                                 initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
                                 consumerAttributes: Map[String, String] = Map.empty,
-                                decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor
+                                decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
+                                retryProducerAttributes: Map[String, String] = Map.empty
                                ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
