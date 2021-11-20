@@ -45,6 +45,9 @@ trait Consumer {
 
   def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
+  def seek(toOffsets: Map[TopicPartition, Offset]): ZIO[Blocking with GreyhoundMetrics, Nothing, Unit] =
+    ZIO.foreach(toOffsets.toSeq){case (tp, o) => seek(tp, o).ignore}.unit
+
   def pause(record: ConsumerRecord[_, _]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] = {
     val partition = RecordTopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
