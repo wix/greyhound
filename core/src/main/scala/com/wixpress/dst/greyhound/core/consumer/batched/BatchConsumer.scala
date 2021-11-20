@@ -26,6 +26,10 @@ trait BatchConsumer[-R] extends Resource[R] with RecordConsumerProperties[BatchC
   def effectiveConfig: EffectiveConfig
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
+
+  def beginningOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
+
+  def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 }
 
 object BatchConsumer {
@@ -89,13 +93,19 @@ object BatchConsumer {
     override def effectiveConfig: EffectiveConfig = EffectiveConfig(consumer.config, config)
 
     override def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit] =
-      zio.ZIO.foreach(toOffsets.toSeq) { case (tp, offset) => consumer.seek(tp, offset) }.unit
+      eventLoop.requestSeek(toOffsets)
 
     override def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Env with R1, Map[TopicPartition, Offset]] =
-      consumer.offsetsForTimes(topicPartitionsOnTimestamp.mapValues(_.toLong))
+      consumer.offsetsForTimes(topicPartitionsOnTimestamp)
 
     override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
       consumer.endOffsets(partitions)
+
+    override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
+      consumer.beginningOffsets(partitions)
+
+    override def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
+      consumer.committedOffsets(partitions)
   }
 
   private def consumerConfig[R <: Has[_] : ClassTag](config: BatchConsumerConfig,
