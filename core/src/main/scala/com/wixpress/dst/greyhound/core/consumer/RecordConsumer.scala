@@ -40,6 +40,10 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
+  def beginningOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
+
+  def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
+
   def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
 
   def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
@@ -102,6 +106,12 @@ object RecordConsumer {
       override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
         consumer.endOffsets(partitions)
 
+      override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
+        consumer.beginningOffsets(partitions)
+
+      override def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
+        consumer.committedOffsets(partitions)
+
       override def waitForCurrentRecordsCompletion: URIO[Clock, Unit] = eventLoop.waitForCurrentRecordsCompletion
 
       override def state: UIO[RecordConsumerExposedState] = for {
@@ -142,7 +152,7 @@ object RecordConsumer {
         consumer.offsetsForTimes(topicPartitionsOnTimestamp)
 
       override def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit] =
-        zio.ZIO.foreach(toOffsets.toSeq) { case (tp, offset) => consumer.seek(tp, offset) }.unit
+        consumer.seek(toOffsets)
     }
 
   private def combineAwaitShutdowns(consumerShutdown: ShutdownPromise, workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]) =
