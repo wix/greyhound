@@ -84,8 +84,8 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group
     seekRequests.get
       .flatMap(offsetSeeks =>
         ZIO.when(offsetSeeks.nonEmpty)(
-            consumer.seek(offsetSeeks)
-              .tap(_ => seekRequests.set(Map.empty))))
+          consumer.seek(offsetSeeks) *> elState.offsets.update(offsetSeeks)
+            .tap(_ => seekRequests.set(Map.empty))))
 
   private def pollAndHandle(): URIO[R with Clock, Unit] = for {
     _ <- pauseAndResume().provide(capturedR)
@@ -216,7 +216,9 @@ object BatchEventLoop {
   private def handlerWithMetrics[R <: Has[_] : ClassTag, E](group: Group, clientId: ClientId, handler: Handler[R, E], consumerAttributes: Map[String, String]): ZIO[ExtraEnv, Nothing, BatchRecordHandler[R, E, Chunk[Byte], Chunk[Byte]]] =
     ZIO.environment[ExtraEnv].map { env =>
       def report(m: GreyhoundMetric) = GreyhoundMetrics.report(m).provide(env)
+
       def currentTime = zio.clock.currentDateTime.orDie.map(_.toInstant.toEpochMilli).provide(env)
+
       val nanoTime = env.get[Clock.Service].nanoTime
       new Handler[R, E] {
         override def handle(records: ConsumerRecordBatch[Chunk[Byte], Chunk[Byte]]): ZIO[R, HandleError[E], Any] = {
