@@ -16,7 +16,6 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "@dev_zio_izumi_reflect_2_12",
         "@dev_zio_zio_2_12",
-        "@joda_time_joda_time",
         "@org_apache_kafka_kafka_clients",
     ],
 )

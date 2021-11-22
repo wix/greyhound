@@ -10,7 +10,6 @@ import com.wixpress.dst.greyhound.core.consumer.batched.BatchEventLoopState.{Pau
 import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, ConsumerRecord, ConsumerRecordBatch, ConsumerSubscription, HandleError}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, Partition, TopicPartition}
-import org.joda.time.DateTime
 import zio.clock.Clock
 import zio.duration._
 import zio.stm.{STM, TRef}
@@ -165,7 +164,7 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group
   }
 
   override def requestSeek(toOffsets: Map[TopicPartition, Offset]): UIO[Unit] =
-    seekRequests.update(_ ++ toOffsets).tap(_ => ZIO.debug(s"${DateTime.now.toString()} &&&&&&& requested seek on ${toOffsets}"))
+    seekRequests.update(_ ++ toOffsets)
 }
 
 object BatchEventLoop {
