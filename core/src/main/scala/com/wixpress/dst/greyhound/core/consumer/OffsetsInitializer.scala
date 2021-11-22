@@ -28,7 +28,9 @@ class OffsetsInitializer(clientId: ClientId,
 
     withReporting(partitions, rethrow = hasSeek) {
       val committed = offsetOperations.committed(partitions, effectiveTimeout)
-      val toOffsets = calculateTargetOffsets(partitions, committed, effectiveTimeout)
+      val beginning = offsetOperations.beginningOffsets(partitions, effectiveTimeout)
+      val endOffsets = offsetOperations.endOffsets(partitions, effectiveTimeout)
+      val toOffsets = calculateTargetOffsets(partitions, beginning, committed, endOffsets, effectiveTimeout)
       val notCommitted = partitions -- committed.keySet -- toOffsets.keySet
       val positions =
         notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap ++
@@ -44,9 +46,15 @@ class OffsetsInitializer(clientId: ClientId,
   }
 
   private def calculateTargetOffsets(partitions: Set[TopicPartition],
+                                     beginning: Map[TopicPartition, Offset],
                                      committed: Map[TopicPartition, Offset],
+                                     endOffsets: Map[TopicPartition, Offset],
                                      timeout: Duration) = {
-    val seekTo: Map[TopicPartition, SeekTo] = initialSeek.seekOffsetsFor(partitions.map((_, None)).toMap ++ committed.mapValues(Some.apply))
+    val seekTo: Map[TopicPartition, SeekTo] = initialSeek.seekOffsetsFor(
+      assignedPartitions = partitions,
+      beginningOffsets = partitions.map((_, None)).toMap ++ beginning.mapValues(Some.apply),
+      endOffsets = partitions.map((_, None)).toMap ++ endOffsets.mapValues(Some.apply),
+      currentCommittedOffsets = partitions.map((_, None)).toMap ++ committed.mapValues(Some.apply))
     val seekToOffsets = seekTo.collect { case (k, v: SeekTo.SeekToOffset) => k -> v.offset }
     val seekToEndPartitions = seekTo.collect { case (k, SeekTo.SeekToEnd) => k }.toSet
     val seekToEndOffsets = fetchEndOffsets(seekToEndPartitions, timeout)
@@ -83,20 +91,25 @@ class OffsetsInitializer(clientId: ClientId,
  * `currentCommittedOffsets` will contain a key for every assigned partition. If no committed offset the value will be [[None]].
  */
 trait InitialOffsetsSeek {
-  def seekOffsetsFor(currentCommittedOffsets: Map[TopicPartition, Option[Offset]]): Map[TopicPartition, SeekTo]
+  def seekOffsetsFor(assignedPartitions: Set[TopicPartition],
+                     beginningOffsets: Map[TopicPartition, Option[Offset]],
+                     endOffsets: Map[TopicPartition, Option[Offset]],
+                     currentCommittedOffsets: Map[TopicPartition, Option[Offset]]): Map[TopicPartition, SeekTo]
 }
 
 sealed trait SeekTo
+
 object SeekTo {
   case object SeekToEnd extends SeekTo
-  case class  SeekToOffset(offset: Offset) extends SeekTo
+
+  case class SeekToOffset(offset: Offset) extends SeekTo
 }
 
 
 object InitialOffsetsSeek {
-  val default: InitialOffsetsSeek = _ => Map.empty
+  val default: InitialOffsetsSeek = (_, _, _, _) => Map.empty
 
-  def setOffset(offsets: Map[TopicPartition, SeekTo]): InitialOffsetsSeek = _ => offsets
+  def setOffset(offsets: Map[TopicPartition, SeekTo]): InitialOffsetsSeek = (_, _, _, _) => offsets
 }
 
 object OffsetsInitializer {
