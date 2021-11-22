@@ -280,6 +280,8 @@ object OffsetReset {
 trait UnsafeOffsetOperations {
   def committed(partitions: Set[TopicPartition], timeout: zio.duration.Duration): Map[TopicPartition, Offset]
 
+  def beginningOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration): Map[TopicPartition, Offset]
+
   def position(partition: TopicPartition, timeout: zio.duration.Duration): Offset
 
   def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
@@ -302,6 +304,17 @@ object UnsafeOffsetOperations {
             TopicPartition(tp) -> ofm.offset()
         }
     }
+
+
+    override def beginningOffsets(partitions: Set[TopicPartition], timeout: Duration): Map[TopicPartition, Offset] =
+      consumer.beginningOffsets(partitions.map(_.asKafka).asJava, timeout)
+        .asScala
+        .toMap
+        .collect {
+          case (tp, offset) if offset != null =>
+            TopicPartition(tp) -> offset.toLong
+        }
+
 
     override def position(partition: TopicPartition,
                           timeout: Duration): Offset =
