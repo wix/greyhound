@@ -129,7 +129,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
 
     val clock = Clock.fixed(java.time.Instant.EPOCH, ZoneId.of("UTC"))
 
-    val committer = new OffsetsInitializer(clientId, group, offsetOps, timeout, timeoutIfSeek, report, if (seekTo == Map.empty) InitialOffsetsSeek.default else _ => seekTo, clock)
+    val committer = new OffsetsInitializer(clientId, group, offsetOps, timeout, timeoutIfSeek, report, if (seekTo == Map.empty) InitialOffsetsSeek.default else (_,_,_,_) => seekTo, clock)
 
     def randomOffsets(partitions: Set[TopicPartition]) = partitions.map(p => p -> randomInt.toLong).toMap
 
@@ -140,6 +140,11 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
     def givenEndOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration = timeout)(result: Map[TopicPartition, Long]) = {
       offsetOps.endOffsets(partitions, timeout) returns result
     }
+
+    offsetOps.beginningOffsets(partitions, timeout) returns Map.empty
+    offsetOps.endOffsets(partitions, timeout) returns Map.empty
+    offsetOps.beginningOffsets(partitions, timeoutIfSeek) returns Map.empty
+    offsetOps.endOffsets(partitions, timeoutIfSeek) returns Map.empty
 
     def givenPositions(positions: (TopicPartition, Long)*): Unit = {
       givenPositions(timeout, positions:_*)
