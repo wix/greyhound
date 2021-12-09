@@ -70,7 +70,7 @@ object RecordConsumer {
       consumer <- Consumer.make(consumerConfig(config))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
         maybeAddRetryTopics(policy, config, nonBlockingRetryHelper))
-      _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties)).use(client =>
+      _ <- AdminClient.make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes).use(client =>
         client.createTopics(topicsToCreate.map(topic => TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))))
       ).toManaged_
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
