@@ -7,7 +7,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Consumer
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.ProducerR
 import zio._
-import zio.blocking.Blocking
+import zio.blocking.{Blocking => BlockingZIO}
 import zio.clock.Clock
 
 object RetryRecordHandler {
@@ -31,14 +31,14 @@ object RetryRecordHandler {
                                   nonBlockingRetryHelper: NonBlockingRetryHelper,
                                   awaitShutdown: TopicPartition => UIO[AwaitShutdown] = _ => UIO(AwaitShutdown.never)
                                  )
-                                 (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] = {
+                                 (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): RecordHandler[R with R2 with Clock with BlockingZIO with GreyhoundMetrics, Nothing, K, V] = {
 
     val nonBlockingHandler = NonBlockingRetryRecordHandler(handler, producer, retryConfig, subscription, nonBlockingRetryHelper, awaitShutdown)
     val blockingHandler = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler, awaitShutdown)
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
-    new RecordHandler[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, K, V] {
-      override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock with Blocking with GreyhoundMetrics, Nothing, Any] =
+    new RecordHandler[R with R2 with Clock with BlockingZIO with GreyhoundMetrics, Nothing, K, V] {
+      override def handle(record: ConsumerRecord[K, V]): ZIO[R with R2 with Clock with BlockingZIO with GreyhoundMetrics, Nothing, Any] =
         header(record, RetryHeader.OriginalTopic)
           .flatMap { originalTopic =>
             retryConfig.retryType(originalTopic.getOrElse(record.topic)) match {

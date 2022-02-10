@@ -26,7 +26,7 @@ case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
       runtime <- ZIO.runtime[Env]
-      makeConsumer = ZManaged.foreach(handlers) { case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
+      makeConsumer = ZManaged.foreach(handlers.toSeq) { case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
         RecordConsumer.make(
           handler = handler,
           config = mutateConsumerConfig(
