@@ -17,7 +17,7 @@ trait Offsets {
     update(RecordTopicPartition(record), record.offset + 1)
 
   def update(records: Seq[ConsumerRecord[_, _]]): UIO[Unit] = {
-    val offsets = records.groupBy(RecordTopicPartition(_)).mapValues(_.maxBy(_.offset).offset + 1)
+    val offsets = records.groupBy(RecordTopicPartition(_)).mapValues(_.maxBy(_.offset).offset + 1).toMap
     update(offsets)
   }
 }
