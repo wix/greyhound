@@ -219,7 +219,7 @@ object Dispatcher {
           _ <- internalState.update(_.shutdown).commit
           timeout <- fiber.join.resurrect.ignore.disconnect.timeout(drainTimeout)
           _ <- ZIO.when(timeout.isEmpty)(fiber.interruptFork)
-        } yield Unit
+        } yield ()
 
       override def clearPausedPartitionDuration: UIO[Unit] = internalState.update(_.clearReachedHighWatermark).commit
 

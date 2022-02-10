@@ -193,7 +193,7 @@ object Consumer {
 
       override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = {
         val kafkaTopicPartitionsOnTimestamp = topicPartitionsOnTimestamp.map { case (tp, ts) => tp.asKafka -> ts }
-        withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.mapValues(l => new lang.Long(l)).asJava))
+        withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.mapValues(l => new lang.Long(l)).toMap.asJava))
           .map(_.asScala.filter { case (_, offset) => offset != null }
             .map { case (ktp, offset) => TopicPartition(ktp) -> offset.offset()}.toMap)
       }

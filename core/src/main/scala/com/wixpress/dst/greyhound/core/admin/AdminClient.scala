@@ -193,14 +193,14 @@ object AdminClient {
         override def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]] =
           for {
             result <- effectBlocking(client.describeConsumerGroups(groups.asJava))
-            groupEffects = result.describedGroups().asScala.mapValues(_.asZio)
+            groupEffects = result.describedGroups().asScala.mapValues(_.asZio).toMap
             groupsList <- ZIO.collectAll(groupEffects.values)
-            membersMap = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala))
+            membersMap = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala)).toMap
             groupState = membersMap.mapValues(members => {
               val topicPartitionsMap = members.flatMap(_.assignment().topicPartitions().asScala)
               GroupState(topicPartitionsMap.map(TopicPartition(_)).toSet)
             }
-            )
+            ).toMap
           } yield groupState
 
         override def deleteTopic(topic: Topic): RIO[Blocking, Unit] = {
@@ -212,7 +212,7 @@ object AdminClient {
           for {
             desc <- effectBlocking(client.describeConsumerGroups(groupIds.asJava).all())
             all <- desc.asZio
-          } yield all.asScala.toMap.mapValues(ConsumerGroupDescription.apply)
+          } yield all.asScala.toMap.mapValues(ConsumerGroupDescription.apply).toMap
         }
 
         override def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None): RIO[Blocking, Map[TopicPartition, Offset]] = {
