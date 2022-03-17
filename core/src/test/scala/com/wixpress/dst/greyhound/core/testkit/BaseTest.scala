@@ -92,25 +92,21 @@ trait BaseTestWithSharedEnv[R <: Has[_], SHARED] extends SpecificationWithJUnit 
     }
   }
 
-  def getShared(implicit ev: zio.Tag[SHARED]) :URIO[Has[SHARED], SHARED] = ZIO.access[Has[SHARED]](_.get[SHARED])
-
-  implicit def zioAsResult[R1 >: R with Has[SHARED] : zio.Tag, E, A]
-          (implicit ev: AsResult[A], ev3: zio.Tag[SHARED]): AsResult[ZIO[R1, E, A]] = new AsResult[ZIO[R1, E, A]] {
-    override def asResult(t: => ZIO[R1, E, A]): Result = {
-      runtime.unsafeRunSync(
-        env.use { e: R =>
-          val sharedEnv: SHARED = sharedRef.get
-            .map(_._1)
-            .getOrElse(throw new RuntimeException("shared environment not initialized"))
-          t.provide(e.++[Has[SHARED]](Has(sharedEnv)))
-        }).fold(
-        e => Error(e.squashTraceWith{
-          case ex: Throwable => ex
-          case _ => FiberFailure(e): Throwable
-        }),
-        a => ev.asResult(a))
-    }
+  def getShared: Task[SHARED] = {
+    ZIO.fromOption(sharedRef.get.map(_._1))
+      .orElseFail(new RuntimeException("shared environment not initialized"))
   }
+
+  implicit def zioAsResult[R1 >: R, E, A](implicit ev: AsResult[A]): AsResult[ZIO[R1, E, A]] =
+    new AsResult[ZIO[R1, E, A]] {
+      override def asResult(t: => ZIO[R1, E, A]): Result =
+        runtime.unsafeRunSync(env.use(t.provide)).fold(
+          e => Error(e.squashTraceWith {
+            case ex: Throwable => ex
+            case _ => FiberFailure(e): Throwable
+          }),
+          a => ev.asResult(a))
+    }
 }
 
 trait TimeoutSupport {
