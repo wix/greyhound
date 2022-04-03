@@ -11,7 +11,8 @@ case class MemberDescription(consumerId: String, clientId: String, host: String,
 
 object ConsumerGroupDescription {
   def apply(groupDescription: admin.ConsumerGroupDescription): ConsumerGroupDescription = {
-    ConsumerGroupDescription(groupDescription.groupId(),
+    ConsumerGroupDescription(
+      groupDescription.groupId(),
       groupDescription.members().asScala.map(MemberDescription.apply).toSet,
       groupDescription.state()
     )
@@ -21,7 +22,9 @@ object MemberDescription {
   def apply(member: admin.MemberDescription): MemberDescription = {
     MemberDescription(
       member.consumerId(),
-      member.clientId(), member.host(),
-      member.assignment().topicPartitions().asScala.map(TopicPartition.apply).toSet)
+      member.clientId(),
+      member.host(),
+      member.assignment().topicPartitions().asScala.map(TopicPartition.apply).toSet
+    )
   }
 }

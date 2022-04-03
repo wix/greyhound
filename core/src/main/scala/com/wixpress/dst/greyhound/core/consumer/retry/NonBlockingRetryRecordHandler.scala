@@ -11,7 +11,7 @@ import com.wixpress.dst.greyhound.core.producer.{ProducerR, ProducerRecord}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
 import zio.blocking.Blocking
-import zio.clock.{Clock, sleep}
+import zio.clock.{sleep, Clock}
 import zio.duration.Duration.fromScala
 import zio.{Chunk, UIO, ZIO}
 
@@ -20,77 +20,90 @@ trait NonBlockingRetryRecordHandler[V, K, R] {
 
   def isHandlingRetryTopicMessage(group: Group, record: ConsumerRecord[K, V]): Boolean
 
-  def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with  R, Nothing, Any]
+  def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any]
 }
 
 private[retry] object NonBlockingRetryRecordHandler {
-  def apply[V, K, E, R](handler: RecordHandler[R, E, K, V],
-                        producer: ProducerR[R],
-                        retryConfig: RetryConfig,
-                        subscription: ConsumerSubscription,
-                        nonBlockingRetryHelper: NonBlockingRetryHelper,
-                        awaitShutdown: TopicPartition => UIO[AwaitShutdown])
-                       (implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): NonBlockingRetryRecordHandler[V, K, R] = new NonBlockingRetryRecordHandler[V, K, R] {
-    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
-      nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
-        maybeDelayRetry(record, retryAttempt) *>
-          handler.handle(record).catchAll {
-            case Right(_: NonRetriableException) => ZIO.unit
-            case error => maybeRetry(retryAttempt, error, record)
-          }
+  def apply[V, K, E, R](
+    handler: RecordHandler[R, E, K, V],
+    producer: ProducerR[R],
+    retryConfig: RetryConfig,
+    subscription: ConsumerSubscription,
+    nonBlockingRetryHelper: NonBlockingRetryHelper,
+    awaitShutdown: TopicPartition => UIO[AwaitShutdown]
+  )(implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): NonBlockingRetryRecordHandler[V, K, R] =
+    new NonBlockingRetryRecordHandler[V, K, R] {
+      override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
+        nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
+          maybeDelayRetry(record, retryAttempt) *>
+            handler.handle(record).catchAll {
+              case Right(_: NonRetriableException) => ZIO.unit
+              case error                           => maybeRetry(retryAttempt, error, record)
+            }
+        }
+      }
+
+      private def maybeDelayRetry(record: ConsumerRecord[K, V], retryAttempt: Option[RetryAttempt]) = {
+        ZIO.foreach_(retryAttempt)(delayRetry(record, awaitShutdown))
+      }
+
+      private def delayRetry(record: ConsumerRecord[_, _], awaitShutdown: TopicPartition => UIO[AwaitShutdown])(
+        retryAttempt: RetryAttempt
+      ) = {
+        report(
+          WaitingBeforeRetry(record.topic, retryAttempt)
+        ) *>
+          awaitShutdown(record.topicPartition)
+            .flatMap(_.interruptOnShutdown(retryAttempt.sleep))
+            .reporting(r => DoneWaitingBeforeRetry(record.topic, record.partition, record.offset, retryAttempt, r.duration, r.failed))
+      }
+
+      override def isHandlingRetryTopicMessage(group: Group, record: ConsumerRecord[K, V]): Boolean = {
+        subscription match {
+          case _: TopicPattern =>
+            record.topic.startsWith(patternRetryTopicPrefix(group))
+          case _: Topics =>
+            record.topic.startsWith(fixedRetryTopicPrefix(originalTopic(record.topic, group), group))
+        }
+      }
+
+      override def handleAfterBlockingFailed(
+        record: ConsumerRecord[K, V]
+      ): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
+        nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
+          maybeRetry(retryAttempt, BlockingHandlerFailed, record)
+        }
+      }
+
+      private def maybeRetry[E1](
+        retryAttempt: Option[RetryAttempt],
+        error: E1,
+        record: ConsumerRecord[K, V]
+      ): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
+        nonBlockingRetryHelper.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
+          case RetryWith(retryRecord) => producerToRetryTopic(retryAttempt, retryRecord, record)
+          case NoMoreRetries          => ZIO.unit // todo: report uncaught errors and producer failures
+        }
+      }
+
+      private def producerToRetryTopic[E1](
+        retryAttempt: Option[RetryAttempt],
+        retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]],
+        record: ConsumerRecord[_, _]
+      ) = {
+        awaitShutdown(record.topicPartition).flatMap(
+          _.interruptOnShutdown(
+            retryConfig.produceEncryptor
+              .encrypt(retryRecord)
+              .flatMap(producer.produce)
+              .tapError(e =>
+                report(RetryProduceFailedWillRetry(retryRecord.topic, retryAttempt, retryConfig.produceRetryBackoff.toMillis, record, e)) *>
+                  sleep(fromScala(retryConfig.produceRetryBackoff))
+              )
+              .eventually
+              .ignore
+          )
+        )
       }
     }
-
-    private def maybeDelayRetry(record: ConsumerRecord[K, V], retryAttempt: Option[RetryAttempt]) = {
-      ZIO.foreach_(retryAttempt)(delayRetry(record, awaitShutdown))
-    }
-
-    private def delayRetry(record: ConsumerRecord[_, _], awaitShutdown: TopicPartition => UIO[AwaitShutdown])(retryAttempt: RetryAttempt) =  {
-      report(
-        WaitingBeforeRetry(record.topic, retryAttempt)
-      ) *>
-        awaitShutdown(record.topicPartition).flatMap(_.interruptOnShutdown(retryAttempt.sleep))
-        .reporting(r => DoneWaitingBeforeRetry(record.topic, record.partition, record.offset, retryAttempt, r.duration, r.failed))
-    }
-
-    override def isHandlingRetryTopicMessage(group: Group, record: ConsumerRecord[K, V]): Boolean = {
-      subscription match {
-        case _: TopicPattern =>
-          record.topic.startsWith(patternRetryTopicPrefix(group))
-        case _: Topics =>
-          record.topic.startsWith(fixedRetryTopicPrefix(originalTopic(record.topic, group), group))
-      }
-    }
-
-    override def handleAfterBlockingFailed(record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
-      nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
-        maybeRetry(retryAttempt, BlockingHandlerFailed, record)
-      }
-    }
-
-    private def maybeRetry[E1](retryAttempt: Option[RetryAttempt], error: E1, record: ConsumerRecord[K, V]): ZIO[Clock with Blocking with GreyhoundMetrics with R, Nothing, Any] = {
-      nonBlockingRetryHelper.retryDecision(retryAttempt, record.bimap(evK, evV), error, subscription) flatMap {
-        case RetryWith(retryRecord) => producerToRetryTopic(retryAttempt, retryRecord, record)
-        case NoMoreRetries => ZIO.unit //todo: report uncaught errors and producer failures
-      }
-    }
-
-    private def producerToRetryTopic[E1](retryAttempt: Option[RetryAttempt],
-                                         retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]],
-                                         record:  ConsumerRecord[_, _]) = {
-      awaitShutdown(record.topicPartition).flatMap(_.interruptOnShutdown(
-        retryConfig.produceEncryptor.encrypt(retryRecord).flatMap(producer.produce).tapError(
-            e =>
-              report(
-                RetryProduceFailedWillRetry(
-                  retryRecord.topic,
-                  retryAttempt,
-                  retryConfig.produceRetryBackoff.toMillis,
-                  record,
-                  e)) *>
-                sleep(fromScala(retryConfig.produceRetryBackoff))
-          ).eventually.ignore
-      ))
-    }
-  }
 }

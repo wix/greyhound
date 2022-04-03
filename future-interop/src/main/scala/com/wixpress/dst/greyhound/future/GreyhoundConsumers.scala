@@ -17,24 +17,38 @@ trait GreyhoundConsumers extends Closeable {
   def isAlive: Future[Boolean]
 }
 
-case class GreyhoundConsumersBuilder(config: GreyhoundConfig,
-                                     handlers: Map[(Group, ClientId), (OffsetReset, NonEmptySet[Topic], Handler, RecordConsumerConfig => RecordConsumerConfig)] = Map.empty) {
+case class GreyhoundConsumersBuilder(
+  config: GreyhoundConfig,
+  handlers: Map[(Group, ClientId), (OffsetReset, NonEmptySet[Topic], Handler, RecordConsumerConfig => RecordConsumerConfig)] = Map.empty
+) {
 
   def withConsumer[K, V](consumer: GreyhoundConsumer[K, V]): GreyhoundConsumersBuilder =
-    copy(handlers = handlers + ((consumer.group, consumer.clientId) -> (consumer.offsetReset, consumer.initialTopics, consumer.recordHandler, consumer.mutateConsumerConfig)))
+    copy(handlers =
+      handlers +
+        ((consumer.group, consumer.clientId) ->
+          (consumer.offsetReset, consumer.initialTopics, consumer.recordHandler, consumer.mutateConsumerConfig))
+    )
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
       runtime <- ZIO.runtime[Env]
-      makeConsumer = ZManaged.foreach(handlers.toSeq) { case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
-        RecordConsumer.make(
-          handler = handler,
-          config = mutateConsumerConfig(
-            RecordConsumerConfig(config.bootstrapServers, group, ConsumerSubscription.Topics(initialTopics),
-              offsetReset = offsetReset, clientId = clientId)))
+      makeConsumer = ZManaged.foreach(handlers.toSeq) {
+        case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
+          RecordConsumer.make(
+            handler = handler,
+            config = mutateConsumerConfig(
+              RecordConsumerConfig(
+                config.bootstrapServers,
+                group,
+                ConsumerSubscription.Topics(initialTopics),
+                offsetReset = offsetReset,
+                clientId = clientId
+              )
+            )
+          )
       }
       reservation <- makeConsumer.reserve
-      consumers <- reservation.acquire
+      consumers   <- reservation.acquire
     } yield new GreyhoundConsumers {
       override def pause: Future[Unit] =
         runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.pause).unit)

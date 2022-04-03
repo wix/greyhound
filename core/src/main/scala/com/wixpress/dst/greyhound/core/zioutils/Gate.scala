@@ -11,13 +11,16 @@ trait Gate {
 
 object Gate {
   def make(initiallyAllow: Boolean): UIO[Gate] = {
-    TRef.makeCommit(initiallyAllow).map(ref =>
-      new Gate {
-        override def toggle(on: Boolean): UIO[Unit] =
-          ref.set(on).commit
+    TRef
+      .makeCommit(initiallyAllow)
+      .map(ref =>
+        new Gate {
+          override def toggle(on: Boolean): UIO[Unit] =
+            ref.set(on).commit
 
-        override def await(): UIO[Unit] =
-          ref.get.flatMap(STM.check(_)).commit
-      })
+          override def await(): UIO[Unit] =
+            ref.get.flatMap(STM.check(_)).commit
+        }
+      )
   }
 }

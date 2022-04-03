@@ -13,8 +13,6 @@ object ContextEncoder {
   def aHeaderContextEncoder[C](header: Header, serializer: Serializer[C]): ContextEncoder[C] =
     new ContextEncoder[C] {
       override def encode[K, V](record: ProducerRecord[K, V], context: C): Task[ProducerRecord[K, V]] =
-        serializer.serialize(record.topic, context).map { serialized =>
-          record.copy(headers = record.headers + (header -> serialized))
-        }
+        serializer.serialize(record.topic, context).map { serialized => record.copy(headers = record.headers + (header -> serialized)) }
     }
 }

@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.{CompletableFuture, Executor}
 
-import com.wixpress.dst.greyhound.core.consumer.domain.{SerializationError, ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler, SerializationError}
 import com.wixpress.dst.greyhound.core.{Deserializer => CoreDeserializer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
 import com.wixpress.dst.greyhound.java.Convert.toScala
@@ -13,12 +13,15 @@ import zio.{Semaphore, ZIO}
 import scala.concurrent.Promise
 
 object GreyhoundConsumer {
-  def `with`[K >: AnyRef, V](initialTopic: String,
-                            group: String,
-                            handler: RecordHandler[K, V],
-                            keyDeserializer: Deserializer[K],
-                            valueDeserializer: Deserializer[V]) = {
-    new GreyhoundConsumer(initialTopic,
+  def `with`[K >: AnyRef, V](
+    initialTopic: String,
+    group: String,
+    handler: RecordHandler[K, V],
+    keyDeserializer: Deserializer[K],
+    valueDeserializer: Deserializer[V]
+  ) = {
+    new GreyhoundConsumer(
+      initialTopic,
       group,
       handler,
       keyDeserializer,
@@ -26,19 +29,22 @@ object GreyhoundConsumer {
       offsetReset = OffsetReset.Latest,
       errorHandler = ErrorHandler.NoOp,
       parallelism = 1,
-      retryConfig = None)
+      retryConfig = None
+    )
   }
 }
 
-case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
-                                        group: String,
-                                        handler: RecordHandler[K, V],
-                                        keyDeserializer: Deserializer[K],
-                                        valueDeserializer: Deserializer[V],
-                                        offsetReset: OffsetReset,
-                                        errorHandler: ErrorHandler[K, V],
-                                        parallelism: Int,
-                                        retryConfig: Option[RetryConfig]) {
+case class GreyhoundConsumer[K >: AnyRef, V] private (
+  initialTopic: String,
+  group: String,
+  handler: RecordHandler[K, V],
+  keyDeserializer: Deserializer[K],
+  valueDeserializer: Deserializer[V],
+  offsetReset: OffsetReset,
+  errorHandler: ErrorHandler[K, V],
+  parallelism: Int,
+  retryConfig: Option[RetryConfig]
+) {
   def withMaxParallelism(parallelism: Int) =
     copy(parallelism = parallelism)
 
@@ -56,12 +62,8 @@ case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
       CoreRecordHandler { record: CoreConsumerRecord[K, V] =>
         semaphore.withPermit {
           ZIO.effectAsync[Any, Throwable, Unit] { cb =>
-            val kafkaRecord = new ConsumerRecord(
-              record.topic,
-              record.partition,
-              record.offset,
-              record.key.orNull,
-              record.value) // TODO headers
+            val kafkaRecord =
+              new ConsumerRecord(record.topic, record.partition, record.offset, record.key.orNull, record.value) // TODO headers
 
             handler
               .handle(kafkaRecord, executor)
@@ -75,18 +77,20 @@ case class GreyhoundConsumer[K >: AnyRef, V] private(initialTopic: String,
     })
 
     baseHandler
-      .withErrorHandler { case (t, record) =>
-        ZIO.fromFuture(_ => toScala(errorHandler.onUserException(t, record))).catchAll(_ => ZIO.unit) *> ZIO.fail(t)
+      .withErrorHandler {
+        case (t, record) =>
+          ZIO.fromFuture(_ => toScala(errorHandler.onUserException(t, record))).catchAll(_ => ZIO.unit) *> ZIO.fail(t)
       }
       .withDeserializers(CoreDeserializer(keyDeserializer), CoreDeserializer(valueDeserializer))
       .withErrorHandler {
-        case (error, record) => error match {
-          case Left(serializationError) =>
-            ZIO.fromFuture(_ => toScala(
-              errorHandler.onSerializationError(serializationError, record.bimap(_.toArray, _.toArray))))
-              .catchAll(_ => ZIO.unit) *> ZIO.fail(serializationError)
-          case _ => ZIO.fail(error)
-        }
+        case (error, record) =>
+          error match {
+            case Left(serializationError) =>
+              ZIO
+                .fromFuture(_ => toScala(errorHandler.onSerializationError(serializationError, record.bimap(_.toArray, _.toArray))))
+                .catchAll(_ => ZIO.unit) *> ZIO.fail(serializationError)
+            case _ => ZIO.fail(error)
+          }
       }
   }
 }
@@ -98,7 +102,7 @@ object Convert {
     completableFuture.whenComplete((value, exception) => {
       Option(exception) match {
         case Some(ex) => promise.tryFailure(ex)
-        case None => promise.trySuccess(value)
+        case None     => promise.trySuccess(value)
       }
     })
 
@@ -118,7 +122,10 @@ object ErrorHandler {
     override def onUserException(e: Throwable, record: CoreConsumerRecord[K, V]): CompletableFuture[Unit] =
       CompletableFuture.completedFuture(())
 
-    override def onSerializationError(e: SerializationError, record: CoreConsumerRecord[Array[Byte], Array[Byte]]): CompletableFuture[Unit] =
+    override def onSerializationError(
+      e: SerializationError,
+      record: CoreConsumerRecord[Array[Byte], Array[Byte]]
+    ): CompletableFuture[Unit] =
       CompletableFuture.completedFuture(())
   }
 }

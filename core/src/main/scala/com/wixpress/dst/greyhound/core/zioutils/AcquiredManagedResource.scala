@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.zioutils
 
 import zio._
 import zio.clock.Clock
-import zio.duration.{Duration, durationInt}
+import zio.duration.{durationInt, Duration}
 
 import scala.concurrent.TimeoutException
 
@@ -11,16 +11,22 @@ case class AcquiredManagedResource[T](resource: T, onRelease: UIO[Unit], runtime
 }
 
 object AcquiredManagedResource {
-  def acquire[R <: Has[_] : zio.Tag, T](resources: ZManaged[R, Throwable, T],
-                                        releaseTimeout: Duration = 10.seconds): ZIO[Clock with R, Throwable, AcquiredManagedResource[T]] = for {
-    runtime <- ZIO.runtime[Any]
-    clock <- ZIO.environment[Clock with R]
-    r <- resources.reserve
+  def acquire[R <: Has[_]: zio.Tag, T](
+    resources: ZManaged[R, Throwable, T],
+    releaseTimeout: Duration = 10.seconds
+  ): ZIO[Clock with R, Throwable, AcquiredManagedResource[T]] = for {
+    runtime  <- ZIO.runtime[Any]
+    clock    <- ZIO.environment[Clock with R]
+    r        <- resources.reserve
     acquired <- r.acquire
   } yield {
-    val releaseWithTimeout = r.release(Exit.unit)
-      .disconnect.timeoutFail(new TimeoutException("release timed out"))(releaseTimeout)
+    val releaseWithTimeout = r
+      .release(Exit.unit)
+      .disconnect
+      .timeoutFail(new TimeoutException("release timed out"))(releaseTimeout)
       .provide(clock)
-      .orDie.unit
+      .orDie
+      .unit
     AcquiredManagedResource(acquired, releaseWithTimeout, runtime)
-  }}
+  }
+}

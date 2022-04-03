@@ -24,10 +24,12 @@ package object zioutils {
       }
     )
 
-    def fromRuntime = ZIO.runtime[Any].flatMap(_.platform.supervisor.value.map {
-      case v: Chunk[Fiber.Runtime[Any, Any]] if v.isEmpty || v.head.isInstanceOf[Fiber.Runtime[Any, Any]] => v
-      case _ => Chunk.empty
-    })
+    def fromRuntime = ZIO
+      .runtime[Any]
+      .flatMap(_.platform.supervisor.value.map {
+        case v: Chunk[Fiber.Runtime[Any, Any]] if v.isEmpty || v.head.isInstanceOf[Fiber.Runtime[Any, Any]] => v
+        case _                                                                                              => Chunk.empty
+      })
   }
 
   implicit class RuntimeEnvOps[R <: Has[_]](val runtime: zio.Runtime[R]) extends AnyVal {
@@ -45,7 +47,7 @@ package object zioutils {
 
   sealed trait FiberTrackingMode
   object FiberTrackingMode {
-    case object NoTracking extends FiberTrackingMode
+    case object NoTracking                     extends FiberTrackingMode
     case class Tracking(weak: Boolean = false) extends FiberTrackingMode
   }
 }

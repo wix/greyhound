@@ -31,9 +31,9 @@ object BlockingState {
 
   def shouldBlockFrom(blockingState: BlockingState): Boolean =
     blockingState match {
-      case Blocking => true
-      case _: Blocked[_, _ ] => true
-      case IgnoringAll => false
-      case IgnoringOnce => false
+      case Blocking         => true
+      case _: Blocked[_, _] => true
+      case IgnoringAll      => false
+      case IgnoringOnce     => false
     }
 }

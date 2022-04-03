@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.java.testkit
 import java.util
 
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig => CoreTopicConfig}
-import com.wixpress.dst.greyhound.future.{GreyhoundRuntime, Environment => ZEnvironment}
+import com.wixpress.dst.greyhound.future.{Environment => ZEnvironment, GreyhoundRuntime}
 import com.wixpress.dst.greyhound.java.TopicConfig
 
 import scala.collection.JavaConverters._
@@ -28,10 +28,10 @@ class DefaultEnvironment extends Environment {
           name = config.name,
           partitions = config.partitions,
           replicationFactor = config.replicationFactor,
-          cleanupPolicy = config.cleanupPolicy.fold(
-            retention => CleanupPolicy.Delete(retention.toMillis),
-            () => CleanupPolicy.Compact),
-          extraProperties = config.extraProperties.asScala.toMap))
+          cleanupPolicy = config.cleanupPolicy.fold(retention => CleanupPolicy.Delete(retention.toMillis), () => CleanupPolicy.Compact),
+          extraProperties = config.extraProperties.asScala.toMap
+        )
+      )
     }
 
   }

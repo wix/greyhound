@@ -8,13 +8,10 @@ import zio.{Exit, ZIO}
 import scala.concurrent.Future
 
 trait GreyhoundProducer extends Closeable {
-  def produce[K, V](record: ProducerRecord[K, V],
-                    keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V]): Future[RecordMetadata]
+  def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V]): Future[RecordMetadata]
 }
 
-case class GreyhoundProducerBuilder(config: GreyhoundConfig,
-                                    mutateProducer: ProducerConfig => ProducerConfig = identity) {
+case class GreyhoundProducerBuilder(config: GreyhoundConfig, mutateProducer: ProducerConfig => ProducerConfig = identity) {
   def withContextEncoding[C](encoder: ContextEncoder[C]): GreyhoundContextAwareProducerBuilder[C] =
     GreyhoundContextAwareProducerBuilder(config, encoder)
 
@@ -22,13 +19,15 @@ case class GreyhoundProducerBuilder(config: GreyhoundConfig,
     for {
       runtime <- ZIO.runtime[Env]
       producerConfig = mutateProducer(ProducerConfig(config.bootstrapServers))
-      makeProducer = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
+      makeProducer   = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
       reservation <- makeProducer.reserve
-      producer <- reservation.acquire
+      producer    <- reservation.acquire
     } yield new GreyhoundProducer {
-      override def produce[K, V](record: ProducerRecord[K, V],
-                                 keySerializer: Serializer[K],
-                                 valueSerializer: Serializer[V]): Future[RecordMetadata] =
+      override def produce[K, V](
+        record: ProducerRecord[K, V],
+        keySerializer: Serializer[K],
+        valueSerializer: Serializer[V]
+      ): Future[RecordMetadata] =
         runtime.unsafeRunToFuture(producer.produce(record, keySerializer, valueSerializer))
 
       override def shutdown: Future[Unit] =
@@ -39,26 +38,23 @@ case class GreyhoundProducerBuilder(config: GreyhoundConfig,
 
 // TODO remove duplication?
 trait GreyhoundContextAwareProducer[C] extends Closeable {
-  def produce[K, V](record: ProducerRecord[K, V],
-                    keySerializer: Serializer[K],
-                    valueSerializer: Serializer[V])
-                   (implicit context: C): Future[RecordMetadata]
+  def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V])(
+    implicit context: C
+  ): Future[RecordMetadata]
 }
 
-case class GreyhoundContextAwareProducerBuilder[C](config: GreyhoundConfig,
-                                                   encoder: ContextEncoder[C]) {
+case class GreyhoundContextAwareProducerBuilder[C](config: GreyhoundConfig, encoder: ContextEncoder[C]) {
   def build: Future[GreyhoundContextAwareProducer[C]] = config.runtime.unsafeRunToFuture {
     for {
       runtime <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers)
-      makeProducer = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
+      makeProducer   = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
       reservation <- makeProducer.reserve
-      producer <- reservation.acquire
+      producer    <- reservation.acquire
     } yield new GreyhoundContextAwareProducer[C] {
-      override def produce[K, V](record: ProducerRecord[K, V],
-                                 keySerializer: Serializer[K],
-                                 valueSerializer: Serializer[V])
-                                (implicit context: C): Future[RecordMetadata] =
+      override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V])(
+        implicit context: C
+      ): Future[RecordMetadata] =
         runtime.unsafeRunToFuture {
           encoder.encode(record, context).flatMap { recordWithContext =>
             producer.produce(recordWithContext, keySerializer, valueSerializer)

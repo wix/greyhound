@@ -8,16 +8,18 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, Cons
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
 import zio.duration._
-import zio.{Chunk, Has, Promise, RIO, Ref, UIO, URIO, ZEnv, ZManaged, duration}
+import zio.{duration, Chunk, Has, Promise, RIO, Ref, UIO, URIO, ZEnv, ZManaged}
 
 import scala.reflect.ClassTag
 import scala.util.Random
 
-case class EffectiveConfig(consumerConfig: ConsumerConfig,
-                           batchConsumerConfig: BatchConsumerConfig)
+case class EffectiveConfig(consumerConfig: ConsumerConfig, batchConsumerConfig: BatchConsumerConfig)
 
 trait BatchConsumer[-R] extends Resource[R] with RecordConsumerProperties[BatchConsumerExposedState] {
-  def resubscribe[R1](subscription: ConsumerSubscription, listener: RebalanceListener[R1] = RebalanceListener.Empty): RIO[Env with R1, AssignedPartitions]
+  def resubscribe[R1](
+    subscription: ConsumerSubscription,
+    listener: RebalanceListener[R1] = RebalanceListener.Empty
+  ): RIO[Env with R1, AssignedPartitions]
 
   def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit]
 
@@ -34,13 +36,16 @@ trait BatchConsumer[-R] extends Resource[R] with RecordConsumerProperties[BatchC
 
 object BatchConsumer {
 
-  type Env = ZEnv with GreyhoundMetrics
+  type Env                = ZEnv with GreyhoundMetrics
   type AssignedPartitions = Set[TopicPartition]
-  type RecordBatch = ConsumerRecordBatch[Chunk[Byte], Chunk[Byte]]
+  type RecordBatch        = ConsumerRecordBatch[Chunk[Byte], Chunk[Byte]]
 
-  def make[R <: Has[_] : ClassTag](config: BatchConsumerConfig, handler: BatchRecordHandler[R, Any, Chunk[Byte], Chunk[Byte]]): ZManaged[R with Env, Throwable, BatchConsumer[R]] = for {
+  def make[R <: Has[_]: ClassTag](
+    config: BatchConsumerConfig,
+    handler: BatchRecordHandler[R, Any, Chunk[Byte], Chunk[Byte]]
+  ): ZManaged[R with Env, Throwable, BatchConsumer[R]] = for {
     consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
-    assignments <- Ref.make(Set.empty[TopicPartition]).toManaged_
+    assignments             <- Ref.make(Set.empty[TopicPartition]).toManaged_
     assignmentsListener = trackAssignments(assignments)
     consumer <- Consumer.make(consumerConfig(config, assignmentsListener))
     eventLoop <- BatchEventLoop.make[R](
@@ -50,37 +55,42 @@ object BatchConsumer {
       handler,
       config.clientId,
       config.retryConfig,
-      config.eventLoopConfig)
+      config.eventLoopConfig
+    )
   } yield new BatchConsumer[R] {
     override def group: Group = config.groupId
 
     override def clientId: ClientId = config.clientId
 
-    override def state: UIO[BatchConsumerExposedState] = assignments.get.zipWith(eventLoop.state) { case (partitions, evs) =>
-      BatchConsumerExposedState(evs, clientId, partitions)
+    override def state: UIO[BatchConsumerExposedState] = assignments.get.zipWith(eventLoop.state) {
+      case (partitions, evs) =>
+        BatchConsumerExposedState(evs, clientId, partitions)
     }
 
     override def topology: UIO[RecordConsumerTopology] = consumerSubscriptionRef.get.map(RecordConsumerTopology(group, _))
 
-    override def resubscribe[R1](subscription: ConsumerSubscription,
-                                 listener: RebalanceListener[R1]): RIO[Env with R1, AssignedPartitions] =
+    override def resubscribe[R1](
+      subscription: ConsumerSubscription,
+      listener: RebalanceListener[R1]
+    ): RIO[Env with R1, AssignedPartitions] =
       for {
         assigned <- Ref.make[AssignedPartitions](Set.empty)
-        promise <- Promise.make[Nothing, AssignedPartitions]
-        rebalanceListener = eventLoop.rebalanceListener *> listener *> new RebalanceListener[R1] {
-          override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
-            DelayedRebalanceEffect.zioUnit
+        promise  <- Promise.make[Nothing, AssignedPartitions]
+        rebalanceListener = eventLoop.rebalanceListener *> listener *>
+          new RebalanceListener[R1] {
+            override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
+              DelayedRebalanceEffect.zioUnit
 
-          override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] = for {
-            allAssigned <- assigned.updateAndGet(_ => partitions)
-            _ <- consumerSubscriptionRef.set(subscription)
-            _ <- promise.succeed(allAssigned)
-          } yield ()
-        }
+            override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] = for {
+              allAssigned <- assigned.updateAndGet(_ => partitions)
+              _           <- consumerSubscriptionRef.set(subscription)
+              _           <- promise.succeed(allAssigned)
+            } yield ()
+          }
         _ <- subscribe[R1](subscription, rebalanceListener)(consumer)
         resubscribeTimeout = config.resubscribeTimeout
-        result <- promise.await.disconnect.timeoutFail(
-          BatchResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
+        result <- promise.await.disconnect
+          .timeoutFail(BatchResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
           .catchAll(_ => UIO(Set.empty[TopicPartition]))
       } yield result
 
@@ -108,8 +118,7 @@ object BatchConsumer {
       consumer.committedOffsets(partitions)
   }
 
-  private def consumerConfig[R <: Has[_] : ClassTag](config: BatchConsumerConfig,
-                                                     assignmentsListener: RebalanceListener[Any]) = {
+  private def consumerConfig[R <: Has[_]: ClassTag](config: BatchConsumerConfig, assignmentsListener: RebalanceListener[Any]) = {
     ConsumerConfig(
       config.bootstrapServers,
       config.groupId,
@@ -138,27 +147,27 @@ case class BatchConsumerExposedState(eventLoopState: EventLoopExposedState, clie
   def topics = assignment.map(_.topic)
 }
 
-
-case class BatchConsumerConfig(bootstrapServers: String,
-                               groupId: Group,
-                               initialSubscription: ConsumerSubscription,
-                               retryConfig: Option[BatchRetryConfig] = None,
-                               clientId: String = RecordConsumerConfig.makeClientId,
-                               eventLoopConfig: BatchEventLoopConfig = BatchEventLoopConfig.Default,
-                               offsetReset: OffsetReset = OffsetReset.Latest,
-                               extraProperties: Map[String, String] = Map.empty,
-                               userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
-                               resubscribeTimeout: Duration = 30.seconds,
-                               initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
-                               consumerAttributes: Map[String, String] = Map.empty,
-                               decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
-                              )
+case class BatchConsumerConfig(
+  bootstrapServers: String,
+  groupId: Group,
+  initialSubscription: ConsumerSubscription,
+  retryConfig: Option[BatchRetryConfig] = None,
+  clientId: String = RecordConsumerConfig.makeClientId,
+  eventLoopConfig: BatchEventLoopConfig = BatchEventLoopConfig.Default,
+  offsetReset: OffsetReset = OffsetReset.Latest,
+  extraProperties: Map[String, String] = Map.empty,
+  userProvidedListener: RebalanceListener[Any] = RebalanceListener.Empty,
+  resubscribeTimeout: Duration = 30.seconds,
+  initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
+  consumerAttributes: Map[String, String] = Map.empty,
+  decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor
+)
 
 object BatchConsumerConfig {
   def makeClientId = s"greyhound-consumer-${Random.alphanumeric.take(5).mkString}"
 }
 
-final case class BatchRetryConfig private[greyhound](backoff: Duration)
+final case class BatchRetryConfig private[greyhound] (backoff: Duration)
 
 object BatchRetryConfig {
   def infiniteBlockingRetry(backoff: scala.concurrent.duration.Duration): BatchRetryConfig =
@@ -166,4 +175,5 @@ object BatchRetryConfig {
 
 }
 
-case class BatchResubscribeTimeout(resubscribeTimeout: duration.Duration, subscription: ConsumerSubscription) extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")
+case class BatchResubscribeTimeout(resubscribeTimeout: duration.Duration, subscription: ConsumerSubscription)
+    extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")

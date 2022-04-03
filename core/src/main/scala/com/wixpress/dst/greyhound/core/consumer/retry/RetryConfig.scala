@@ -8,11 +8,12 @@ import zio.duration.{Duration => ZDuration}
 
 import scala.concurrent.duration._
 
-case class RetryConfig(perTopic: PartialFunction[Topic, RetryConfigForTopic],
-                       forPatternSubscription: Option[RetryConfigForTopic],
-                       produceRetryBackoff: Duration = 5.seconds,
-                       produceEncryptor: Encryptor = NoOpEncryptor
-                      ) {
+case class RetryConfig(
+  perTopic: PartialFunction[Topic, RetryConfigForTopic],
+  forPatternSubscription: Option[RetryConfigForTopic],
+  produceRetryBackoff: Duration = 5.seconds,
+  produceEncryptor: Encryptor = NoOpEncryptor
+) {
   def blockingBackoffs(topic: Topic) =
     get(topic)(_.blockingBackoffs)(ifEmpty = () => Nil)
 
@@ -33,16 +34,21 @@ case class RetryConfig(perTopic: PartialFunction[Topic, RetryConfigForTopic],
   def withProduceRetryBackoff(duration: Duration) = copy(produceRetryBackoff = duration)
 
   private def get[T](forTopic: Topic)(f: RetryConfigForTopic => T)(ifEmpty: => T): T =
-    forPatternSubscription.map(f).getOrElse(
-      if (perTopic.isDefinedAt(forTopic))
-        f(perTopic(forTopic))
-      else
-        ifEmpty)
+    forPatternSubscription
+      .map(f)
+      .getOrElse(
+        if (perTopic.isDefinedAt(forTopic))
+          f(perTopic(forTopic))
+        else
+          ifEmpty
+      )
 
 }
 
-case class NonBlockingBackoffPolicy(intervals: Seq[ZDuration],
-                                    recordMutate: ProducerRecord[Chunk[Byte], Chunk[Byte]] => ProducerRecord[Chunk[Byte], Chunk[Byte]] = identity) {
+case class NonBlockingBackoffPolicy(
+  intervals: Seq[ZDuration],
+  recordMutate: ProducerRecord[Chunk[Byte], Chunk[Byte]] => ProducerRecord[Chunk[Byte], Chunk[Byte]] = identity
+) {
   def nonEmpty = intervals.nonEmpty
 
   def length = intervals.length
@@ -72,32 +78,53 @@ object RetryConfigForTopic {
 
 object ZRetryConfig {
   def nonBlockingRetry(firstRetry: ZDuration, otherRetries: ZDuration*): RetryConfig =
-    forAllTopics(RetryConfigForTopic(nonBlockingBackoffs = NonBlockingBackoffPolicy(firstRetry :: otherRetries.toList), blockingBackoffs = () => List.empty))
+    forAllTopics(
+      RetryConfigForTopic(
+        nonBlockingBackoffs = NonBlockingBackoffPolicy(firstRetry :: otherRetries.toList),
+        blockingBackoffs = () => List.empty
+      )
+    )
 
   def finiteBlockingRetry(firstRetry: ZDuration, otherRetries: ZDuration*): RetryConfig =
-    forAllTopics(RetryConfigForTopic(blockingBackoffs = () => firstRetry :: otherRetries.toList, nonBlockingBackoffs = NonBlockingBackoffPolicy.empty))
+    forAllTopics(
+      RetryConfigForTopic(blockingBackoffs = () => firstRetry :: otherRetries.toList, nonBlockingBackoffs = NonBlockingBackoffPolicy.empty)
+    )
 
   def infiniteBlockingRetry(interval: ZDuration): RetryConfig =
-    forAllTopics(RetryConfigForTopic(blockingBackoffs = () => Stream.continually(interval), nonBlockingBackoffs = NonBlockingBackoffPolicy.empty))
+    forAllTopics(
+      RetryConfigForTopic(blockingBackoffs = () => Stream.continually(interval), nonBlockingBackoffs = NonBlockingBackoffPolicy.empty)
+    )
 
-  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
-                                      maximalInterval: ZDuration,
-                                      backOffMultiplier: Float,
-                                      infiniteRetryMaxInterval: Boolean): RetryConfig =
-    forAllTopics(RetryConfigForTopic(blockingBackoffs = () => exponentialBackoffs(initialInterval, maximalInterval,
-      backOffMultiplier, infiniteRetryMaxInterval),
-      nonBlockingBackoffs = NonBlockingBackoffPolicy.empty))
+  def exponentialBackoffBlockingRetry(
+    initialInterval: ZDuration,
+    maximalInterval: ZDuration,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInterval: Boolean
+  ): RetryConfig =
+    forAllTopics(
+      RetryConfigForTopic(
+        blockingBackoffs = () => exponentialBackoffs(initialInterval, maximalInterval, backOffMultiplier, infiniteRetryMaxInterval),
+        nonBlockingBackoffs = NonBlockingBackoffPolicy.empty
+      )
+    )
 
-  def exponentialBackoffBlockingRetry(initialInterval: ZDuration,
-                                      maxMultiplications: Int,
-                                      backOffMultiplier: Float,
-                                      infiniteRetryMaxInterval: Boolean): RetryConfig =
-    forAllTopics(RetryConfigForTopic(blockingBackoffs = () => exponentialBackoffs(initialInterval, maxMultiplications,
-      backOffMultiplier, infiniteRetryMaxInterval),
+  def exponentialBackoffBlockingRetry(
+    initialInterval: ZDuration,
+    maxMultiplications: Int,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInterval: Boolean
+  ): RetryConfig =
+    forAllTopics(
+      RetryConfigForTopic(
+        blockingBackoffs = () => exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier, infiniteRetryMaxInterval),
+        nonBlockingBackoffs = NonBlockingBackoffPolicy.empty
+      )
+    )
 
-      nonBlockingBackoffs = NonBlockingBackoffPolicy.empty))
-
-  def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[ZDuration], nonBlockingBackoffs: NonBlockingBackoffPolicy): RetryConfig =
+  def blockingFollowedByNonBlockingRetry(
+    blockingBackoffs: NonEmptyList[ZDuration],
+    nonBlockingBackoffs: NonBlockingBackoffPolicy
+  ): RetryConfig =
     forAllTopics(RetryConfigForTopic(blockingBackoffs = () => blockingBackoffs, nonBlockingBackoffs = nonBlockingBackoffs))
 
   def perTopicRetries(configs: PartialFunction[Topic, RetryConfigForTopic]) =
@@ -122,20 +149,37 @@ object RetryConfig {
   def infiniteBlockingRetry(interval: Duration): RetryConfig =
     ZRetryConfig.infiniteBlockingRetry(ZDuration.fromScala(interval))
 
-  def exponentialBackoffBlockingRetry(initialInterval: Duration,
-                                      maximalInterval: Duration,
-                                      backOffMultiplier: Float,
-                                      infiniteRetryMaxInterval: Boolean): RetryConfig =
-    ZRetryConfig.exponentialBackoffBlockingRetry(ZDuration.fromScala(initialInterval), ZDuration.fromScala(maximalInterval), backOffMultiplier, infiniteRetryMaxInterval)
+  def exponentialBackoffBlockingRetry(
+    initialInterval: Duration,
+    maximalInterval: Duration,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInterval: Boolean
+  ): RetryConfig =
+    ZRetryConfig.exponentialBackoffBlockingRetry(
+      ZDuration.fromScala(initialInterval),
+      ZDuration.fromScala(maximalInterval),
+      backOffMultiplier,
+      infiniteRetryMaxInterval
+    )
 
-  def exponentialBackoffBlockingRetry(initialInterval: Duration,
-                                      maxMultiplications: Int,
-                                      backOffMultiplier: Float,
-                                      infiniteRetryMaxInterval: Boolean): RetryConfig =
-    ZRetryConfig.exponentialBackoffBlockingRetry(ZDuration.fromScala(initialInterval), maxMultiplications, backOffMultiplier, infiniteRetryMaxInterval)
+  def exponentialBackoffBlockingRetry(
+    initialInterval: Duration,
+    maxMultiplications: Int,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInterval: Boolean
+  ): RetryConfig =
+    ZRetryConfig.exponentialBackoffBlockingRetry(
+      ZDuration.fromScala(initialInterval),
+      maxMultiplications,
+      backOffMultiplier,
+      infiniteRetryMaxInterval
+    )
 
   def blockingFollowedByNonBlockingRetry(blockingBackoffs: NonEmptyList[Duration], nonBlockingBackoffs: List[Duration]): RetryConfig =
-    ZRetryConfig.blockingFollowedByNonBlockingRetry(blockingBackoffs = blockingBackoffs.map(ZDuration.fromScala), nonBlockingBackoffs = NonBlockingBackoffPolicy(nonBlockingBackoffs.map(ZDuration.fromScala)))
+    ZRetryConfig.blockingFollowedByNonBlockingRetry(
+      blockingBackoffs = blockingBackoffs.map(ZDuration.fromScala),
+      nonBlockingBackoffs = NonBlockingBackoffPolicy(nonBlockingBackoffs.map(ZDuration.fromScala))
+    )
 }
 
 trait RetryType

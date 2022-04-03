@@ -17,15 +17,14 @@ trait Resource[-R] { self =>
       override def resume: URIO[R1, Unit] =
         self.resume *> other.resume
 
-      override def isAlive: URIO[R1, Boolean] =
-        (self.isAlive zipWith other.isAlive)(_ && _)
+      override def isAlive: URIO[R1, Boolean] = (self.isAlive zipWith other.isAlive)(_ && _)
     }
 }
 
 object Resource {
   val Empty = new Resource[Any] {
-    override val pause: UIO[Unit] = ZIO.unit
-    override val resume: UIO[Unit] = ZIO.unit
+    override val pause: UIO[Unit]      = ZIO.unit
+    override val resume: UIO[Unit]     = ZIO.unit
     override val isAlive: UIO[Boolean] = ZIO.succeed(true)
   }
 }

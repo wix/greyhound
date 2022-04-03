@@ -46,16 +46,21 @@ case class EncodedMessage(value: Option[Chunk[Byte]], headers: Headers)
 
 case class LocalBufferError(cause: Throwable) extends RuntimeException(cause)
 
-case class LocalBufferFull(maxMessages: Long) extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
+case class LocalBufferFull(maxMessages: Long)
+    extends RuntimeException(s"Local buffer has exceeded capacity. Max # of unsent messages is $maxMessages.")
 
-case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Duration,
-                                     shutdownFlushTimeout: Duration, retryInterval: Duration,
-                                     strategy: ProduceStrategy = ProduceStrategy.Sync(10),
-                                     localBufferBatchSize: Int = 100,
-                                     id: Int = Random.nextInt(100000),
-                                     startFrom: Option[Long] = None,
-                                     allowAwaitingOnKafkaResult: Boolean = true,
-                                     considerDeadWhenEnqueuedCount: Int = 30000) {
+case class LocalBufferProducerConfig(
+  maxMessagesOnDisk: Long,
+  giveUpAfter: Duration,
+  shutdownFlushTimeout: Duration,
+  retryInterval: Duration,
+  strategy: ProduceStrategy = ProduceStrategy.Sync(10),
+  localBufferBatchSize: Int = 100,
+  id: Int = Random.nextInt(100000),
+  startFrom: Option[Long] = None,
+  allowAwaitingOnKafkaResult: Boolean = true,
+  considerDeadWhenEnqueuedCount: Int = 30000
+) {
   def withStrategy(f: ProduceStrategy): LocalBufferProducerConfig = copy(strategy = f)
 
   def withMaxMessagesOnDisk(m: Int): LocalBufferProducerConfig = copy(maxMessagesOnDisk = m)
@@ -70,11 +75,11 @@ case class LocalBufferProducerConfig(maxMessagesOnDisk: Long, giveUpAfter: Durat
 sealed trait ProduceStrategy
 
 /**
- * All of the strategies create N fibers (defined by `concurrency: Int`), grouped by keys or partitions, and each fiber is responsible
- * for flushing a range of targets (so there's no ordering or synchronization between different fibers).
+ * All of the strategies create N fibers (defined by `concurrency: Int`), grouped by keys or partitions, and each fiber is responsible for
+ * flushing a range of targets (so there's no ordering or synchronization between different fibers).
  *
- * Sync is the slowest strategy: it does not produce a record on a given key before the previous record has been acknowledged by Kafka.
- * It will retry each record individually until successful, before continuing to the next record.
+ * Sync is the slowest strategy: it does not produce a record on a given key before the previous record has been acknowledged by Kafka. It
+ * will retry each record individually until successful, before continuing to the next record.
  *
  * Async will produce a batch of records and wait for them all to complete. If some failed, it will retry the failures until successful.
  *

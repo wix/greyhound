@@ -11,10 +11,12 @@ import scala.util.Try
 import zio.duration._
 
 object ExponentialBackoffCalculator {
-  def exponentialBackoffs(initialInterval: ZDuration,
-                          maximalInterval: ZDuration,
-                          backOffMultiplier: Float,
-                          infiniteRetryMaxInteval: Boolean): Seq[ZDuration] = {
+  def exponentialBackoffs(
+    initialInterval: ZDuration,
+    maximalInterval: ZDuration,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInteval: Boolean
+  ): Seq[ZDuration] = {
     val logOfMultipier = (x: Double, multiplier: Float) => log10(x) / log10(multiplier)
 
     def calcMaxMultiplications(initialInterval: ZDuration, maximalInterval: ZDuration, backOffMultiplier: Float) = {
@@ -31,11 +33,13 @@ object ExponentialBackoffCalculator {
     exponentialBackoffs(initialInterval, maxMultiplications, backOffMultiplier, infiniteRetryMaxInteval)
   }
 
-  def exponentialBackoffs(initialInterval: ZDuration,
-                          maxMultiplications: Int,
-                          backOffMultiplier: Float,
-                          infiniteRetryMaxInterval: Boolean): Seq[ZDuration] = {
-    val absBackOffMultiplier = abs(backOffMultiplier)
+  def exponentialBackoffs(
+    initialInterval: ZDuration,
+    maxMultiplications: Int,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInterval: Boolean
+  ): Seq[ZDuration] = {
+    val absBackOffMultiplier   = abs(backOffMultiplier)
     val safeMaxMultiplications = max(0, maxMultiplications)
 
     val safeInitialInterval = if (initialInterval.toMillis < 10) ZDuration(10, TimeUnit.MILLISECONDS) else initialInterval

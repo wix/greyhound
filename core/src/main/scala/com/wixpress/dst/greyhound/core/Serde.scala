@@ -26,9 +26,9 @@ object Serde {
 }
 
 object Serdes {
-  val StringSerde = Serde(new StringSerde)
-  val IntSerde = Serde(new IntegerSerde).inmap(_.toInt)(Integer.valueOf)
-  val LongSerde = Serde(new LongSerde).inmap(_.toLong)(java.lang.Long.valueOf)
-  val InstantSerde = LongSerde.inmap(Instant.ofEpochMilli)(_.toEpochMilli)
+  val StringSerde   = Serde(new StringSerde)
+  val IntSerde      = Serde(new IntegerSerde).inmap(_.toInt)(Integer.valueOf)
+  val LongSerde     = Serde(new LongSerde).inmap(_.toLong)(java.lang.Long.valueOf)
+  val InstantSerde  = LongSerde.inmap(Instant.ofEpochMilli)(_.toEpochMilli)
   val DurationSerde = LongSerde.inmap(Duration.fromNanos)(_.toNanos)
 }
