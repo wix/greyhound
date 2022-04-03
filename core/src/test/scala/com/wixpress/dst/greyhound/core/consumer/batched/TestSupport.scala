@@ -25,7 +25,7 @@ object TestSupport {
   def records(topicCount: Int = 4, partitions: Int = 4, perPartition: Int = 3, hint: String = "") = {
     val topics = Seq.fill(topicCount)(randomStr)
     val topicPartitions = for {
-      topic <- topics
+      topic     <- topics
       partition <- 0 until partitions
     } yield TopicPartition(topic, partition)
     topicPartitions.flatMap(tp => Seq.fill(perPartition)(aRecord(tp, hint)))

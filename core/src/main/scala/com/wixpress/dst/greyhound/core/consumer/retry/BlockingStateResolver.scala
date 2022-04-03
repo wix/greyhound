@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.{Topic, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringAll, IgnoringOnce, shouldBlockFrom, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{shouldBlockFrom, Blocked, Blocking => InternalBlocking, IgnoringAll, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio._
@@ -17,18 +17,20 @@ object BlockingStateResolver {
         for {
           mergedBlockingState <- blockingStateRef.modify { state =>
             val topicPartitionBlockingState = state.get(TopicPartitionTarget(topicPartition))
-            val topicBlockingState = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
-            val mergedBlockingState = topicPartitionBlockingState.map {
-              case IgnoringAll => IgnoringAll
-              case IgnoringOnce => IgnoringOnce
-              case InternalBlocking => InternalBlocking
-              case b: Blocked[V, K] => b
-              case _ => InternalBlocking
-            }.getOrElse(topicBlockingState)
+            val topicBlockingState          = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
+            val mergedBlockingState = topicPartitionBlockingState
+              .map {
+                case IgnoringAll      => IgnoringAll
+                case IgnoringOnce     => IgnoringOnce
+                case InternalBlocking => InternalBlocking
+                case b: Blocked[V, K] => b
+                case _                => InternalBlocking
+              }
+              .getOrElse(topicBlockingState)
             val shouldBlock = shouldBlockFrom(mergedBlockingState)
             val isBlockedAlready = mergedBlockingState match {
               case _: BlockingState.Blocked[K, V] => true
-              case _ => false
+              case _                              => false
             }
             val updatedState = if (shouldBlock && !isBlockedAlready) {
               state.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record))
@@ -45,28 +47,32 @@ object BlockingStateResolver {
 
       override def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics with Blocking, Unit] = {
         def handleIgnoreOnceRequest(topicPartition: TopicPartition) = {
-          blockingStateRef.modify(prevState => {
-            val previouslyBlocked = prevState.get(TopicPartitionTarget(topicPartition)).exists {
-              case InternalBlocking => true
-              case _: Blocked[Chunk[Byte], Chunk[Byte]] => true
-              case _ => false
-            }
-            if (previouslyBlocked)
-              (true, prevState.updated(TopicPartitionTarget(topicPartition), IgnoringOnce))
-            else
-              (false, prevState)
-          }).flatMap(successful =>
-            ZIO.when(!successful)(
-              ZIO.fail(new RuntimeException("Request to IgnoreOnce when message is not blocked"))))
+          blockingStateRef
+            .modify(prevState => {
+              val previouslyBlocked = prevState.get(TopicPartitionTarget(topicPartition)).exists {
+                case InternalBlocking                     => true
+                case _: Blocked[Chunk[Byte], Chunk[Byte]] => true
+                case _                                    => false
+              }
+              if (previouslyBlocked)
+                (true, prevState.updated(TopicPartitionTarget(topicPartition), IgnoringOnce))
+              else
+                (false, prevState)
+            })
+            .flatMap(successful =>
+              ZIO.when(!successful)(ZIO.fail(new RuntimeException("Request to IgnoreOnce when message is not blocked")))
+            )
 
         }
 
         def updateTopicTargetAndPartitionTargets(topic: Topic, blockingState: BlockingState) = {
           blockingStateRef.modify(prevState => {
-            val targetsToUpdate = prevState.filter(pair => pair._1 match {
-              case TopicPartitionTarget(topicPartition) => topicPartition.topic == topic
-              case _ => false
-            })
+            val targetsToUpdate = prevState.filter(pair =>
+              pair._1 match {
+                case TopicPartitionTarget(topicPartition) => topicPartition.topic == topic
+                case _                                    => false
+              }
+            )
 
             ((), prevState.updated(TopicTarget(topic), blockingState) ++ targetsToUpdate.mapValues(_ => blockingState))
           })
@@ -74,11 +80,13 @@ object BlockingStateResolver {
 
         command match {
           case IgnoreOnceFor(topicPartition: TopicPartition) => handleIgnoreOnceRequest(topicPartition)
-          case IgnoreAllFor(topicPartition: TopicPartition) => blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
-          case BlockErrorsFor(topicPartition: TopicPartition) => blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
-          case IgnoreAll(topic: Topic) => updateTopicTargetAndPartitionTargets(topic, IgnoringAll)
+          case IgnoreAllFor(topicPartition: TopicPartition) =>
+            blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
+          case BlockErrorsFor(topicPartition: TopicPartition) =>
+            blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
+          case IgnoreAll(topic: Topic)   => updateTopicTargetAndPartitionTargets(topic, IgnoringAll)
           case BlockErrors(topic: Topic) => updateTopicTargetAndPartitionTargets(topic, InternalBlocking)
-          case _ => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
+          case _                         => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
         }
       }
     }

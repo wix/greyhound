@@ -21,7 +21,7 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
 
   override def env: UManaged[ZEnv with TestMetrics] =
     for {
-      env <- test.environment.liveEnvironment.build
+      env         <- test.environment.liveEnvironment.build
       testMetrics <- TestMetrics.make
     } yield env ++ testMetrics
 
@@ -39,17 +39,18 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
       promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
       handler = RecordHandler(promise.succeed)
       ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      handled <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer),
-        handler, "clientId", workersShutdownRef = ref).use_(promise.await)
+      handled <- EventLoop
+        .make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId", workersShutdownRef = ref)
+        .use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception)))
   }
 
   "recover from consumer failing to commit" in {
     for {
-      pollInvocations <- Ref.make(0)
+      pollInvocations   <- Ref.make(0)
       commitInvocations <- Ref.make(0)
-      promise <- Promise.make[Nothing, Map[TopicPartition, Offset]]
+      promise           <- Promise.make[Nothing, Map[TopicPartition, Offset]]
       consumer = new EmptyConsumer {
         override def poll(timeout: Duration): Task[Records] =
           pollInvocations.updateAndGet(_ + 1).flatMap {
@@ -64,8 +65,16 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
           }
       }
       ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      committed <- EventLoop.make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer),
-        RecordHandler.empty, "clientId", workersShutdownRef = ref).use_(promise.await)
+      committed <- EventLoop
+        .make(
+          "group",
+          Topics(Set(topic)),
+          ReportingConsumer(clientId, group, consumer),
+          RecordHandler.empty,
+          "clientId",
+          workersShutdownRef = ref
+        )
+        .use_(promise.await)
       metrics <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic, record.partition) -> (offset + 1)))))
@@ -79,22 +88,24 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
           ZIO.dieMessage("cough :(")
       }
       ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      died <- EventLoop.make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId",
-        workersShutdownRef = ref).use { eventLoop =>
-        eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(alive => !alive)).unit
-      }.catchAllCause(_ => ZIO.unit).timeout(5.second)
+      died <- EventLoop
+        .make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId", workersShutdownRef = ref)
+        .use { eventLoop => eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(alive => !alive)).unit }
+        .catchAllCause(_ => ZIO.unit)
+        .timeout(5.second)
     } yield died must beSome
   }
 
 }
 
 object EventLoopTest {
-  val clientId = "client-id"
-  val group = "group"
-  val topic = "topic"
+  val clientId  = "client-id"
+  val group     = "group"
+  val topic     = "topic"
   val partition = 0
-  val offset = 0L
-  val record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] = ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+  val offset    = 0L
+  val record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =
+    ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
   val exception = new RuntimeException("oops")
 
   def recordsFrom(records: ConsumerRecord[Chunk[Byte], Chunk[Byte]]*): Records = {
@@ -138,7 +149,9 @@ trait EmptyConsumer extends Consumer {
 
   override def config: ConsumerConfig = ConsumerConfig("", "")
 
-  override def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
+  override def offsetsForTimes(
+    topicPartitionsOnTimestamp: Map[TopicPartition, Long]
+  ): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
   override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = UIO(Map.empty)
 

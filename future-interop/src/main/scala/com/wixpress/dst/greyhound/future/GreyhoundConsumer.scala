@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.future
 
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, SerializationError, RecordHandler => CoreRecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler => CoreRecordHandler, SerializationError}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumerConfig}
 import com.wixpress.dst.greyhound.core.{ClientId, Deserializer, Group, NonEmptySet}
@@ -11,31 +11,35 @@ import zio.{Chunk, Task, ZIO}
 import scala.concurrent.duration.Duration
 import scala.concurrent.{ExecutionContext, Future}
 
-case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
-                                   group: Group,
-                                   clientId: ClientId,
-                                   handle: Handle[K, V],
-                                   keyDeserializer: Deserializer[K],
-                                   valueDeserializer: Deserializer[V],
-                                   offsetReset: OffsetReset = OffsetReset.Latest,
-                                   errorHandler: ErrorHandler[K, V] = ErrorHandler.NoOp[K, V],
-                                   mutateConsumerConfig:  RecordConsumerConfig => RecordConsumerConfig = identity) {
+case class GreyhoundConsumer[K, V](
+  initialTopics: NonEmptySet[String],
+  group: Group,
+  clientId: ClientId,
+  handle: Handle[K, V],
+  keyDeserializer: Deserializer[K],
+  valueDeserializer: Deserializer[V],
+  offsetReset: OffsetReset = OffsetReset.Latest,
+  errorHandler: ErrorHandler[K, V] = ErrorHandler.NoOp[K, V],
+  mutateConsumerConfig: RecordConsumerConfig => RecordConsumerConfig = identity
+) {
 
   def recordHandler: Handler =
     CoreRecordHandler(handle)
-      .withErrorHandler { case (error, record) =>
-        ZIO.fromFuture(_ => errorHandler.onUserException(error, record)) *> ZIO.fail(error)
+      .withErrorHandler {
+        case (error, record) =>
+          ZIO.fromFuture(_ => errorHandler.onUserException(error, record)) *> ZIO.fail(error)
       }
       .withDeserializers(keyDeserializer, valueDeserializer)
-      .withErrorHandler { case (error, record) =>
-        error match {
-          case Left(serializationError) =>
-            ZIO.fromFuture(_ => errorHandler.onSerializationError(serializationError, record)).ignore
-          case Right(ex) => ZIO.fail(ex)
-        }
+      .withErrorHandler {
+        case (error, record) =>
+          error match {
+            case Left(serializationError) =>
+              ZIO.fromFuture(_ => errorHandler.onSerializationError(serializationError, record)).ignore
+            case Right(ex) => ZIO.fail(ex)
+          }
       }
 
-  def withConsumerMutate(mutateConsumerConfig:  RecordConsumerConfig => RecordConsumerConfig) =
+  def withConsumerMutate(mutateConsumerConfig: RecordConsumerConfig => RecordConsumerConfig) =
     copy(mutateConsumerConfig = mutateConsumerConfig)
 
   def withRetryConfig(retryConfig: RetryConfig) =
@@ -49,17 +53,14 @@ case class GreyhoundConsumer[K, V](initialTopics: NonEmptySet[String],
 }
 
 object GreyhoundConsumer {
-  type Handler = com.wixpress.dst.greyhound.core.consumer.domain.RecordHandler[Env, Throwable, Chunk[Byte], Chunk[Byte]]
+  type Handler      = com.wixpress.dst.greyhound.core.consumer.domain.RecordHandler[Env, Throwable, Chunk[Byte], Chunk[Byte]]
   type Handle[K, V] = ConsumerRecord[K, V] => Task[Any]
 
   def aRecordHandler[K, V](handler: RecordHandler[K, V]): Handle[K, V] =
     record => ZIO.fromFuture(ec => handler.handle(record)(ec))
 
-  def aContextAwareRecordHandler[K, V, C](decoder: ContextDecoder[C])
-                                         (handler: ContextAwareRecordHandler[K, V, C]): Handle[K, V] =
-    record => decoder.decode(record).flatMap { context =>
-      ZIO.fromFuture(ec => handler.handle(record)(context, ec))
-    }
+  def aContextAwareRecordHandler[K, V, C](decoder: ContextDecoder[C])(handler: ContextAwareRecordHandler[K, V, C]): Handle[K, V] =
+    record => decoder.decode(record).flatMap { context => ZIO.fromFuture(ec => handler.handle(record)(context, ec)) }
 }
 
 trait RecordHandler[K, V] {
@@ -89,7 +90,8 @@ object ErrorHandler {
   def NoOp[K, V]: ErrorHandler[K, V] = anErrorHandler((_, _) => Future.successful(()))
 
   /**
-   * @return a callback that will be called on handler errors.
+   * @return
+   *   a callback that will be called on handler errors.
    */
   def anErrorHandler[K, V](f: (Throwable, ConsumerRecord[K, V]) => Future[Unit]): ErrorHandler[K, V] =
     new ErrorHandler[K, V] {

@@ -10,8 +10,8 @@ trait Serializer[-A] {
     ZIO.foreach(value)(serialize(topic, _))
 
   /**
-    * Return a serializer which adapts the input with function `f`.
-    */
+   * Return a serializer which adapts the input with function `f`.
+   */
   def contramap[B](f: B => A): Serializer[B] =
     (topic: String, value: B) => serialize(topic, f(value))
 }

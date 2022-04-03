@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
 import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
-import zio.blocking.{Blocking, effectBlocking}
+import zio.blocking.{effectBlocking, Blocking}
 import zio.{RIO, RManaged, Task, ZIO}
 
 import scala.reflect.io.Directory
@@ -28,11 +28,11 @@ trait ManagedKafka {
 object ManagedKafka {
 
   def make(config: ManagedKafkaConfig): RManaged[Blocking with GreyhoundMetrics, ManagedKafka] = for {
-    _ <- embeddedZooKeeper(config.zooKeeperPort)
+    _       <- embeddedZooKeeper(config.zooKeeperPort)
     metrics <- ZIO.environment[GreyhoundMetrics].toManaged_
-    logDir <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
-    _ <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
-    admin <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
+    logDir  <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
+    _       <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
+    admin   <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
 
     override val bootstrapServers: String = s"localhost:${config.kafkaPort}"
@@ -48,10 +48,7 @@ object ManagedKafka {
 
   private def tempDirectory(path: String) = {
     val acquire = GreyhoundMetrics.report(CreatingTempDirectory(path)) *> effectBlocking(Directory(path))
-    acquire.toManaged { dir =>
-      GreyhoundMetrics.report(DeletingTempDirectory(path)) *>
-        effectBlocking(dir.deleteRecursively()).ignore
-    }
+    acquire.toManaged { dir => GreyhoundMetrics.report(DeletingTempDirectory(path)) *> effectBlocking(dir.deleteRecursively()).ignore }
   }
 
   private def embeddedZooKeeper(port: Int) = {
@@ -66,10 +63,10 @@ object ManagedKafka {
 
   private def embeddedKafka(config: KafkaServerConfig) = {
     val acquire = for {
-      _ <- Task(Directory(config.logDir).deleteRecursively())
-      _ <- GreyhoundMetrics.report(StartingKafka(config.port))
+      _      <- Task(Directory(config.logDir).deleteRecursively())
+      _      <- GreyhoundMetrics.report(StartingKafka(config.port))
       server <- effectBlocking(new KafkaServer(config.toKafkaConfig))
-      _ <- effectBlocking(server.startup())
+      _      <- effectBlocking(server.startup())
     } yield server
     acquire.toManaged { server =>
       GreyhoundMetrics.report(StoppingKafka(config.port)) *>
@@ -81,21 +78,22 @@ object ManagedKafka {
 
 }
 
-case class ManagedKafkaConfig(kafkaPort: Int, zooKeeperPort: Int, saslAttributes: Map[String, String], brokerId: Int = Random.nextInt(100000))
+case class ManagedKafkaConfig(
+  kafkaPort: Int,
+  zooKeeperPort: Int,
+  saslAttributes: Map[String, String],
+  brokerId: Int = Random.nextInt(100000)
+)
 
 object ManagedKafkaConfig {
   val Default: ManagedKafkaConfig = ManagedKafkaConfig(6667, 2181, Map.empty)
 }
 
-case class KafkaServerConfig(port: Int,
-                             zooKeeperPort: Int,
-                             brokerId: Int,
-                             logDir: Directory,
-                             extraProperties: Map[String, String]) {
+case class KafkaServerConfig(port: Int, zooKeeperPort: Int, brokerId: Int, logDir: Directory, extraProperties: Map[String, String]) {
 
   def toKafkaConfig: KafkaConfig = KafkaConfig.fromProps {
     val props = new Properties
-    props.setProperty("broker.id",brokerId.toString)
+    props.setProperty("broker.id", brokerId.toString)
     props.setProperty("port", port.toString)
     props.setProperty("log.dir", logDir.path)
     props.setProperty("zookeeper.connect", s"localhost:$zooKeeperPort")

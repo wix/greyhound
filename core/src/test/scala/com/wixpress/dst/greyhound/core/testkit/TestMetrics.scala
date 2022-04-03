@@ -33,7 +33,7 @@ object TestMetrics {
   }
 
   def makeLayer: ULayer[TestMetrics] = makeLayer[Any]()
-  def makeLayer[R](andAlso: R => GreyhoundMetrics.Service = (_:R) => GreyhoundMetrics.Service.noop): URLayer[R, TestMetrics] =
+  def makeLayer[R](andAlso: R => GreyhoundMetrics.Service = (_: R) => GreyhoundMetrics.Service.noop): URLayer[R, TestMetrics] =
     ZLayer.fromFunctionManyManaged[R, Nothing, TestMetrics](a => make(andAlso(a)))
 
   def queue: URIO[TestMetrics, Queue[GreyhoundMetric]] =
@@ -42,8 +42,10 @@ object TestMetrics {
   def reported: URIO[TestMetrics, List[GreyhoundMetric]] =
     ZIO.accessM[TestMetrics](_.get.reported)
 
-  def reportedOf[T <: GreyhoundMetric: ClassTag](filter: T => Boolean = (_:T) => true): URIO[TestMetrics, List[T]] =
-    reported.map(ms => ms.collect {
-      case m if implicitly[ClassTag[T]].runtimeClass.isAssignableFrom(m.getClass) => m.asInstanceOf[T]
-    }.filter(filter))
+  def reportedOf[T <: GreyhoundMetric: ClassTag](filter: T => Boolean = (_: T) => true): URIO[TestMetrics, List[T]] =
+    reported.map(ms =>
+      ms.collect {
+        case m if implicitly[ClassTag[T]].runtimeClass.isAssignableFrom(m.getClass) => m.asInstanceOf[T]
+      }.filter(filter)
+    )
 }

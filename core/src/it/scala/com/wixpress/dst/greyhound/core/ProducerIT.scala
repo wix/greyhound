@@ -20,24 +20,24 @@ class ProducerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   "produce async" in {
     for {
       TestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic(2)
-      kafkaIO <- producer.produceAsync(record(topic), StringSerde, IntSerde)
-      result <- kafkaIO
+      topic                          <- kafka.createRandomTopic(2)
+      kafkaIO                        <- producer.produceAsync(record(topic), StringSerde, IntSerde)
+      result                         <- kafkaIO
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }
 
   "produce" in {
     for {
       TestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic(2)
-      result <- producer.produce(record(topic), StringSerde, IntSerde)
+      topic                          <- kafka.createRandomTopic(2)
+      result                         <- producer.produce(record(topic), StringSerde, IntSerde)
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }
 
   "produce null value (tombstone)" in {
     for {
       TestResources(kafka, producer) <- getShared
-      topic <- kafka.createRandomTopic(2)
+      topic                          <- kafka.createRandomTopic(2)
       result <- producer.produce(ProducerRecord[String, String](topic, null, partition = Some(1)), StringSerde, StringSerde)
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }

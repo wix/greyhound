@@ -25,18 +25,19 @@ trait BatchEventLoop[R] extends Resource[R] {
   def requestSeek(toOffsets: Map[TopicPartition, Offset]): UIO[Unit]
 }
 
-private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group,
-                                                                    clientId: ClientId,
-                                                                    consumer: Consumer,
-                                                                    handler: Handler[R, Any],
-                                                                    retry: Option[BatchRetryConfig] = None,
-                                                                    config: BatchEventLoopConfig,
-                                                                    elState: BatchEventLoopState,
-                                                                    val rebalanceListener: RebalanceListener[Any],
-                                                                    loopFiberRef: Ref[Option[Fiber[_, _]]],
-                                                                    capturedR: ExtraEnv,
-                                                                    seekRequests: Ref[Map[TopicPartition, Offset]]
-                                                                   ) extends BatchEventLoop[R] {
+private[greyhound] class BatchEventLoopImpl[R <: Has[_]: ClassTag](
+  group: Group,
+  clientId: ClientId,
+  consumer: Consumer,
+  handler: Handler[R, Any],
+  retry: Option[BatchRetryConfig] = None,
+  config: BatchEventLoopConfig,
+  elState: BatchEventLoopState,
+  val rebalanceListener: RebalanceListener[Any],
+  loopFiberRef: Ref[Option[Fiber[_, _]]],
+  capturedR: ExtraEnv,
+  seekRequests: Ref[Map[TopicPartition, Offset]]
+) extends BatchEventLoop[R] {
 
   private val consumerAttributes = consumer.config.consumerAttributes
 
@@ -53,14 +54,14 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group
   override def isAlive: UIO[Boolean] =
     loopFiberRef.get.flatMap(_.fold(UIO(false))(_.poll.map {
       case Some(Exit.Failure(_)) => false
-      case _ => true
+      case _                     => true
     }))
 
   def startPolling(): URIO[R with ZEnv with GreyhoundMetrics, Unit] = for {
     _ <- report(StartingEventLoop(clientId, group, consumerAttributes))
-    fiber <- pollOnce()
-      .sandbox.ignore
-      .repeatWhileM(_ => elState.notShutdown).forkDaemon
+    fiber <- pollOnce().sandbox.ignore
+      .repeatWhileM(_ => elState.notShutdown)
+      .forkDaemon
     _ <- loopFiberRef.set(Some(fiber))
   } yield ()
 
@@ -70,41 +71,47 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group
   } yield ()
 
   private def pollOnce(): URIO[R with ZEnv with GreyhoundMetrics, Unit] =
-    elState.awaitRunning.timed.provide(capturedR).flatMap { case (waited, _) =>
-      for {
-        _ <- ZIO.when(waited > 1.second)(report(EventloopWaitedForResume(group, clientId, waited, consumerAttributes)))
-        _ <- pollAndHandle()
-        _ <- seekIfRequested()
-        _ <- commitOffsets()
-      } yield ()
+    elState.awaitRunning.timed.provide(capturedR).flatMap {
+      case (waited, _) =>
+        for {
+          _ <- ZIO.when(waited > 1.second)(report(EventloopWaitedForResume(group, clientId, waited, consumerAttributes)))
+          _ <- pollAndHandle()
+          _ <- seekIfRequested()
+          _ <- commitOffsets()
+        } yield ()
     }
 
   private def seekIfRequested() =
     seekRequests.get
       .flatMap(offsetSeeks =>
         ZIO.when(offsetSeeks.nonEmpty)(
-          consumer.seek(offsetSeeks) *> elState.offsets.update(offsetSeeks)
-            .tap(_ => seekRequests.set(Map.empty))))
+          consumer.seek(offsetSeeks) *>
+            elState.offsets
+              .update(offsetSeeks)
+              .tap(_ => seekRequests.set(Map.empty))
+        )
+      )
 
   private def pollAndHandle(): URIO[R with Clock, Unit] = for {
     _ <- pauseAndResume().provide(capturedR)
-    records <- consumer.poll(config.pollTimeout).provide(capturedR).catchAll(_ => UIO(Nil))
+    records <- consumer
+      .poll(config.pollTimeout)
+      .provide(capturedR)
+      .catchAll(_ => UIO(Nil))
       .flatMap(records => seekRequests.get.map(seeks => records.filterNot(record => seeks.keys.toSet.contains(record.topicPartition))))
-    _ <- handleRecords(records)
-      .timed
+    _ <- handleRecords(records).timed
       .tap { case (duration, _) => report(FullBatchHandled(clientId, group, records.toSeq, duration, consumerAttributes)) }
   } yield ()
 
   private def pauseAndResume() = for {
     pr <- elState.shouldPauseAndResume()
-    _ <- ZIO.when(pr.toPause.nonEmpty)((consumer.pause(pr.toPause) *> elState.partitionsPaused(pr.toPause)).ignore)
-    _ <- ZIO.when(pr.toResume.nonEmpty)((consumer.resume(pr.toResume) *> elState.partitionsResumed(pr.toResume)).ignore)
+    _  <- ZIO.when(pr.toPause.nonEmpty)((consumer.pause(pr.toPause) *> elState.partitionsPaused(pr.toPause)).ignore)
+    _  <- ZIO.when(pr.toResume.nonEmpty)((consumer.resume(pr.toResume) *> elState.partitionsResumed(pr.toResume)).ignore)
   } yield ()
-
 
   private def handleRecords(polled: Records): ZIO[R, Nothing, Unit] = {
     retry match {
-      case None => handleWithNoRetry(polled)
+      case None        => handleWithNoRetry(polled)
       case Some(retry) => handleWithRetry(polled, retry.backoff)
     }
   }
@@ -112,10 +119,10 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group
   private def handleWithRetry(polled: Records, retryBackoff: Duration): ZIO[R, Nothing, Unit] = {
     for {
       forRetryPairs <- elState.readyForRetryAndBlocked(retryBackoff).provide(capturedR)
-      (forRetry, stillPending) = forRetryPairs
-      blockedPartitions = stillPending.keySet
+      (forRetry, stillPending)           = forRetryPairs
+      blockedPartitions                  = stillPending.keySet
       (polledReadyToGo, polledOnBlocked) = polled.partition(r => !blockedPartitions(r.topicPartition))
-      polledByPartition = recordsByPartition(polledReadyToGo)
+      polledByPartition                  = recordsByPartition(polledReadyToGo)
       // we shouldn't get polled records for partitions with pending records, as they should be paused
       // but if we do for some reason - we append them to the pending records
       _ <- elState.appendPending(polledOnBlocked)
@@ -127,30 +134,29 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group
   }
 
   private def handleInParallelWithRetry(readyToHandle: Map[TopicPartition, Seq[Record]]): ZIO[R, Nothing, Unit] = {
-    ZIO.foreachParN_(config.parallelism)(readyToHandle) { case (tp, records) =>
-      (handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records)) *>
-        elState.markHandled(tp, records)).catchAllCause { cause =>
-        val forceNoRetry = cause.failureOption.fold(false)(_.forceNoRetry)
-        report(HandleAttemptFailed(group, clientId, tp.topic, tp.partition, records, !forceNoRetry, consumerAttributes)) *> {
-          if (forceNoRetry) elState.markHandled(tp, records)
-          else elState.attemptFailed(tp, records).provide(capturedR)
+    ZIO.foreachParN_(config.parallelism)(readyToHandle) {
+      case (tp, records) =>
+        (handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records)) *> elState.markHandled(tp, records)).catchAllCause { cause =>
+          val forceNoRetry = cause.failureOption.fold(false)(_.forceNoRetry)
+          report(HandleAttemptFailed(group, clientId, tp.topic, tp.partition, records, !forceNoRetry, consumerAttributes)) *> {
+            if (forceNoRetry) elState.markHandled(tp, records)
+            else elState.attemptFailed(tp, records).provide(capturedR)
+          }
         }
-      }
     }
   }
 
-  private def concatByKey[K, V](a: Map[K, Seq[V]],
-                                b: Map[K, Seq[V]]) = {
-    b.foldLeft(a) { case (acc, (tp, recs)) =>
-      acc + (tp -> (acc.getOrElse(tp, Nil) ++ recs))
+  private def concatByKey[K, V](a: Map[K, Seq[V]], b: Map[K, Seq[V]]) = {
+    b.foldLeft(a) {
+      case (acc, (tp, recs)) =>
+        acc + (tp -> (acc.getOrElse(tp, Nil) ++ recs))
     }
   }
 
   private def handleWithNoRetry(polled: Records) = {
-    ZIO.foreachParN_(config.parallelism)(recordsByPartition(polled)) { case (tp, records) =>
-      handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records))
-        .sandbox.ignore *>
-        elState.offsets.update(records)
+    ZIO.foreachParN_(config.parallelism)(recordsByPartition(polled)) {
+      case (tp, records) =>
+        handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records)).sandbox.ignore *> elState.offsets.update(records)
     }
   }
 
@@ -169,28 +175,42 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_] : ClassTag](group: Group
 
 object BatchEventLoop {
   type Handler[-R, +E] = BatchRecordHandler[R, E, Chunk[Byte], Chunk[Byte]]
-  type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
+  type Record          = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
 
   type ExtraEnv = GreyhoundMetrics with ZEnv
 
-  def make[R <: Has[_] : ClassTag](group: Group,
-                                   initialSubscription: ConsumerSubscription,
-                                   consumer: Consumer,
-                                   handler: Handler[R, Any],
-                                   clientId: ClientId,
-                                   retry: Option[BatchRetryConfig] = None,
-                                   config: BatchEventLoopConfig = BatchEventLoopConfig.Default): RManaged[R with ExtraEnv, BatchEventLoop[R]] = {
+  def make[R <: Has[_]: ClassTag](
+    group: Group,
+    initialSubscription: ConsumerSubscription,
+    consumer: Consumer,
+    handler: Handler[R, Any],
+    clientId: ClientId,
+    retry: Option[BatchRetryConfig] = None,
+    config: BatchEventLoopConfig = BatchEventLoopConfig.Default
+  ): RManaged[R with ExtraEnv, BatchEventLoop[R]] = {
     val start = for {
-      state <- BatchEventLoopState.make
+      state              <- BatchEventLoopState.make
       partitionsAssigned <- Promise.make[Nothing, Unit]
       rebalanceListener = listener(state, config, partitionsAssigned)
-      _ <- subscribe(initialSubscription, rebalanceListener)(consumer)
-      fiberRef <- Ref.make(Option.empty[Fiber[_, _]])
+      _                   <- subscribe(initialSubscription, rebalanceListener)(consumer)
+      fiberRef            <- Ref.make(Option.empty[Fiber[_, _]])
       instrumentedHandler <- handlerWithMetrics(group, clientId, handler, consumer.config.consumerAttributes)
-      env <- ZIO.environment[ExtraEnv]
-      _ <- ZIO.when(config.startPaused)(state.pause())
-      seekRequests <- Ref.make(Map.empty[TopicPartition, Offset])
-      eventLoop = new BatchEventLoopImpl[R](group, clientId, consumer, instrumentedHandler, retry, config, state, rebalanceListener, fiberRef, env, seekRequests)
+      env                 <- ZIO.environment[ExtraEnv]
+      _                   <- ZIO.when(config.startPaused)(state.pause())
+      seekRequests        <- Ref.make(Map.empty[TopicPartition, Offset])
+      eventLoop = new BatchEventLoopImpl[R](
+        group,
+        clientId,
+        consumer,
+        instrumentedHandler,
+        retry,
+        config,
+        state,
+        rebalanceListener,
+        fiberRef,
+        env,
+        seekRequests
+      )
       _ <- eventLoop.startPolling()
       _ <- ZIO.when(!config.startPaused)(partitionsAssigned.await)
     } yield eventLoop
@@ -198,9 +218,11 @@ object BatchEventLoop {
     start.toManaged(_.shutDown())
   }
 
-  private def listener(state: BatchEventLoopState,
-                       config: BatchEventLoopConfig,
-                       partitionsAssigned: Promise[Nothing, Unit]): RebalanceListener[Any] = {
+  private def listener(
+    state: BatchEventLoopState,
+    config: BatchEventLoopConfig,
+    partitionsAssigned: Promise[Nothing, Unit]
+  ): RebalanceListener[Any] = {
     config.rebalanceListener *>
       new RebalanceListener[Any] {
         override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] = {
@@ -212,7 +234,12 @@ object BatchEventLoop {
       }
   }
 
-  private def handlerWithMetrics[R <: Has[_] : ClassTag, E](group: Group, clientId: ClientId, handler: Handler[R, E], consumerAttributes: Map[String, String]): ZIO[ExtraEnv, Nothing, BatchRecordHandler[R, E, Chunk[Byte], Chunk[Byte]]] =
+  private def handlerWithMetrics[R <: Has[_]: ClassTag, E](
+    group: Group,
+    clientId: ClientId,
+    handler: Handler[R, E],
+    consumerAttributes: Map[String, String]
+  ): ZIO[ExtraEnv, Nothing, BatchRecordHandler[R, E, Chunk[Byte], Chunk[Byte]]] =
     ZIO.environment[ExtraEnv].map { env =>
       def report(m: GreyhoundMetric) = GreyhoundMetrics.report(m).provide(env)
 
@@ -224,8 +251,19 @@ object BatchEventLoop {
           val effect = for {
             now <- currentTime
             sinceProduce = now - records.records.headOption.fold(now)(_.producedTimestamp)
-            sincePoll = now - records.records.headOption.fold(now)(_.pollTime)
-            _ <- report(HandlingRecords(records.topic, group, records.partition, clientId, records.records, sinceProduce, sincePoll, consumerAttributes)) *>
+            sincePoll    = now - records.records.headOption.fold(now)(_.pollTime)
+            _ <- report(
+              HandlingRecords(
+                records.topic,
+                group,
+                records.partition,
+                clientId,
+                records.records,
+                sinceProduce,
+                sincePoll,
+                consumerAttributes
+              )
+            ) *>
               handler.handle(records).timedWith(nanoTime).flatMap {
                 case (duration, _) =>
                   report(RecordsHandled(records.topic, group, records.partition, clientId, records.records, duration, consumerAttributes))
@@ -237,48 +275,101 @@ object BatchEventLoop {
     }
 }
 
-case class EventLoopExposedState(running: Boolean, shutdown: Boolean, pendingRecords: Map[TopicPartition, Int], pausedPartitions: Set[TopicPartition]) {
+case class EventLoopExposedState(
+  running: Boolean,
+  shutdown: Boolean,
+  pendingRecords: Map[TopicPartition, Int],
+  pausedPartitions: Set[TopicPartition]
+) {
   def paused = !running
 }
 
-case class BatchEventLoopConfig(pollTimeout: Duration,
-                                rebalanceListener: RebalanceListener[Any],
-                                parallelism: Int = 8,
-                                startPaused: Boolean
-                               ) {
+case class BatchEventLoopConfig(
+  pollTimeout: Duration,
+  rebalanceListener: RebalanceListener[Any],
+  parallelism: Int = 8,
+  startPaused: Boolean
+) {
   def withParallelism(n: Int) = copy(parallelism = n)
 }
 
 object BatchEventLoopConfig {
-  val Default = BatchEventLoopConfig(
-    pollTimeout = 500.millis,
-    rebalanceListener = RebalanceListener.Empty,
-    startPaused = false)
+  val Default = BatchEventLoopConfig(pollTimeout = 500.millis, rebalanceListener = RebalanceListener.Empty, startPaused = false)
 }
 
 sealed trait BatchEventLoopMetric extends GreyhoundMetric
 
 object BatchEventLoopMetric {
-  case class FullBatchHandled[K, V](clientId: ClientId, group: Group, records: Seq[ConsumerRecord[K, V]], duration: Duration, attributes: Map[String, String]) extends BatchEventLoopMetric
+  case class FullBatchHandled[K, V](
+    clientId: ClientId,
+    group: Group,
+    records: Seq[ConsumerRecord[K, V]],
+    duration: Duration,
+    attributes: Map[String, String]
+  ) extends BatchEventLoopMetric
 
   case class EventLoopFailedToSeek(seekRequests: Map[TopicPartition, Offset], t: IllegalStateException) extends BatchEventLoopMetric
 
-  case class RecordsHandled[K, V](topic: String, group: Group, partition: Partition, clientId: ClientId, records: Seq[ConsumerRecord[K, V]], duration: Duration, attributes: Map[String, String]) extends BatchEventLoopMetric
+  case class RecordsHandled[K, V](
+    topic: String,
+    group: Group,
+    partition: Partition,
+    clientId: ClientId,
+    records: Seq[ConsumerRecord[K, V]],
+    duration: Duration,
+    attributes: Map[String, String]
+  ) extends BatchEventLoopMetric
 
-  case class HandlingRecords[K, V](topic: String, group: Group, partition: Partition, clientId: ClientId, records: Seq[ConsumerRecord[K, V]], timeSinceProduceMs: Long, timeSincePollMs: Long, attributes: Map[String, String]) extends BatchEventLoopMetric
+  case class HandlingRecords[K, V](
+    topic: String,
+    group: Group,
+    partition: Partition,
+    clientId: ClientId,
+    records: Seq[ConsumerRecord[K, V]],
+    timeSinceProduceMs: Long,
+    timeSincePollMs: Long,
+    attributes: Map[String, String]
+  ) extends BatchEventLoopMetric
 
-  case class RecordsPendingForRetry[K, V](topic: String, group: Group, partition: Int, clientId: ClientId, records: Seq[ConsumerRecord[K, V]], attributes: Map[String, String]) extends BatchEventLoopMetric
+  case class RecordsPendingForRetry[K, V](
+    topic: String,
+    group: Group,
+    partition: Int,
+    clientId: ClientId,
+    records: Seq[ConsumerRecord[K, V]],
+    attributes: Map[String, String]
+  ) extends BatchEventLoopMetric
 
-  case class EventloopWaitedForResume(group: Group, clientId: ClientId, waitedFor: Duration, attributes: Map[String, String]) extends BatchEventLoopMetric
+  case class EventloopWaitedForResume(group: Group, clientId: ClientId, waitedFor: Duration, attributes: Map[String, String])
+      extends BatchEventLoopMetric
 
   case class Pending(count: Int, lastAttempt: Option[Instant], attempts: Int)
 
-  case class EventLoopIteration(group: Group, clientId: ClientId, polled: Map[String, Int], readyForRetry: Map[String, Int], stillPending: Map[String, Pending], attributes: Map[String, String]) extends BatchEventLoopMetric
+  case class EventLoopIteration(
+    group: Group,
+    clientId: ClientId,
+    polled: Map[String, Int],
+    readyForRetry: Map[String, Int],
+    stillPending: Map[String, Pending],
+    attributes: Map[String, String]
+  ) extends BatchEventLoopMetric
 
-  def EventLoopIteration(group: Group, clientId: ClientId, polled: Seq[Record], readyForRetry: Map[TopicPartition, Seq[Record]], stillPending: Map[TopicPartition, PendingRecords], attributes: Map[String, String]): EventLoopIteration =
-    EventLoopIteration(group, clientId, countsByPartition(polled), countsByPartition(readyForRetry),
-      stillPending.map { case (tp, p) =>
-        s"${tp.topic}#${tp.partition}" -> Pending(p.records.size, p.lastAttempt, p.attempts)
+  def EventLoopIteration(
+    group: Group,
+    clientId: ClientId,
+    polled: Seq[Record],
+    readyForRetry: Map[TopicPartition, Seq[Record]],
+    stillPending: Map[TopicPartition, PendingRecords],
+    attributes: Map[String, String]
+  ): EventLoopIteration =
+    EventLoopIteration(
+      group,
+      clientId,
+      countsByPartition(polled),
+      countsByPartition(readyForRetry),
+      stillPending.map {
+        case (tp, p) =>
+          s"${tp.topic}#${tp.partition}" -> Pending(p.records.size, p.lastAttempt, p.attempts)
       },
       attributes
     )
@@ -289,7 +380,15 @@ object BatchEventLoopMetric {
   private def countsByPartition(records: Map[TopicPartition, Seq[Record]]) =
     records.map { case (tp, p) => s"${tp.topic}#${tp.partition}" -> p.size }
 
-  case class HandleAttemptFailed(group: Group, clientId: ClientId, topic: String, partition: Partition, records: Seq[Record], willRetry: Boolean, attributes: Map[String, String]) extends BatchEventLoopMetric
+  case class HandleAttemptFailed(
+    group: Group,
+    clientId: ClientId,
+    topic: String,
+    partition: Partition,
+    records: Seq[Record],
+    willRetry: Boolean,
+    attributes: Map[String, String]
+  ) extends BatchEventLoopMetric
 }
 
 private[greyhound] object BatchEventLoopState {
@@ -297,11 +396,11 @@ private[greyhound] object BatchEventLoopState {
   case class PauseResume(toPause: Set[TopicPartition], toResume: Set[TopicPartition])
 
   def make = for {
-    running <- TRef.make(true).commit
-    shutdown <- Ref.make(false)
-    offsets <- Offsets.make
+    running   <- TRef.make(true).commit
+    shutdown  <- Ref.make(false)
+    offsets   <- Offsets.make
     leftovers <- Ref.make(Map.empty[TopicPartition, PendingRecords])
-    paused <- Ref.make(Set.empty[TopicPartition])
+    paused    <- Ref.make(Set.empty[TopicPartition])
   } yield new BatchEventLoopState(running, shutdown, leftovers, paused, offsets)
 
   case class PendingRecords(records: Seq[Record], lastAttempt: Option[Instant] = None, attempts: Int = 0) {
@@ -315,30 +414,30 @@ private[greyhound] object BatchEventLoopState {
   }
 }
 
-private[greyhound] class BatchEventLoopState(running: TRef[Boolean],
-                                             shutdownRef: Ref[Boolean],
-                                             pendingRecordsRef: Ref[Map[TopicPartition, PendingRecords]],
-                                             pausedPartitionsRef: Ref[Set[TopicPartition]],
-                                             val offsets: Offsets) {
+private[greyhound] class BatchEventLoopState(
+  running: TRef[Boolean],
+  shutdownRef: Ref[Boolean],
+  pendingRecordsRef: Ref[Map[TopicPartition, PendingRecords]],
+  pausedPartitionsRef: Ref[Set[TopicPartition]],
+  val offsets: Offsets
+) {
   private[greyhound] def clearPending(partitions: Set[TopicPartition]): UIO[Unit] = pendingRecordsRef.update { pending =>
     partitions.foldLeft(pending) { case (res, tp) => res - tp }
   }
 
   def partitionsRevoked(partitions: Set[TopicPartition]) = {
-    clearPending(partitions) *>
-      pausedPartitionsRef.update(_ -- partitions)
+    clearPending(partitions) *> pausedPartitionsRef.update(_ -- partitions)
   }
 
   def markHandled(partition: TopicPartition, records: Seq[Record]): UIO[Unit] = {
-    clearPending(Set(partition)) *>
-      offsets.update(records)
+    clearPending(Set(partition)) *> offsets.update(records)
   }
 
   private[greyhound] def attemptFailed(partition: TopicPartition, newPending: Seq[Record]): URIO[Clock, Unit] = {
     zio.clock.currentDateTime.orDie.flatMap { now =>
       pendingRecordsRef.update { current =>
         current.get(partition) match {
-          case None => current + (partition -> PendingRecords(newPending, Some(now.toInstant), 1))
+          case None          => current + (partition -> PendingRecords(newPending, Some(now.toInstant), 1))
           case Some(records) => current + (partition -> records.attemptedAt(now.toInstant).copy(records = newPending))
         }
       }
@@ -347,14 +446,19 @@ private[greyhound] class BatchEventLoopState(running: TRef[Boolean],
 
   def allPending = pendingRecordsRef.get.map(_.filterNot(_._2.isEmpty))
 
-  def readyForRetryAndBlocked(backoff: Duration): ZIO[Clock, Nothing, (Map[TopicPartition, Seq[Record]], Map[TopicPartition, PendingRecords])] =
+  def readyForRetryAndBlocked(
+    backoff: Duration
+  ): ZIO[Clock, Nothing, (Map[TopicPartition, Seq[Record]], Map[TopicPartition, PendingRecords])] =
     zio.clock.currentDateTime.orDie.flatMap { now =>
-      allPending.map(
-        _.partition { case (_, records) =>
-          records.lastAttempt.exists(_.plus(backoff).isBefore(now.toInstant))
-        }).map { case (ready, notReady) =>
-        ready.mapValues(_.records).toMap -> notReady
-      }
+      allPending
+        .map(_.partition {
+          case (_, records) =>
+            records.lastAttempt.exists(_.plus(backoff).isBefore(now.toInstant))
+        })
+        .map {
+          case (ready, notReady) =>
+            ready.mapValues(_.records).toMap -> notReady
+        }
     }
 
   def isRunning = running.get.commit
@@ -375,10 +479,10 @@ private[greyhound] class BatchEventLoopState(running: TRef[Boolean],
   def shutdown() = shutdownRef.set(true)
 
   def eventLoopState = for {
-    rn <- isRunning
-    sd <- shutdownRef.get
+    rn      <- isRunning
+    sd      <- shutdownRef.get
     pending <- allPending.map(_.mapValues(_.size).toMap)
-    paused <- pausedPartitions
+    paused  <- pausedPartitions
   } yield EventLoopExposedState(rn, sd, pending, paused)
 
   def pausedPartitions = pausedPartitionsRef.get
@@ -392,18 +496,17 @@ private[greyhound] class BatchEventLoopState(running: TRef[Boolean],
 
   def shouldPauseAndResume[R](): URIO[R, PauseResume] = for {
     pending <- allPending
-    paused <- pausedPartitions
-    toPause = pending.keySet -- paused
+    paused  <- pausedPartitions
+    toPause  = pending.keySet -- paused
     toResume = paused -- pending.keySet
   } yield PauseResume(toPause, toResume)
 
-
   def appendPending(records: Consumer.Records): UIO[Unit] = {
-    pendingRecordsRef.update(
-      pending =>
-        records.groupBy(_.topicPartition).foldLeft(pending) { case (acc, (tp, records)) =>
+    pendingRecordsRef.update(pending =>
+      records.groupBy(_.topicPartition).foldLeft(pending) {
+        case (acc, (tp, records)) =>
           acc + (tp -> (acc.getOrElse(tp, PendingRecords(Nil)) ++ records))
-        }
+      }
     )
   }
 }

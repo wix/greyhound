@@ -17,14 +17,16 @@ package object testkit {
     for {
       timeoutRes <- eventuallyTimeout(f)(predicate)(timeout)
       result = timeoutRes.map(_._2)
-      _ <- ZIO.when(timeoutRes.isEmpty)(ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result")))
+      _ <- ZIO.when(timeoutRes.isEmpty)(
+        ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result"))
+      )
     } yield ()
 
   def eventuallyTimeout[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Option[(Long, T)]] =
     for {
       resultRef <- Ref.make[Option[T]](None)
-      timeoutRes <- f.flatMap(r =>
-        resultRef.set(Some(r)) *> UIO(r))
+      timeoutRes <- f
+        .flatMap(r => resultRef.set(Some(r)) *> UIO(r))
         .repeat(spaced(100.millis) && Schedule.recurUntil(predicate))
         .timeout(timeout)
         .provideSomeLayer[R](Clock.live)
@@ -37,7 +39,7 @@ package object testkit {
     def asString = new String(chunk.toArray, "UTF8")
   }
   implicit class ProducerRecordOps(val record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) {
-    def valueString = record.value.fold("")(_.asString)
+    def valueString            = record.value.fold("")(_.asString)
     def headerStr(key: String) = record.headers.headers.get(key).fold("")(_.asString)
   }
 }

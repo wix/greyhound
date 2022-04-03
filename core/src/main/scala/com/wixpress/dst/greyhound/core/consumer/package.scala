@@ -12,7 +12,9 @@ import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import scala.collection.JavaConverters._
 
 package object consumer {
-  def subscribe[R](subscription: ConsumerSubscription, listener: RebalanceListener[R])(consumer: Consumer): RIO[Blocking with GreyhoundMetrics with R, Unit] =
+  def subscribe[R](subscription: ConsumerSubscription, listener: RebalanceListener[R])(
+    consumer: Consumer
+  ): RIO[Blocking with GreyhoundMetrics with R, Unit] =
     ZIO.whenCase(subscription) {
       case TopicPattern(pattern, _) =>
         consumer.subscribePattern(pattern, listener)
@@ -21,9 +23,7 @@ package object consumer {
     }
 
   def kafkaOffsets(offsets: Map[TopicPartition, Offset]): util.Map[KafkaTopicPartition, OffsetAndMetadata] =
-    offsets.map {
-      case (tp, offset) => tp.asKafka -> new OffsetAndMetadata(offset)
-    }.asJava
+    offsets.map { case (tp, offset) => tp.asKafka -> new OffsetAndMetadata(offset) }.asJava
 
   def kafkaPartitions(partitions: Set[TopicPartition]): util.Set[KafkaTopicPartition] = {
     partitions.map(_.asKafka).asJava

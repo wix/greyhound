@@ -21,16 +21,30 @@ object RetryConfigBuilder {
     new RetryConfig(blockingBackoffs, nonBlockingBackoffs)
   }
 
-  def exponentialBackoffBlockingRetry(initialInterval: Duration, maximalInterval: Duration, backOffMultiplier: Float, infiniteRetryMaxInterval: Boolean): RetryConfig = {
-    fromCoreRetryConfig(ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maximalInterval, backOffMultiplier, infiniteRetryMaxInterval))
+  def exponentialBackoffBlockingRetry(
+    initialInterval: Duration,
+    maximalInterval: Duration,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInterval: Boolean
+  ): RetryConfig = {
+    fromCoreRetryConfig(
+      ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maximalInterval, backOffMultiplier, infiniteRetryMaxInterval)
+    )
   }
 
-  def exponentialBackoffBlockingRetry(initialInterval: Duration, maxMultiplications: Int, backOffMultiplier: Float, infiniteRetryMaxInterval: Boolean): RetryConfig = {
-    fromCoreRetryConfig(ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maxMultiplications, backOffMultiplier, infiniteRetryMaxInterval))
+  def exponentialBackoffBlockingRetry(
+    initialInterval: Duration,
+    maxMultiplications: Int,
+    backOffMultiplier: Float,
+    infiniteRetryMaxInterval: Boolean
+  ): RetryConfig = {
+    fromCoreRetryConfig(
+      ZRetryConfig.exponentialBackoffBlockingRetry(initialInterval, maxMultiplications, backOffMultiplier, infiniteRetryMaxInterval)
+    )
   }
 
   private def fromCoreRetryConfig(coreRetryConfig: com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig): RetryConfig = {
-    val blocking: util.List[Duration] = seqAsJavaList(coreRetryConfig.blockingBackoffs("").apply)
+    val blocking: util.List[Duration]    = seqAsJavaList(coreRetryConfig.blockingBackoffs("").apply)
     val nonBlocking: util.List[Duration] = seqAsJavaList(coreRetryConfig.nonBlockingBackoffs("").intervals)
     new RetryConfig(blocking, nonBlocking)
   }

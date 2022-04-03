@@ -4,12 +4,12 @@ import com.wixpress.dst.greyhound.core._
 import zio._
 
 /**
- * A `RecordHandler[R, E, K, V]` describes a handling function on one or more topics.
- * It handles records of type `ConsumerRecord[K, V]`, requires an environment of type `R`,
- * and might fail with errors of type `E`.
+ * A `RecordHandler[R, E, K, V]` describes a handling function on one or more topics. It handles records of type `ConsumerRecord[K, V]`,
+ * requires an environment of type `R`, and might fail with errors of type `E`.
  */
 trait RecordHandler[-R, +E, K, V] {
   self =>
+
   /**
    * Handle a single record.
    */
@@ -68,20 +68,19 @@ trait RecordHandler[-R, +E, K, V] {
     (record: ConsumerRecord[K, V]) => self.handle(record).catchAll(e => f(e, record))
 
   /**
-    * Return a handler which can handle errors as [[Cause[E]]] (which includes [[Cause.Die]] and fiber traces), potentially eliminating them.
-    *
-    * {{{
-    *   val failingHandler: RecordHandler[Any, Throwable, Int, String] = ???
-    *
-    *   val recoveringHandler: RecordHandler[Console, Nothing, Int, String] =
-    *     failingHandler.withCauseHandler { cause =>
-    *       zio.console.putStrLn(cause.squashTrace)
-    *     }
-    * }}}
-    */
+   * Return a handler which can handle errors as [[Cause[E]]] (which includes [[Cause.Die]] and fiber traces), potentially eliminating them.
+   *
+   * {{{
+   *   val failingHandler: RecordHandler[Any, Throwable, Int, String] = ???
+   *
+   *   val recoveringHandler: RecordHandler[Console, Nothing, Int, String] =
+   *     failingHandler.withCauseHandler { cause =>
+   *       zio.console.putStrLn(cause.squashTrace)
+   *     }
+   * }}}
+   */
   def withErrorCauseHandler[R1 <: R, E2](f: (Cause[E], ConsumerRecord[K, V]) => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
     (record: ConsumerRecord[K, V]) => self.handle(record).catchAllCause(e => f(e, record))
-
 
   /**
    * Recover from all errors by ignoring them.
@@ -90,8 +89,7 @@ trait RecordHandler[-R, +E, K, V] {
     withErrorHandler((_, _) => ZIO.unit)
 
   /**
-   * Provides the handler with its required environment, which eliminates
-   * its dependency on `R`.
+   * Provides the handler with its required environment, which eliminates its dependency on `R`.
    */
   def provide(r: R): RecordHandler[Any, E, K, V] =
     new RecordHandler[Any, E, K, V] {
@@ -109,16 +107,19 @@ trait RecordHandler[-R, +E, K, V] {
     }
 
   /**
-   * Return a handler which uses deserializers to adapt the input from
-   * bytes to the needed types `K` and `V`.
+   * Return a handler which uses deserializers to adapt the input from bytes to the needed types `K` and `V`.
    */
-  def withDeserializers(keyDeserializer: Deserializer[K],
-                        valueDeserializer: Deserializer[V]): RecordHandler[R, Either[SerializationError, E], Chunk[Byte], Chunk[Byte]] =
+  def withDeserializers(
+    keyDeserializer: Deserializer[K],
+    valueDeserializer: Deserializer[V]
+  ): RecordHandler[R, Either[SerializationError, E], Chunk[Byte], Chunk[Byte]] =
     mapError(Right(_)).contramapM { record =>
-      record.bimapM(
-        key => keyDeserializer.deserialize(record.topic, record.headers, key),
-        value => Option(value).fold(Task[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
-      ).mapError(e => Left(SerializationError(e)))
+      record
+        .bimapM(
+          key => keyDeserializer.deserialize(record.topic, record.headers, key),
+          value => Option(value).fold(Task[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
+        )
+        .mapError(e => Left(SerializationError(e)))
     }
 
   def withDecryptor[E1 >: E, R1 <: R](dec: Decryptor[R1, E1, K, V]) = {
@@ -131,7 +132,7 @@ trait RecordHandler[-R, +E, K, V] {
   /**
    * creates a RecordHandler that will run the given function before running this handlers' `handle`
    */
-  def <* [R1 <: R](f: ConsumerRecord[K, V] => URIO[R1, Unit]): RecordHandler[R1, E, K, V] = (record: ConsumerRecord[K, V]) => {
+  def <*[R1 <: R](f: ConsumerRecord[K, V] => URIO[R1, Unit]): RecordHandler[R1, E, K, V] = (record: ConsumerRecord[K, V]) => {
     f(record) *> self.handle(record)
   }
 }

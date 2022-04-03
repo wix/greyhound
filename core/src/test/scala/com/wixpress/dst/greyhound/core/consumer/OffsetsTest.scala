@@ -13,16 +13,16 @@ class OffsetsTest extends BaseTest[Any] {
     for {
       offsets <- Offsets.make
       topicPartition = TopicPartition(topic, 0)
-      _ <- offsets.update(topicPartition, 0L)
+      _           <- offsets.update(topicPartition, 0L)
       committable <- offsets.committable
     } yield committable must havePair(topicPartition -> 0L)
   }
 
   "clear committable offsets" in {
     for {
-      offsets <- Offsets.make
-      _ <- offsets.update(TopicPartition(topic, 0), 0L)
-      _ <- offsets.committable
+      offsets     <- Offsets.make
+      _           <- offsets.update(TopicPartition(topic, 0), 0L)
+      _           <- offsets.committable
       committable <- offsets.committable
     } yield committable must beEmpty
   }
@@ -33,9 +33,9 @@ class OffsetsTest extends BaseTest[Any] {
 
     for {
       offsets <- Offsets.make
-      _ <- offsets.update(partition0, 1L)
-      _ <- offsets.update(partition0, 0L)
-      _ <- offsets.update(partition1, 0L)
+      _       <- offsets.update(partition0, 1L)
+      _       <- offsets.update(partition0, 0L)
+      _       <- offsets.update(partition1, 0L)
       current <- offsets.committable
     } yield current must havePairs(partition0 -> 1L, partition1 -> 0L)
   }

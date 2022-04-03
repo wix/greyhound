@@ -9,7 +9,7 @@ trait AwaitShutdown { self =>
     awaitShutdown raceFirst zio
 
   def tapShutdown(f: Throwable => UIO[Unit]) = new AwaitShutdown {
-    override def isShutDown: UIO[Boolean] = self.isShutDown
+    override def isShutDown: UIO[Boolean]    = self.isShutDown
     override def awaitShutdown: UIO[Nothing] = self.awaitShutdown.tapCause(c => f(c.squashTrace))
   }
 
@@ -23,7 +23,7 @@ trait AwaitShutdown { self =>
 object AwaitShutdown {
 
   val never = new AwaitShutdown {
-    override def isShutDown: UIO[Boolean] = UIO(false)
+    override def isShutDown: UIO[Boolean]    = UIO(false)
     override def awaitShutdown: UIO[Nothing] = ZIO.never
   }
 
@@ -40,7 +40,7 @@ object AwaitShutdown {
     }
     val awaitShutdown = new AwaitShutdown {
       override def awaitShutdown: UIO[Nothing] = promise.await
-      override def isShutDown: UIO[Boolean] = promise.isDone
+      override def isShutDown: UIO[Boolean]    = promise.isDone
     }
 
     ShutdownPromise(onShutdown, awaitShutdown)

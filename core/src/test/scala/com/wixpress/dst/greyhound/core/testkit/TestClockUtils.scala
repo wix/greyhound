@@ -8,9 +8,7 @@ import zio.test.environment.TestClock
 
 object TestClockUtils {
   def adjustClock(tickDuration: Duration) = {
-    log(s"moved clock ${tickDuration.toMillis}") *>
-      TestClock.adjust(tickDuration) *>
-      waitALittle
+    log(s"moved clock ${tickDuration.toMillis}") *> TestClock.adjust(tickDuration) *> waitALittle
   }
 
   private def waitALittle = {
@@ -23,6 +21,6 @@ object TestClockUtils {
 
   private def log(str: String) = for {
     fiberId <- ZIO.fiberId
-    _ <- ZIO.effectTotal(println(s"[${Instant.now}][$fiberId] $str"))
+    _       <- ZIO.effectTotal(println(s"[${Instant.now}][$fiberId] $str"))
   } yield ()
 }

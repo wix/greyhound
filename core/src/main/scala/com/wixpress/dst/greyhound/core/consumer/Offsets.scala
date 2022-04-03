@@ -10,7 +10,7 @@ trait Offsets {
   def update(partition: TopicPartition, offset: Offset): UIO[Unit]
 
   def update(offsets: Map[TopicPartition, Offset]): UIO[Unit] = {
-    ZIO.foreach_(offsets){ case (partition, offset) => update(partition, offset)}
+    ZIO.foreach_(offsets) { case (partition, offset) => update(partition, offset) }
   }
 
   def update(record: ConsumerRecord[_, _]): UIO[Unit] =

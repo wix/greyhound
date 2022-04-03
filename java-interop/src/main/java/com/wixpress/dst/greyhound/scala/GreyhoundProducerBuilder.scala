@@ -17,24 +17,27 @@ class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
     for {
       runtime <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers, extraProperties = config.extraProperties)
-      makeProducer = Producer.makeR[Any](producerConfig)
+      makeProducer   = Producer.makeR[Any](producerConfig)
       reservation <- makeProducer.reserve
-      producer <- reservation.acquire
+      producer    <- reservation.acquire
     } yield new GreyhoundProducer {
-      override def produce[K, V](record: KafkaProducerRecord[K, V],
-                                 keySerializer: KafkaSerializer[K],
-                                 valueSerializer: KafkaSerializer[V]): CompletableFuture[OffsetAndMetadata] = {
+      override def produce[K, V](
+        record: KafkaProducerRecord[K, V],
+        keySerializer: KafkaSerializer[K],
+        valueSerializer: KafkaSerializer[V]
+      ): CompletableFuture[OffsetAndMetadata] = {
         val result = for {
           metadata <- producer.produce(
             toGreyhoundRecord(record), // TODO headers
             Serializer(keySerializer),
-            Serializer(valueSerializer))
+            Serializer(valueSerializer)
+          )
         } yield new OffsetAndMetadata(metadata.offset)
 
         val future = new CompletableFuture[OffsetAndMetadata]()
         runtime.unsafeRunAsync(result) {
           case Exit.Success(metadata) => future.complete(metadata)
-          case Exit.Failure(cause) => future.completeExceptionally(cause.squash)
+          case Exit.Failure(cause)    => future.completeExceptionally(cause.squash)
         }
         future
       }
@@ -48,11 +51,12 @@ class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
 }
 
 object GreyhoundProducerBuilder {
-  def toGreyhoundRecord[K, V] (record: KafkaProducerRecord[K, V]): ProducerRecord[K, V] = {
+  def toGreyhoundRecord[K, V](record: KafkaProducerRecord[K, V]): ProducerRecord[K, V] = {
     core.producer.ProducerRecord(
       topic = record.topic,
       value = record.value,
       key = Option(record.key),
-      partition = Option(record.partition()).map(_.toInt))
+      partition = Option(record.partition()).map(_.toInt)
+    )
   }
 }
