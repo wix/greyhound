@@ -34,9 +34,9 @@ object RetryRecordHandler {
     evV: V <:< Chunk[Byte]
   ): RecordHandler[R with R2 with Clock with BlockingZIO with GreyhoundMetrics, Nothing, K, V] = {
 
-    val nonBlockingHandler =
+    val nonBlockingHandler            =
       NonBlockingRetryRecordHandler(handler, producer, retryConfig, subscription, nonBlockingRetryHelper, awaitShutdown)
-    val blockingHandler = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler, awaitShutdown)
+    val blockingHandler               = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler, awaitShutdown)
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
     new RecordHandler[R with R2 with Clock with BlockingZIO with GreyhoundMetrics, Nothing, K, V] {

@@ -13,22 +13,23 @@ class ProducerCombinatorsTest extends JUnitRunnableSpec {
   def spec = suite("ProducerCombinatorsTest")(
     testM("provide combinator") {
       for {
-        log <- Ref.make(List.empty[String])
-        producerR = new ProducerR[Has[SomeEnv]] {
-          override def produceAsync(
-            record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-          ): ZIO[Has[SomeEnv] with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
-            ZIO.environment[Has[SomeEnv]].map { env =>
-              log.update(_ :+ s"produce:${env.get.env}:${record.topic}").as(RecordMetadata(record.topic, 0, 0))
-            }
+        log        <- Ref.make(List.empty[String])
+        producerR   = new ProducerR[Has[SomeEnv]] {
+                        override def produceAsync(
+                          record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
+                        ): ZIO[Has[SomeEnv] with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
+                          ZIO.environment[Has[SomeEnv]].map { env =>
+                            log.update(_ :+ s"produce:${env.get.env}:${record.topic}").as(RecordMetadata(record.topic, 0, 0))
+                          }
 
-          override def shutdown: UIO[Unit] = log.update(_ :+ "shutdown")
+                        override def shutdown: UIO[Unit] = log.update(_ :+ "shutdown")
 
-          override def attributes: Map[String, String] = Map("atr1" -> "val1")
+                        override def attributes: Map[String, String] = Map("atr1" -> "val1")
 
-          override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] = UIO((1 to 3) map (p => PartitionInfo(topic, p, 1)))
-        }
-        producer = producerR.provide(Has(SomeEnv("the-env")))
+                        override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] =
+                          UIO((1 to 3) map (p => PartitionInfo(topic, p, 1)))
+                      }
+        producer    = producerR.provide(Has(SomeEnv("the-env")))
         _          <- producer.produce(ProducerRecord("topic1", Chunk.empty))
         _          <- producer.shutdown
         logged     <- log.get
@@ -50,20 +51,20 @@ class ProducerCombinatorsTest extends JUnitRunnableSpec {
       for {
         log        <- Ref.make(List.empty[String])
         shouldFail <- Ref.make(false)
-        original <- FakeProducer.make(
-          beforeComplete = ZIO.whenM(shouldFail.get)(ZIO.fail(error)).as(_),
-          attributes = Map("atr1" -> "val1"),
-          onShutdown = log.update(_ :+ "shutdown")
-        )
-        producer = original.tapBoth(
-          (topic, e) => log.update(_ :+ s"error:$topic:${e.squash.getClass.getSimpleName}"),
-          rmd => log.update(_ :+ s"produce:${rmd.topic}")
-        )
-        success <- producer.produce(ProducerRecord("topic1", Chunk.empty))
-        _       <- shouldFail.set(true)
-        failed  <- producer.produce(ProducerRecord("topic2", Chunk.empty)).either
-        _       <- producer.shutdown
-        logged  <- log.get
+        original   <- FakeProducer.make(
+                        beforeComplete = ZIO.whenM(shouldFail.get)(ZIO.fail(error)).as(_),
+                        attributes = Map("atr1" -> "val1"),
+                        onShutdown = log.update(_ :+ "shutdown")
+                      )
+        producer    = original.tapBoth(
+                        (topic, e) => log.update(_ :+ s"error:$topic:${e.squash.getClass.getSimpleName}"),
+                        rmd => log.update(_ :+ s"produce:${rmd.topic}")
+                      )
+        success    <- producer.produce(ProducerRecord("topic1", Chunk.empty))
+        _          <- shouldFail.set(true)
+        failed     <- producer.produce(ProducerRecord("topic2", Chunk.empty)).either
+        _          <- producer.shutdown
+        logged     <- log.get
       } yield {
         assert(logged)(
           equalTo(
@@ -79,13 +80,13 @@ class ProducerCombinatorsTest extends JUnitRunnableSpec {
     },
     testM("onShutdown") {
       for {
-        log <- Ref.make(List.empty[String])
+        log      <- Ref.make(List.empty[String])
         original <- FakeProducer.make(
-          onShutdown = log.update(_ :+ "shutdown")
-        )
-        producer = original.onShutdown(log.update(_ :+ "onShutdown"))
-        _      <- producer.shutdown
-        logged <- log.get
+                      onShutdown = log.update(_ :+ "shutdown")
+                    )
+        producer  = original.onShutdown(log.update(_ :+ "onShutdown"))
+        _        <- producer.shutdown
+        logged   <- log.get
       } yield {
         assert(logged)(
           equalTo(

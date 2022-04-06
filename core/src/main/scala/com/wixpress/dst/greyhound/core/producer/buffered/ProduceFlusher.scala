@@ -29,8 +29,8 @@ object ProduceFlusher {
     strategy: ProduceStrategy
   ): URIO[ZEnv with GreyhoundMetrics with R, ProduceFlusher[R]] =
     strategy match {
-      case ProduceStrategy.Sync(concurrency) => ProduceFiberSyncRouter.make(producer, concurrency, giveUpAfter, retryInterval)
-      case ProduceStrategy.Async(batchSize, concurrency) =>
+      case ProduceStrategy.Sync(concurrency)                 => ProduceFiberSyncRouter.make(producer, concurrency, giveUpAfter, retryInterval)
+      case ProduceStrategy.Async(batchSize, concurrency)     =>
         ProduceFiberAsyncRouter.make(producer, concurrency, giveUpAfter, retryInterval, batchSize)
       case ProduceStrategy.Unordered(batchSize, concurrency) =>
         ProduceFiberAsyncRouter.make(producer, concurrency, giveUpAfter, retryInterval, batchSize)
@@ -49,12 +49,12 @@ object ProduceFiberAsyncRouter {
       usedFibers    <- Ref.make(Set.empty[Int])
       runningFibers <- Ref.make(0)
       queues        <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
-      _ <- ZIO.foreach_(queues.values)(q =>
-        fetchAndProduce(producer)(retryInterval, batchSize)(q).forever
-          .tapCause(t => report(LocalBufferProducerInternalFiberDied(t.squashTrace)) *> runningFibers.update(_ - 1))
-          .forkDaemon
-          .tap(_ => runningFibers.update(_ + 1))
-      )
+      _             <- ZIO.foreach_(queues.values)(q =>
+                         fetchAndProduce(producer)(retryInterval, batchSize)(q).forever
+                           .tapCause(t => report(LocalBufferProducerInternalFiberDied(t.squashTrace)) *> runningFibers.update(_ - 1))
+                           .forkDaemon
+                           .tap(_ => runningFibers.update(_ + 1))
+                       )
     } yield new ProduceFlusher[R] {
       override def recordedConcurrency: UIO[Int] = usedFibers.get.map(_.size)
 
@@ -124,9 +124,9 @@ object ProduceFiberAsyncRouter {
         res match {
           case Left(e) if timeoutPassed(req) || nonRetriable(e.getCause) =>
             req.fail(e).as(None)
-          case l @ Left(_) =>
+          case l @ Left(_)                                               =>
             UIO(Some(req, l))
-          case r @ Right(_) => UIO(Some(req, r))
+          case r @ Right(_)                                              => UIO(Some(req, r))
         }
     }
 
@@ -155,29 +155,29 @@ object ProduceFiberSyncRouter {
       usedFibers    <- Ref.make(Set.empty[Int])
       runningFibers <- Ref.make(0)
       queues        <- ZIO.foreach((0 until maxConcurrency).toList)(i => Queue.unbounded[ProduceRequest].map(i -> _)).map(_.toMap)
-      _ <- ZIO.foreach_(queues.values)(
-        _.take
-          .flatMap((req: ProduceRequest) =>
-            ZIO
-              .whenCase(timeoutPassed(req)) {
-                case true =>
-                  ProducerError(new TimeoutException).flip.flatMap(timeout =>
-                    report(LocalBufferProduceTimeoutExceeded(req.giveUpTimestamp, System.currentTimeMillis)) *> req.fail(timeout)
-                  )
-                case false =>
-                  producer
-                    .produce(req.record)
-                    .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
-                    .retry(Schedule.spaced(retryInterval) && Schedule.recurUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
-                    .tapBoth(req.fail, req.succeed)
-              }
-              .ignore
-          )
-          .forever
-          .tapCause(t => report(LocalBufferProducerInternalFiberDied(t.squashTrace)) *> runningFibers.update(_ - 1))
-          .forkDaemon
-          .tap(_ => runningFibers.update(_ + 1))
-      )
+      _             <- ZIO.foreach_(queues.values)(
+                         _.take
+                           .flatMap((req: ProduceRequest) =>
+                             ZIO
+                               .whenCase(timeoutPassed(req)) {
+                                 case true  =>
+                                   ProducerError(new TimeoutException).flip.flatMap(timeout =>
+                                     report(LocalBufferProduceTimeoutExceeded(req.giveUpTimestamp, System.currentTimeMillis)) *> req.fail(timeout)
+                                   )
+                                 case false =>
+                                   producer
+                                     .produce(req.record)
+                                     .tapError(error => report(LocalBufferProduceAttemptFailed(error, nonRetriable(error.getCause))))
+                                     .retry(Schedule.spaced(retryInterval) && Schedule.recurUntil(e => timeoutPassed(req) || nonRetriable(e.getCause)))
+                                     .tapBoth(req.fail, req.succeed)
+                               }
+                               .ignore
+                           )
+                           .forever
+                           .tapCause(t => report(LocalBufferProducerInternalFiberDied(t.squashTrace)) *> runningFibers.update(_ - 1))
+                           .forkDaemon
+                           .tap(_ => runningFibers.update(_ + 1))
+                       )
 
     } yield new ProduceFlusher[R] {
 

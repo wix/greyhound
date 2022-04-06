@@ -20,8 +20,8 @@ object ExponentialBackoffCalculator {
     val logOfMultipier = (x: Double, multiplier: Float) => log10(x) / log10(multiplier)
 
     def calcMaxMultiplications(initialInterval: ZDuration, maximalInterval: ZDuration, backOffMultiplier: Float) = {
-      val safeInitialInterval = math.max(initialInterval.toMillis, 10)
-      val safeMaximalInterval = math.max(safeInitialInterval, maximalInterval.toMillis)
+      val safeInitialInterval      = math.max(initialInterval.toMillis, 10)
+      val safeMaximalInterval      = math.max(safeInitialInterval, maximalInterval.toMillis)
       val relativeInterval: Offset = Try {
         safeMaximalInterval / initialInterval.toMillis
       }.getOrElse(1)

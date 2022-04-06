@@ -17,7 +17,7 @@ object TestCtx {
     implicit class HasEnvOps[R, CTX](w: Wrapper[R, CTX]) {
       def apply[R1, E](f: CTX => ZIO[R with R1, E, TestResult])(implicit ev: NeedsEnv[R]) = w.make.flatMap(f)
     }
-    implicit class NoEnvOps[CTX](w: Wrapper[Any, CTX]) {
+    implicit class NoEnvOps[CTX](w: Wrapper[Any, CTX])   {
       def apply[R1, E](f: CTX => ZIO[R1, E, TestResult]) = w.make.flatMap(f)
     }
   }

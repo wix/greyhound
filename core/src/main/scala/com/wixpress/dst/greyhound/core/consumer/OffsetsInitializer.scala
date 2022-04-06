@@ -33,7 +33,7 @@ class OffsetsInitializer(
       val endOffsets   = offsetOperations.endOffsets(partitions, effectiveTimeout)
       val toOffsets    = calculateTargetOffsets(partitions, beginning, committed, endOffsets, effectiveTimeout)
       val notCommitted = partitions -- committed.keySet -- toOffsets.keySet
-      val positions =
+      val positions    =
         notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap ++ toOffsets
       if (toOffsets.nonEmpty) {
         offsetOperations.seek(toOffsets)
@@ -58,10 +58,10 @@ class OffsetsInitializer(
       endOffsets = partitions.map((_, None)).toMap ++ endOffsets.mapValues(Some.apply),
       currentCommittedOffsets = partitions.map((_, None)).toMap ++ committed.mapValues(Some.apply)
     )
-    val seekToOffsets       = seekTo.collect { case (k, v: SeekTo.SeekToOffset) => k -> v.offset }
-    val seekToEndPartitions = seekTo.collect { case (k, SeekTo.SeekToEnd) => k }.toSet
-    val seekToEndOffsets    = fetchEndOffsets(seekToEndPartitions, timeout)
-    val toOffsets           = seekToOffsets ++ seekToEndOffsets
+    val seekToOffsets                       = seekTo.collect { case (k, v: SeekTo.SeekToOffset) => k -> v.offset }
+    val seekToEndPartitions                 = seekTo.collect { case (k, SeekTo.SeekToEnd) => k }.toSet
+    val seekToEndOffsets                    = fetchEndOffsets(seekToEndPartitions, timeout)
+    val toOffsets                           = seekToOffsets ++ seekToEndOffsets
     toOffsets
   }
 

@@ -35,7 +35,7 @@ package object zioutils {
   implicit class RuntimeEnvOps[R <: Has[_]](val runtime: zio.Runtime[R]) extends AnyVal {
     def withFiberTracking(mode: FiberTrackingMode)(implicit tag: zio.Tag[R]): zio.Runtime[R with FiberTracking] = {
       mode match {
-        case FiberTrackingMode.NoTracking => runtime.map(_.union[FiberTracking](FiberTracking.NoTracking))
+        case FiberTrackingMode.NoTracking     => runtime.map(_.union[FiberTracking](FiberTracking.NoTracking))
         case FiberTrackingMode.Tracking(weak) =>
           val supervisor = runtime.unsafeRunTask(Supervisor.track(weak))
           runtime

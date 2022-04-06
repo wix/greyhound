@@ -17,11 +17,11 @@ case class GreyhoundProducerBuilder(config: GreyhoundConfig, mutateProducer: Pro
 
   def build: Future[GreyhoundProducer] = config.runtime.unsafeRunToFuture {
     for {
-      runtime <- ZIO.runtime[Env]
+      runtime       <- ZIO.runtime[Env]
       producerConfig = mutateProducer(ProducerConfig(config.bootstrapServers))
       makeProducer   = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
-      reservation <- makeProducer.reserve
-      producer    <- reservation.acquire
+      reservation   <- makeProducer.reserve
+      producer      <- reservation.acquire
     } yield new GreyhoundProducer {
       override def produce[K, V](
         record: ProducerRecord[K, V],
@@ -46,11 +46,11 @@ trait GreyhoundContextAwareProducer[C] extends Closeable {
 case class GreyhoundContextAwareProducerBuilder[C](config: GreyhoundConfig, encoder: ContextEncoder[C]) {
   def build: Future[GreyhoundContextAwareProducer[C]] = config.runtime.unsafeRunToFuture {
     for {
-      runtime <- ZIO.runtime[Env]
+      runtime       <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers)
       makeProducer   = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
-      reservation <- makeProducer.reserve
-      producer    <- reservation.acquire
+      reservation   <- makeProducer.reserve
+      producer      <- reservation.acquire
     } yield new GreyhoundContextAwareProducer[C] {
       override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V])(
         implicit context: C

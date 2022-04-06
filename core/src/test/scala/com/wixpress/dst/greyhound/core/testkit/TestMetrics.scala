@@ -26,13 +26,13 @@ object TestMetrics {
       val service = new Service {
         override def report(metric: GreyhoundMetric): URIO[Blocking, Unit] =
           reportLive(metric) *> q.offer(metric).unit *> andAlso.report(metric)
-        override def queue: Queue[GreyhoundMetric] = q
+        override def queue: Queue[GreyhoundMetric]                         = q
       }
       Has(service) ++ Has(service: GreyhoundMetrics.Service)
     }
   }
 
-  def makeLayer: ULayer[TestMetrics] = makeLayer[Any]()
+  def makeLayer: ULayer[TestMetrics]                                                                                          = makeLayer[Any]()
   def makeLayer[R](andAlso: R => GreyhoundMetrics.Service = (_: R) => GreyhoundMetrics.Service.noop): URLayer[R, TestMetrics] =
     ZLayer.fromFunctionManyManaged[R, Nothing, TestMetrics](a => make(andAlso(a)))
 

@@ -101,7 +101,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
 
   "report errors in `commit()`, but not fail" in
     new ctx {
-      val e = new RuntimeException(randomStr)
+      val e            = new RuntimeException(randomStr)
       givenCommittedOffsets(partitions)(Map(p1 -> randomInt))
       val p2Pos, p3Pos = randomInt.toLong
       givenPositions(p2 -> p2Pos, p3 -> p3Pos)

@@ -26,10 +26,10 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
     for {
       internal           <- FakeProducer.make
       internalPartitions <- internal.partitionsFor("some-topic")
-      producer = ReportingProducer(internal)
-      _          <- producer.produce(record)
-      produced   <- internal.records.take
-      partitions <- producer.partitionsFor("some-topic")
+      producer            = ReportingProducer(internal)
+      _                  <- producer.produce(record)
+      produced           <- internal.records.take
+      partitions         <- producer.partitionsFor("some-topic")
     } yield {
       (produced must equalTo(record)) and (partitions === internalPartitions)
     }
@@ -48,15 +48,15 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
     val asyncDelay = 200
     for {
       testClock <- ZIO.environment[TestClock].map(_.get)
-      metadata = RecordMetadata(topic, partition, 0)
-      internal <- FakeProducer.make(
-        r => testClock.adjust(syncDelay.millis).as(r),
-        m => testClock.adjust(asyncDelay.millis).as(m)
-      )
-      producer = producerFrom(internal)
-      promise <- producer.produceAsync(record)
-      _       <- promise *> promise // evaluating the inner effect more than once should not report duplicate metrics
-      metrics <- reportedMetrics
+      metadata   = RecordMetadata(topic, partition, 0)
+      internal  <- FakeProducer.make(
+                     r => testClock.adjust(syncDelay.millis).as(r),
+                     m => testClock.adjust(asyncDelay.millis).as(m)
+                   )
+      producer   = producerFrom(internal)
+      promise   <- producer.produceAsync(record)
+      _         <- promise *> promise // evaluating the inner effect more than once should not report duplicate metrics
+      metrics   <- reportedMetrics
     } yield metrics.filter(_.isInstanceOf[RecordProduced]) must
       exactly(RecordProduced(record, metadata, attributes.toMap, FiniteDuration(syncDelay + asyncDelay, TimeUnit.MILLISECONDS)))
   }
@@ -64,10 +64,10 @@ class ReportingProducerTest extends BaseTest[TestEnvironment with TestMetrics] {
   "report metric when produce fails" in
     (for {
       internal <- FakeProducer.make
-      producer = producerFrom(internal.failing)
-      _       <- producer.produce(record).either
-      _       <- adjustTestClock(1.second)
-      metrics <- reportedMetrics
+      producer  = producerFrom(internal.failing)
+      _        <- producer.produce(record).either
+      _        <- adjustTestClock(1.second)
+      metrics  <- reportedMetrics
     } yield metrics must
       contain(beLike[GreyhoundMetric] { case pf: ProduceFailed => (pf.attributes === attributes.toMap) and pf.topic === record.topic }))
 

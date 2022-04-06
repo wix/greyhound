@@ -28,21 +28,22 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
   "recover from consumer failing to poll" in {
     for {
       invocations <- Ref.make(0)
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): Task[Records] =
-          invocations.updateAndGet(_ + 1).flatMap {
-            case 1 => ZIO.fail(exception)
-            case 2 => ZIO.succeed(recordsFrom(record))
-            case _ => ZIO.succeed(Iterable.empty)
-          }
-      }
-      promise <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
-      handler = RecordHandler(promise.succeed)
-      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      handled <- EventLoop
-        .make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId", workersShutdownRef = ref)
-        .use_(promise.await)
-      metrics <- TestMetrics.reported
+      consumer     = new EmptyConsumer {
+                       override def poll(timeout: Duration): Task[Records] =
+                         invocations.updateAndGet(_ + 1).flatMap {
+                           case 1 => ZIO.fail(exception)
+                           case 2 => ZIO.succeed(recordsFrom(record))
+                           case _ => ZIO.succeed(Iterable.empty)
+                         }
+                     }
+      promise     <- Promise.make[Nothing, ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
+      handler      = RecordHandler(promise.succeed)
+      ref         <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      handled     <-
+        EventLoop
+          .make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId", workersShutdownRef = ref)
+          .use_(promise.await)
+      metrics     <- TestMetrics.reported
     } yield (handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception)))
   }
 
@@ -51,62 +52,62 @@ class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
       pollInvocations   <- Ref.make(0)
       commitInvocations <- Ref.make(0)
       promise           <- Promise.make[Nothing, Map[TopicPartition, Offset]]
-      consumer = new EmptyConsumer {
-        override def poll(timeout: Duration): Task[Records] =
-          pollInvocations.updateAndGet(_ + 1).flatMap {
-            case 1 => ZIO.succeed(recordsFrom(record))
-            case _ => ZIO.succeed(Iterable.empty)
-          }
+      consumer           = new EmptyConsumer {
+                             override def poll(timeout: Duration): Task[Records] =
+                               pollInvocations.updateAndGet(_ + 1).flatMap {
+                                 case 1 => ZIO.succeed(recordsFrom(record))
+                                 case _ => ZIO.succeed(Iterable.empty)
+                               }
 
-        override def commit(offsets: Map[TopicPartition, Offset]) =
-          commitInvocations.updateAndGet(_ + 1).flatMap {
-            case 1 => ZIO.fail(exception)
-            case _ => promise.succeed(offsets).unit
-          }
-      }
-      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      committed <- EventLoop
-        .make(
-          "group",
-          Topics(Set(topic)),
-          ReportingConsumer(clientId, group, consumer),
-          RecordHandler.empty,
-          "clientId",
-          workersShutdownRef = ref
-        )
-        .use_(promise.await)
-      metrics <- TestMetrics.reported
+                             override def commit(offsets: Map[TopicPartition, Offset]) =
+                               commitInvocations.updateAndGet(_ + 1).flatMap {
+                                 case 1 => ZIO.fail(exception)
+                                 case _ => promise.succeed(offsets).unit
+                               }
+                           }
+      ref               <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      committed         <- EventLoop
+                             .make(
+                               "group",
+                               Topics(Set(topic)),
+                               ReportingConsumer(clientId, group, consumer),
+                               RecordHandler.empty,
+                               "clientId",
+                               workersShutdownRef = ref
+                             )
+                             .use_(promise.await)
+      metrics           <- TestMetrics.reported
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic, record.partition) -> (offset + 1)))))
   }
 
   "expose event loop health" in {
     for {
-      _ <- ZIO.unit
+      _           <- ZIO.unit
       sickConsumer = new EmptyConsumer {
-        override def poll(timeout: Duration): Task[Records] =
-          ZIO.dieMessage("cough :(")
-      }
-      ref <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      died <- EventLoop
-        .make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId", workersShutdownRef = ref)
-        .use { eventLoop => eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(alive => !alive)).unit }
-        .catchAllCause(_ => ZIO.unit)
-        .timeout(5.second)
+                       override def poll(timeout: Duration): Task[Records] =
+                         ZIO.dieMessage("cough :(")
+                     }
+      ref         <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      died        <- EventLoop
+                       .make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId", workersShutdownRef = ref)
+                       .use { eventLoop => eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(alive => !alive)).unit }
+                       .catchAllCause(_ => ZIO.unit)
+                       .timeout(5.second)
     } yield died must beSome
   }
 
 }
 
 object EventLoopTest {
-  val clientId  = "client-id"
-  val group     = "group"
-  val topic     = "topic"
-  val partition = 0
-  val offset    = 0L
+  val clientId                                         = "client-id"
+  val group                                            = "group"
+  val topic                                            = "topic"
+  val partition                                        = 0
+  val offset                                           = 0L
   val record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =
     ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
-  val exception = new RuntimeException("oops")
+  val exception                                        = new RuntimeException("oops")
 
   def recordsFrom(records: ConsumerRecord[Chunk[Byte], Chunk[Byte]]*): Records = {
     records.toIterable

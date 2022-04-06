@@ -53,16 +53,16 @@ trait ProducerR[-R] { self =>
     encryptor: Encryptor
   ) = {
     for {
-      keyBytes   <- keySerializer.serializeOpt(record.topic, record.key)
-      valueBytes <- valueSerializer.serializeOpt(record.topic, record.value)
+      keyBytes        <- keySerializer.serializeOpt(record.topic, record.key)
+      valueBytes      <- valueSerializer.serializeOpt(record.topic, record.value)
       serializedRecord = ProducerRecord(
-        topic = record.topic,
-        value = valueBytes,
-        key = keyBytes,
-        partition = record.partition,
-        headers = record.headers
-      )
-      encyptedRecord <- encryptor.encrypt(serializedRecord)
+                           topic = record.topic,
+                           value = valueBytes,
+                           key = keyBytes,
+                           partition = record.partition,
+                           headers = record.headers
+                         )
+      encyptedRecord  <- encryptor.encrypt(serializedRecord)
     } yield encyptedRecord
   }
 }
@@ -99,19 +99,19 @@ object Producer {
           for {
             produceCompletePromise <- Promise.make[ProducerError, RecordMetadata]
             runtime                <- ZIO.runtime[Any]
-            _ <- effectBlocking(
-              producer.send(
-                recordFrom(record),
-                new Callback {
-                  override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit =
-                    runtime.unsafeRun {
-                      (if (exception != null) produceCompletePromise.complete(ProducerError(exception))
-                       else produceCompletePromise.succeed(RecordMetadata(metadata))) *> config.onProduceListener(record)
-                    }
-                }
-              )
-            )
-              .catchAll(e => produceCompletePromise.complete(ProducerError(e)))
+            _                      <- effectBlocking(
+                                        producer.send(
+                                          recordFrom(record),
+                                          new Callback {
+                                            override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit =
+                                              runtime.unsafeRun {
+                                                (if (exception != null) produceCompletePromise.complete(ProducerError(exception))
+                                                 else produceCompletePromise.succeed(RecordMetadata(metadata))) *> config.onProduceListener(record)
+                                              }
+                                          }
+                                        )
+                                      )
+                                        .catchAll(e => produceCompletePromise.complete(ProducerError(e)))
           } yield (produceCompletePromise.await)
 
         override def attributes: Map[String, String] = attrs
@@ -134,7 +134,7 @@ object ProducerR {
   implicit class Ops[R <: Has[_]](producer: ProducerR[R]) {
     // R1 is a work around to an apparent bug in Has.union ¯\_(ツ)_/¯
     // https://github.com/zio/zio/issues/3558#issuecomment-776051184
-    def provide[R1 <: R: Tag](env: R1) = new ProducerR[Any] {
+    def provide[R1 <: R: Tag](env: R1)                     = new ProducerR[Any] {
       override def produceAsync(
         record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
       ): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
@@ -166,9 +166,9 @@ object ProducerR {
       ): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
         for {
           called <- Ref.make(false)
-          once = ZIO.whenM(called.getAndUpdate(_ => true).negate)(_: URIO[R, Unit])
-          env <- ZIO.environment[R]
-          res <- producer.produceAsync(record)
+          once    = ZIO.whenM(called.getAndUpdate(_ => true).negate)(_: URIO[R, Unit])
+          env    <- ZIO.environment[R]
+          res    <- producer.produceAsync(record)
         } yield res
           .tapCause(e => once(onError(record.topic, e)).provide(env))
           .tap(r => once(onSuccess(r)).provide(env))

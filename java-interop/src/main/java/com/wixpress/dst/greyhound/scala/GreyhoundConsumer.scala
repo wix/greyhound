@@ -89,7 +89,7 @@ case class GreyhoundConsumer[K >: AnyRef, V] private (
               ZIO
                 .fromFuture(_ => toScala(errorHandler.onSerializationError(serializationError, record.bimap(_.toArray, _.toArray))))
                 .catchAll(_ => ZIO.unit) *> ZIO.fail(serializationError)
-            case _ => ZIO.fail(error)
+            case _                        => ZIO.fail(error)
           }
       }
   }

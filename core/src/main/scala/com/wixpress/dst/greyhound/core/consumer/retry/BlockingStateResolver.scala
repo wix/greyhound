@@ -16,32 +16,32 @@ object BlockingStateResolver {
 
         for {
           mergedBlockingState <- blockingStateRef.modify { state =>
-            val topicPartitionBlockingState = state.get(TopicPartitionTarget(topicPartition))
-            val topicBlockingState          = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
-            val mergedBlockingState = topicPartitionBlockingState
-              .map {
-                case IgnoringAll      => IgnoringAll
-                case IgnoringOnce     => IgnoringOnce
-                case InternalBlocking => InternalBlocking
-                case b: Blocked[V, K] => b
-                case _                => InternalBlocking
-              }
-              .getOrElse(topicBlockingState)
-            val shouldBlock = shouldBlockFrom(mergedBlockingState)
-            val isBlockedAlready = mergedBlockingState match {
-              case _: BlockingState.Blocked[K, V] => true
-              case _                              => false
-            }
-            val updatedState = if (shouldBlock && !isBlockedAlready) {
-              state.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record))
-            } else
-              state
-            (mergedBlockingState, updatedState)
-          }
-          shouldBlock = shouldBlockFrom(mergedBlockingState)
-          _ <- ZIO.when(!shouldBlock) {
-            report(mergedBlockingState.metric(record))
-          }
+                                   val topicPartitionBlockingState = state.get(TopicPartitionTarget(topicPartition))
+                                   val topicBlockingState          = state.getOrElse(TopicTarget(record.topic), InternalBlocking)
+                                   val mergedBlockingState         = topicPartitionBlockingState
+                                     .map {
+                                       case IgnoringAll      => IgnoringAll
+                                       case IgnoringOnce     => IgnoringOnce
+                                       case InternalBlocking => InternalBlocking
+                                       case b: Blocked[V, K] => b
+                                       case _                => InternalBlocking
+                                     }
+                                     .getOrElse(topicBlockingState)
+                                   val shouldBlock                 = shouldBlockFrom(mergedBlockingState)
+                                   val isBlockedAlready            = mergedBlockingState match {
+                                     case _: BlockingState.Blocked[K, V] => true
+                                     case _                              => false
+                                   }
+                                   val updatedState                = if (shouldBlock && !isBlockedAlready) {
+                                     state.updated(TopicPartitionTarget(topicPartition), BlockingState.Blocked(record))
+                                   } else
+                                     state
+                                   (mergedBlockingState, updatedState)
+                                 }
+          shouldBlock          = shouldBlockFrom(mergedBlockingState)
+          _                   <- ZIO.when(!shouldBlock) {
+                                   report(mergedBlockingState.metric(record))
+                                 }
         } yield shouldBlock
       }
 
@@ -79,14 +79,14 @@ object BlockingStateResolver {
         }
 
         command match {
-          case IgnoreOnceFor(topicPartition: TopicPartition) => handleIgnoreOnceRequest(topicPartition)
-          case IgnoreAllFor(topicPartition: TopicPartition) =>
+          case IgnoreOnceFor(topicPartition: TopicPartition)  => handleIgnoreOnceRequest(topicPartition)
+          case IgnoreAllFor(topicPartition: TopicPartition)   =>
             blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
           case BlockErrorsFor(topicPartition: TopicPartition) =>
             blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), InternalBlocking))
-          case IgnoreAll(topic: Topic)   => updateTopicTargetAndPartitionTargets(topic, IgnoringAll)
-          case BlockErrors(topic: Topic) => updateTopicTargetAndPartitionTargets(topic, InternalBlocking)
-          case _                         => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
+          case IgnoreAll(topic: Topic)                        => updateTopicTargetAndPartitionTargets(topic, IgnoringAll)
+          case BlockErrors(topic: Topic)                      => updateTopicTargetAndPartitionTargets(topic, InternalBlocking)
+          case _                                              => ZIO.fail(new RuntimeException(s"unfamiliar BlockingStateCommand: $command"))
         }
       }
     }

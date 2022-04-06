@@ -15,11 +15,11 @@ import zio.{Exit, ZIO}
 class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
   def build: GreyhoundProducer = config.runtime.unsafeRun {
     for {
-      runtime <- ZIO.runtime[Env]
+      runtime       <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers, extraProperties = config.extraProperties)
       makeProducer   = Producer.makeR[Any](producerConfig)
-      reservation <- makeProducer.reserve
-      producer    <- reservation.acquire
+      reservation   <- makeProducer.reserve
+      producer      <- reservation.acquire
     } yield new GreyhoundProducer {
       override def produce[K, V](
         record: KafkaProducerRecord[K, V],
@@ -28,10 +28,10 @@ class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
       ): CompletableFuture[OffsetAndMetadata] = {
         val result = for {
           metadata <- producer.produce(
-            toGreyhoundRecord(record), // TODO headers
-            Serializer(keySerializer),
-            Serializer(valueSerializer)
-          )
+                        toGreyhoundRecord(record), // TODO headers
+                        Serializer(keySerializer),
+                        Serializer(valueSerializer)
+                      )
         } yield new OffsetAndMetadata(metadata.offset)
 
         val future = new CompletableFuture[OffsetAndMetadata]()

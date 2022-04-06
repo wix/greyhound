@@ -36,8 +36,8 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
 
   def build(): GreyhoundConsumers = config.runtime.unsafeRun {
     for {
-      runtime <- ZIO.runtime[Env]
-      executor = createExecutor
+      runtime                                                                                                                <- ZIO.runtime[Env]
+      executor                                                                                                                = createExecutor
       makeConsumer: ZManaged[Any with Env with GreyhoundMetrics, Throwable, immutable.Iterable[RecordConsumer[Any with Env]]] =
         ZManaged.foreach(handlers(executor, runtime)) {
           case (group: Group, javaConsumerConfig: JavaConsumerConfig) =>
@@ -54,22 +54,22 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
               handler
             )
         }
-      makeBatchConsumer = ZManaged.foreach(batchConsumers.toSeq) { batchConsumer =>
-        val batchConsumerConfig = BatchConsumerConfig(
-          bootstrapServers = config.bootstrapServers,
-          groupId = batchConsumer.group,
-          initialSubscription = Topics(Set(batchConsumer.initialTopic)),
-          retryConfig = batchConsumer.retryConfig,
-          clientId = batchConsumer.clientId,
-          eventLoopConfig = BatchEventLoopConfig.Default,
-          offsetReset = convert(batchConsumer.offsetReset),
-          extraProperties = config.extraProperties,
-          userProvidedListener = batchConsumer.userProvidedListener,
-          resubscribeTimeout = batchConsumer.resubscribeTimeout,
-          initialOffsetsSeek = batchConsumer.initialOffsetsSeek
-        )
-        BatchConsumer.make(batchConsumerConfig, batchConsumer.batchRecordHandler(executor, runtime))
-      }
+      makeBatchConsumer                                                                                                       = ZManaged.foreach(batchConsumers.toSeq) { batchConsumer =>
+                                                                                                                                  val batchConsumerConfig = BatchConsumerConfig(
+                                                                                                                                    bootstrapServers = config.bootstrapServers,
+                                                                                                                                    groupId = batchConsumer.group,
+                                                                                                                                    initialSubscription = Topics(Set(batchConsumer.initialTopic)),
+                                                                                                                                    retryConfig = batchConsumer.retryConfig,
+                                                                                                                                    clientId = batchConsumer.clientId,
+                                                                                                                                    eventLoopConfig = BatchEventLoopConfig.Default,
+                                                                                                                                    offsetReset = convert(batchConsumer.offsetReset),
+                                                                                                                                    extraProperties = config.extraProperties,
+                                                                                                                                    userProvidedListener = batchConsumer.userProvidedListener,
+                                                                                                                                    resubscribeTimeout = batchConsumer.resubscribeTimeout,
+                                                                                                                                    initialOffsetsSeek = batchConsumer.initialOffsetsSeek
+                                                                                                                                  )
+                                                                                                                                  BatchConsumer.make(batchConsumerConfig, batchConsumer.batchRecordHandler(executor, runtime))
+                                                                                                                                }
 
       reservation <- makeConsumer.reserve
       consumers   <- reservation.acquire

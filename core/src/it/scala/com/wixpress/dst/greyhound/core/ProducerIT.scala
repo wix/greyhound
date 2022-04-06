@@ -38,17 +38,17 @@ class ProducerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     for {
       TestResources(kafka, producer) <- getShared
       topic                          <- kafka.createRandomTopic(2)
-      result <- producer.produce(ProducerRecord[String, String](topic, null, partition = Some(1)), StringSerde, StringSerde)
+      result                         <- producer.produce(ProducerRecord[String, String](topic, null, partition = Some(1)), StringSerde, StringSerde)
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }
 
   "map to failure" in {
     for {
       _ <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
-        for {
-          failure <- producer.produce(record("no_such_topic"), StringSerde, IntSerde).flip
-        } yield failure.getClass.getSimpleName === "TimeoutError"
-      }
+             for {
+               failure <- producer.produce(record("no_such_topic"), StringSerde, IntSerde).flip
+             } yield failure.getClass.getSimpleName === "TimeoutError"
+           }
     } yield ok
   }
 

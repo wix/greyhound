@@ -24,8 +24,8 @@ object H2LocalBuffer {
 
   def make(localPath: String, keepDeadMessages: Duration, startFrom: Option[Long] = None): RManaged[Clock with Blocking, LocalBuffer] =
     (for {
-      cp         <- effectBlocking(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
-      connection <- effectBlocking(cp.getConnection())
+      cp                    <- effectBlocking(JdbcConnectionPool.create(s"jdbc:h2:$localPath;DB_CLOSE_ON_EXIT=FALSE", "greyhound", "greyhound"))
+      connection            <- effectBlocking(cp.getConnection())
       currentSequenceNumber <- Ref.make(0L)
       closedRef             <- Ref.make(false)
       _                     <- UIO(println("creating new h2 buffer!"))
@@ -41,9 +41,9 @@ object H2LocalBuffer {
         val takeQuery = s"SELECT * FROM MESSAGES WHERE STATE = '$notSent' ORDER BY SEQ_NUM LIMIT $upTo"
 
         (for {
-          msgs <- query(connection)(takeQuery)(rs => list(rs, upTo))
+          msgs           <- query(connection)(takeQuery)(rs => list(rs, upTo))
           setPendingQuery = s"UPDATE MESSAGES SET STATE='$pending' WHERE ID IN (${msgs.map(_.id).mkString(",")})"
-          _ <- update(connection)(setPendingQuery)
+          _              <- update(connection)(setPendingQuery)
         } yield msgs)
           .mapError(LocalBufferError.apply)
       }
@@ -103,14 +103,14 @@ object H2LocalBuffer {
   private def list(resultSet: ResultSet, count: Int): Task[List[PersistedRecord]] = {
     def next(rs: ResultSet): IO[Option[Throwable], PersistedRecord] = {
       (for {
-        _          <- ZIO.when(!rs.next)(ZIO.fail(null))
-        produceKey <- Task(Try(Chunk.fromArray(rs.getBytes(3))).toOption)
-        topic = rs.getString(2)
+        _                <- ZIO.when(!rs.next)(ZIO.fail(null))
+        produceKey       <- Task(Try(Chunk.fromArray(rs.getBytes(3))).toOption)
+        topic             = rs.getString(2)
         producePartition <- Task(rs.getInt(4)).map(p => if (p != -1) Option(p) else None)
         id               <- Task(rs.getLong(1))
-        encodedPayload = Try(Chunk.fromArray(rs.getBytes(5))).toOption
-        header    <- decodeHeaders(rs.getString(6))
-        submitted <- UIO(rs.getLong(9))
+        encodedPayload    = Try(Chunk.fromArray(rs.getBytes(5))).toOption
+        header           <- decodeHeaders(rs.getString(6))
+        submitted        <- UIO(rs.getLong(9))
       } yield PersistedRecord(
         id,
         SerializableTarget(topic, producePartition, produceKey),
@@ -133,23 +133,23 @@ object H2LocalBuffer {
   ): RIO[Clock with Blocking, Int] =
     for {
       insertStatement <- effectBlocking(connection.prepareStatement(InsertQuery))
-      payloadBytes = message.encodedMsg.value.map(_.toArray).orNull
-      base64Headers <- encodeHeaderToBase64(message)
-      base64Key     <- keyBytes(message)
-      lastSeqNum    <- currentSequenceNumber.updateAndGet(_ + 1)
-      timeMillis    <- clock.currentTime(MILLISECONDS)
-      _ <- Task {
-        insertStatement.setLong(1, message.id)
-        insertStatement.setString(2, message.topic)
-        insertStatement.setBytes(3, base64Key.orNull)
-        insertStatement.setInt(4, message.target.partition.getOrElse(-1))
-        insertStatement.setBytes(5, payloadBytes)
-        insertStatement.setString(6, base64Headers)
-        insertStatement.setString(7, notSent)
-        insertStatement.setLong(8, lastSeqNum)
-        insertStatement.setLong(9, timeMillis)
-      }
-      res <- effectBlocking(insertStatement.executeUpdate())
+      payloadBytes     = message.encodedMsg.value.map(_.toArray).orNull
+      base64Headers   <- encodeHeaderToBase64(message)
+      base64Key       <- keyBytes(message)
+      lastSeqNum      <- currentSequenceNumber.updateAndGet(_ + 1)
+      timeMillis      <- clock.currentTime(MILLISECONDS)
+      _               <- Task {
+                           insertStatement.setLong(1, message.id)
+                           insertStatement.setString(2, message.topic)
+                           insertStatement.setBytes(3, base64Key.orNull)
+                           insertStatement.setInt(4, message.target.partition.getOrElse(-1))
+                           insertStatement.setBytes(5, payloadBytes)
+                           insertStatement.setString(6, base64Headers)
+                           insertStatement.setString(7, notSent)
+                           insertStatement.setLong(8, lastSeqNum)
+                           insertStatement.setLong(9, timeMillis)
+                         }
+      res             <- effectBlocking(insertStatement.executeUpdate())
     } yield res
 
   private def keyBytes(message: PersistedRecord): Task[Option[Array[Byte]]] =

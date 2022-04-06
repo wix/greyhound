@@ -35,7 +35,7 @@ private[retry] object BlockingRetryRecordHandler {
 
       def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[Clock with GreyhoundMetrics with Blocking, PollResult] = {
         for {
-          shouldBlock <- blockingStateResolver.resolve(record)
+          shouldBlock     <- blockingStateResolver.resolve(record)
           shouldPollAgain <-
             if (shouldBlock) {
               clock.sleep(100.milliseconds) *>
@@ -47,7 +47,7 @@ private[retry] object BlockingRetryRecordHandler {
 
       def blockOnErrorFor(interval: Duration) = {
         for {
-          start <- currentTime(TimeUnit.MILLISECONDS)
+          start            <- currentTime(TimeUnit.MILLISECONDS)
           continueBlocking <-
             if (interval.toMillis > 100L) {
               awaitShutdown(record.topicPartition).flatMap(
@@ -68,11 +68,11 @@ private[retry] object BlockingRetryRecordHandler {
         interval: Option[Duration]
       ): ZIO[Clock with R with GreyhoundMetrics with Blocking, Nothing, LastHandleResult] = {
         handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false)).catchAll {
-          case NonRetriableException(cause) =>
+          case NonRetriableException(cause)        =>
             handleNonRetriable(record, topicPartition, cause)
           case Right(NonRetriableException(cause)) =>
             handleNonRetriable(record, topicPartition, cause)
-          case error =>
+          case error                               =>
             interval
               .map { interval =>
                 report(BlockingRetryHandlerInvocationFailed(topicPartition, record.offset, error.toString)) *> blockOnErrorFor(interval)

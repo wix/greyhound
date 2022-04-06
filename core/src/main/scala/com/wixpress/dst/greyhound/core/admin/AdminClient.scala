@@ -182,7 +182,7 @@ object AdminClient {
                 .map {
                   case ((topic, TopicProperties(_, partitions, _, replication)), TopicProperties(_, _, propertiesMap, _)) =>
                     topic -> TopicPropertiesResult(topic, partitions, propertiesMap, replication)
-                  case ((topic, _), _) => topic -> TopicPropertiesResult.TopicDoesnExist(topic)
+                  case ((topic, _), _)                                                                                    => topic -> TopicPropertiesResult.TopicDoesnExist(topic)
                 }
           }
 
@@ -202,30 +202,31 @@ object AdminClient {
 
         override def groupOffsets(groups: Set[String]): RIO[Blocking, Map[GroupTopicPartition, PartitionOffset]] =
           for {
-            result <- ZIO.foreach(groups)(group => effectBlocking(group -> client.listConsumerGroupOffsets(group)))
+            result           <- ZIO.foreach(groups)(group => effectBlocking(group -> client.listConsumerGroupOffsets(group)))
             // TODO: remove ._1 , ._2
             rawOffsetsEffects = result.toMap.mapValues(_.partitionsToOffsetAndMetadata().asZio)
-            offsetsEffects = rawOffsetsEffects.map(offset =>
-              offset._2.map(f =>
-                f.asScala.map(p => p.copy(GroupTopicPartition(offset._1, core.TopicPartition(p._1)), PartitionOffset(p._2.offset())))
+            offsetsEffects    =
+              rawOffsetsEffects.map(offset =>
+                offset._2.map(f =>
+                  f.asScala.map(p => p.copy(GroupTopicPartition(offset._1, core.TopicPartition(p._1)), PartitionOffset(p._2.offset())))
+                )
               )
-            )
-            offsetsMapSets <- ZIO.collectAll(offsetsEffects)
-            groupOffsets = offsetsMapSets.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++ y)
+            offsetsMapSets   <- ZIO.collectAll(offsetsEffects)
+            groupOffsets      = offsetsMapSets.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++ y)
           } yield groupOffsets
 
         override def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]] =
           for {
-            result <- effectBlocking(client.describeConsumerGroups(groups.asJava))
+            result      <- effectBlocking(client.describeConsumerGroups(groups.asJava))
             groupEffects = result.describedGroups().asScala.mapValues(_.asZio).toMap
-            groupsList <- ZIO.collectAll(groupEffects.values)
-            membersMap = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala)).toMap
-            groupState = membersMap
-              .mapValues(members => {
-                val topicPartitionsMap = members.flatMap(_.assignment().topicPartitions().asScala)
-                GroupState(topicPartitionsMap.map(TopicPartition(_)).toSet)
-              })
-              .toMap
+            groupsList  <- ZIO.collectAll(groupEffects.values)
+            membersMap   = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala)).toMap
+            groupState   = membersMap
+                             .mapValues(members => {
+                               val topicPartitionsMap = members.flatMap(_.assignment().topicPartitions().asScala)
+                               GroupState(topicPartitionsMap.map(TopicPartition(_)).toSet)
+                             })
+                             .toMap
           } yield groupState
 
         override def deleteTopic(topic: Topic): RIO[Blocking, Unit] = {
@@ -248,9 +249,9 @@ object AdminClient {
           val maybePartitions: util.List[common.TopicPartition] = onlyPartitions.map(_.map(_.asKafka).toList.asJava).orNull
           for {
             desc <- effectBlocking(
-              client.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions))
-            )
-            res <- effectBlocking(desc.partitionsToOffsetAndMetadata().get())
+                      client.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions))
+                    )
+            res  <- effectBlocking(desc.partitionsToOffsetAndMetadata().get())
           } yield res.asScala.toMap.map { case (tp, o) => (TopicPartition(tp), o.offset()) }
         }
 
@@ -279,20 +280,20 @@ object AdminClient {
               described   <- describeConfigs(client, Set(topic))
               beforeProps <- described.values.head.getOrFail
               beforeConfig = beforeProps.propertiesThat(_.isTopicSpecific)
-              configToSet = configProperties.foldLeft(beforeConfig) {
-                case (acc, (key, ConfigPropOp.Delete))     => acc - key
-                case (acc, (key, ConfigPropOp.Set(value))) => acc + (key -> value)
-              }
-              configJava = new Config(configToSet.map { case (k, v) => new ConfigEntry(k, v) }.toList.asJava)
-              _ <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava))
-                .flatMap(_.all().asZio)
+              configToSet  = configProperties.foldLeft(beforeConfig) {
+                               case (acc, (key, ConfigPropOp.Delete))     => acc - key
+                               case (acc, (key, ConfigPropOp.Set(value))) => acc + (key -> value)
+                             }
+              configJava   = new Config(configToSet.map { case (k, v) => new ConfigEntry(k, v) }.toList.asJava)
+              _           <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava))
+                               .flatMap(_.all().asZio)
             } yield ()
           ).reporting(TopicConfigUpdated(topic, configProperties, incremental = false, attributes, _))
         }
 
         private def updateTopicConfigIncremental(topic: Topic, configProperties: Map[String, ConfigPropOp]) = {
           val resource = new ConfigResource(ConfigResource.Type.TOPIC, topic)
-          val ops = configProperties.map {
+          val ops      = configProperties.map {
             case (key, value) =>
               value match {
                 case ConfigPropOp.Delete     => new AlterConfigOp(new ConfigEntry(key, null), OpType.DELETE)

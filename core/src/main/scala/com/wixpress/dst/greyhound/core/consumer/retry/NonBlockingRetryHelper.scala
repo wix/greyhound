@@ -69,7 +69,7 @@ object NonBlockingRetryHelper {
     ): URIO[Clock, RetryDecision] = currentTime.map(now => {
       val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
       val originalTopic    = retryAttempt.fold(record.topic)(_.originalTopic)
-      val retryTopic = subscription match {
+      val retryTopic       = subscription match {
         case _: TopicPattern => patternRetryTopic(group, nextRetryAttempt)
         case _: Topics       => fixedRetryTopic(originalTopic, group, nextRetryAttempt)
       }

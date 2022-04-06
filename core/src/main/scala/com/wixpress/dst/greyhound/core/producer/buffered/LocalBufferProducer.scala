@@ -111,43 +111,43 @@ object LocalBufferProducer {
       router         <- ProduceFlusher.make(producer, config.giveUpAfter, config.retryInterval, config.strategy)
       responsesQueue <- Queue.bounded[Response](10000)
       _              <- drainResponsesForever(responsesQueue, config, state)(localBuffer)
-      fiber <- ZIO
-        .whenM(localBuffer.isOpen)(
-          localBuffer
-            .take(config.localBufferBatchSize)
-            .timed
-            .tap { case (d, msgs) => report(LocalBufferRetrievedBatch(msgs.size, d.toMillis, config.id)) }
-            .map(_._2)
-            .flatMap(msgs =>
-              state.update(_.incQueryCount).commit *>
-                ZIO
-                  .foreach(msgs)(record =>
-                    router
-                      .produceAsync(producerRecord(record))
-                      .tap(
-                        _.tapBoth(
-                          error => responsesQueue.offer(Response(record.id, record.submitted, record.topic, Left(error))),
-                          metadata => responsesQueue.offer(Response(record.id, record.submitted, record.topic, Right(metadata)))
-                        ).forkDaemon
-                      )
-                  )
-                  .flatMap(ZIO.collectAll(_))
-                  .as(msgs)
-            )
-            .tap(r =>
-              ZIO.whenCase(r.size) {
-                case 0 =>
-                  state.get
-                    .flatMap(state => STM.check(state.enqueued > 0 || !state.running))
-                    .commit
-                    .delay(100.millis) // this waits until there are more messages in buffer
-                case x if x <= 10 => sleep(10.millis)
-              }
-            )
-            .catchAllCause { e: Cause[Throwable] => report(LocalBufferProducerCaughtError(e.squashTrace)) }
-        )
-        .repeatWhileM(_ => state.get.commit.map(s => s.running || s.enqueued > 0))
-        .forkDaemon
+      fiber          <- ZIO
+                          .whenM(localBuffer.isOpen)(
+                            localBuffer
+                              .take(config.localBufferBatchSize)
+                              .timed
+                              .tap { case (d, msgs) => report(LocalBufferRetrievedBatch(msgs.size, d.toMillis, config.id)) }
+                              .map(_._2)
+                              .flatMap(msgs =>
+                                state.update(_.incQueryCount).commit *>
+                                  ZIO
+                                    .foreach(msgs)(record =>
+                                      router
+                                        .produceAsync(producerRecord(record))
+                                        .tap(
+                                          _.tapBoth(
+                                            error => responsesQueue.offer(Response(record.id, record.submitted, record.topic, Left(error))),
+                                            metadata => responsesQueue.offer(Response(record.id, record.submitted, record.topic, Right(metadata)))
+                                          ).forkDaemon
+                                        )
+                                    )
+                                    .flatMap(ZIO.collectAll(_))
+                                    .as(msgs)
+                              )
+                              .tap(r =>
+                                ZIO.whenCase(r.size) {
+                                  case 0            =>
+                                    state.get
+                                      .flatMap(state => STM.check(state.enqueued > 0 || !state.running))
+                                      .commit
+                                      .delay(100.millis) // this waits until there are more messages in buffer
+                                  case x if x <= 10 => sleep(10.millis)
+                                }
+                              )
+                              .catchAllCause { e: Cause[Throwable] => report(LocalBufferProducerCaughtError(e.squashTrace)) }
+                          )
+                          .repeatWhileM(_ => state.get.commit.map(s => s.running || s.enqueued > 0))
+                          .forkDaemon
     } yield new LocalBufferProducer[R] {
       override def produce(
         record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
@@ -168,11 +168,11 @@ object LocalBufferProducer {
       ): ZIO[ZEnv with GreyhoundMetrics with R, LocalBufferError, BufferedProduceResult] =
         validate(config, state) *>
           (for {
-            key <- record.key
-              .map(k => keySerializer.serialize(record.topic, k).map(Option(_)))
-              .getOrElse(ZIO.none)
-              .mapError(LocalBufferError.apply)
-            value <- valueSerializer.serializeOpt(record.topic, record.value).mapError(LocalBufferError.apply)
+            key             <- record.key
+                                 .map(k => keySerializer.serialize(record.topic, k).map(Option(_)))
+                                 .getOrElse(ZIO.none)
+                                 .mapError(LocalBufferError.apply)
+            value           <- valueSerializer.serializeOpt(record.topic, record.value).mapError(LocalBufferError.apply)
             serializedRecord = record.copy(key = key, value = value)
             encryptedRecord <- encryptor.encrypt(serializedRecord).mapError(LocalBufferError.apply)
             response        <- produce(encryptedRecord)
@@ -243,7 +243,7 @@ object LocalBufferProducer {
           case Response(id, submitted, topic, Left(error)) =>
             updateReferences(Left(error), state, id, config) *> localBuffer.markDead(id) *>
               report(ResilientProducerFailedNonRetriable(error, config.id, topic, id, submitted))
-          case Response(id, _, topic, Right(metadata)) =>
+          case Response(id, _, topic, Right(metadata))     =>
             updateReferences(Right(metadata), state, id, config) *> localBuffer.delete(id) *>
               report(ResilientProducerSentRecord(topic, metadata.partition, metadata.offset, config.id, id))
         }
@@ -266,7 +266,7 @@ object LocalBufferProducer {
             .produceAsync(record)
             .map(willComplete => BufferedProduceResult(notPersisted, willComplete))
             .catchAll(produceError => UIO(BufferedProduceResult(notPersisted, ZIO.fail(produceError))))
-      case _ => ZIO.fail(error)
+      case _            => ZIO.fail(error)
     }
 
   private def enqueueRecordToBuffer(

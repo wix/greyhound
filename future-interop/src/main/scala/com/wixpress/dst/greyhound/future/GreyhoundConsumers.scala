@@ -31,22 +31,22 @@ case class GreyhoundConsumersBuilder(
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
-      runtime <- ZIO.runtime[Env]
+      runtime     <- ZIO.runtime[Env]
       makeConsumer = ZManaged.foreach(handlers.toSeq) {
-        case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
-          RecordConsumer.make(
-            handler = handler,
-            config = mutateConsumerConfig(
-              RecordConsumerConfig(
-                config.bootstrapServers,
-                group,
-                ConsumerSubscription.Topics(initialTopics),
-                offsetReset = offsetReset,
-                clientId = clientId
-              )
-            )
-          )
-      }
+                       case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
+                         RecordConsumer.make(
+                           handler = handler,
+                           config = mutateConsumerConfig(
+                             RecordConsumerConfig(
+                               config.bootstrapServers,
+                               group,
+                               ConsumerSubscription.Topics(initialTopics),
+                               offsetReset = offsetReset,
+                               clientId = clientId
+                             )
+                           )
+                         )
+                     }
       reservation <- makeConsumer.reserve
       consumers   <- reservation.acquire
     } yield new GreyhoundConsumers {

@@ -18,7 +18,7 @@ package object consumer {
     ZIO.whenCase(subscription) {
       case TopicPattern(pattern, _) =>
         consumer.subscribePattern(pattern, listener)
-      case Topics(topics) =>
+      case Topics(topics)           =>
         consumer.subscribe(topics, listener)
     }
 

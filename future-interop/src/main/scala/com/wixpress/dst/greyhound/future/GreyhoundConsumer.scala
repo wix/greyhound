@@ -35,7 +35,7 @@ case class GreyhoundConsumer[K, V](
           error match {
             case Left(serializationError) =>
               ZIO.fromFuture(_ => errorHandler.onSerializationError(serializationError, record)).ignore
-            case Right(ex) => ZIO.fail(ex)
+            case Right(ex)                => ZIO.fail(ex)
           }
       }
 

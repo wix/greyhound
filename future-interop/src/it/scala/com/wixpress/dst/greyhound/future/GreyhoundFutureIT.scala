@@ -38,8 +38,8 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
 
   "produce and consume a single message" in
     new Ctx {
-      val promise = Promise[ConsumerRecord[Int, String]]
-      val config  = GreyhoundConfig(environment.kafka.bootstrapServers)
+      val promise          = Promise[ConsumerRecord[Int, String]]
+      val config           = GreyhoundConfig(environment.kafka.bootstrapServers)
       val consumersBuilder = GreyhoundConsumersBuilder(config)
         .withConsumer(
           GreyhoundConsumer(
@@ -60,14 +60,14 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
       val handled = for {
         consumers <- consumersBuilder.build
         producer  <- GreyhoundProducerBuilder(config).build
-        _ <- producer.produce(
-          record = ProducerRecord(topic, "hello world", Some(123)),
-          keySerializer = Serdes.IntSerde,
-          valueSerializer = Serdes.StringSerde
-        )
-        handled <- promise.future
-        _       <- producer.shutdown
-        _       <- consumers.shutdown
+        _         <- producer.produce(
+                       record = ProducerRecord(topic, "hello world", Some(123)),
+                       keySerializer = Serdes.IntSerde,
+                       valueSerializer = Serdes.StringSerde
+                     )
+        handled   <- promise.future
+        _         <- producer.shutdown
+        _         <- consumers.shutdown
       } yield handled
 
       handled must (beRecordWithKey(123) and beRecordWithValue("hello world")).awaitFor(1.minute)
@@ -78,7 +78,7 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
     val config            = GreyhoundConfig(environment.kafka.bootstrapServers)
     val successfulAttempt = 3
     val atomicInteger     = new AtomicInteger(successfulAttempt)
-    val consumer = GreyhoundConsumer(
+    val consumer          = GreyhoundConsumer(
       initialTopics = Set(topic),
       group = "group-1",
       clientId = "client-id-1",
@@ -99,15 +99,15 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
   "consume a message with nonblocking retry policy" in
     new RetryContext {
       val result = for {
-        consumers <- GreyhoundConsumersBuilder(config)
-          .withConsumer(consumer.withNonBlockingRetry(5.millis, 5.millis))
-          .build
-        producer <- GreyhoundProducerBuilder(config).build
-        _ <- producer.produce(
-          record = ProducerRecord(topic, "Promise!", Some(123)),
-          keySerializer = Serdes.IntSerde,
-          valueSerializer = Serdes.StringSerde
-        )
+        consumers     <- GreyhoundConsumersBuilder(config)
+                           .withConsumer(consumer.withNonBlockingRetry(5.millis, 5.millis))
+                           .build
+        producer      <- GreyhoundProducerBuilder(config).build
+        _             <- producer.produce(
+                           record = ProducerRecord(topic, "Promise!", Some(123)),
+                           keySerializer = Serdes.IntSerde,
+                           valueSerializer = Serdes.StringSerde
+                         )
         promiseResult <- promise.future
         _             <- producer.shutdown
         _             <- consumers.shutdown
@@ -119,15 +119,15 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
   "consume a message with blocking retry policy" in
     new RetryContext {
       val result = for {
-        consumers <- GreyhoundConsumersBuilder(config)
-          .withConsumer(consumer.withBlockingRetry(5.millis, 5.millis))
-          .build
-        producer <- GreyhoundProducerBuilder(config).build
-        _ <- producer.produce(
-          record = ProducerRecord(topic, "Promise!", Some(123)),
-          keySerializer = Serdes.IntSerde,
-          valueSerializer = Serdes.StringSerde
-        )
+        consumers     <- GreyhoundConsumersBuilder(config)
+                           .withConsumer(consumer.withBlockingRetry(5.millis, 5.millis))
+                           .build
+        producer      <- GreyhoundProducerBuilder(config).build
+        _             <- producer.produce(
+                           record = ProducerRecord(topic, "Promise!", Some(123)),
+                           keySerializer = Serdes.IntSerde,
+                           valueSerializer = Serdes.StringSerde
+                         )
         promiseResult <- promise.future
         _             <- producer.shutdown
         _             <- consumers.shutdown
@@ -140,8 +140,8 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
     new Ctx {
       implicit val context = Context("some-context")
 
-      val promise = Promise[Context]
-      val config  = GreyhoundConfig(environment.kafka.bootstrapServers)
+      val promise          = Promise[Context]
+      val config           = GreyhoundConfig(environment.kafka.bootstrapServers)
       val consumersBuilder = GreyhoundConsumersBuilder(config)
         .withConsumer(
           GreyhoundConsumer(
@@ -169,14 +169,14 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
       val handled = for {
         consumers <- consumersBuilder.build
         producer  <- producerBuilder.build
-        _ <- producer.produce(
-          record = ProducerRecord(topic, "hello world", Some(123)),
-          keySerializer = Serdes.IntSerde,
-          valueSerializer = Serdes.StringSerde
-        )
-        handled <- promise.future
-        _       <- producer.shutdown
-        _       <- consumers.shutdown
+        _         <- producer.produce(
+                       record = ProducerRecord(topic, "hello world", Some(123)),
+                       keySerializer = Serdes.IntSerde,
+                       valueSerializer = Serdes.StringSerde
+                     )
+        handled   <- promise.future
+        _         <- producer.shutdown
+        _         <- consumers.shutdown
       } yield handled
 
       handled must equalTo(context).awaitFor(1.minute)
@@ -188,7 +188,7 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
       val runtime = GreyhoundRuntimeBuilder()
         .withMetricsReporter(metric => UIO(metrics += metric))
         .build
-      val config = GreyhoundConfig(environment.kafka.bootstrapServers, runtime)
+      val config  = GreyhoundConfig(environment.kafka.bootstrapServers, runtime)
       val builder = GreyhoundConsumersBuilder(config)
         .withConsumer(
           GreyhoundConsumer(
@@ -218,9 +218,9 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
 
   "handle errors" in
     new Ctx {
-      val errorRecord  = Promise[ConsumerRecord[Int, String]]
-      val errorMessage = Promise[String]
-      val config       = GreyhoundConfig(environment.kafka.bootstrapServers)
+      val errorRecord      = Promise[ConsumerRecord[Int, String]]
+      val errorMessage     = Promise[String]
+      val config           = GreyhoundConfig(environment.kafka.bootstrapServers)
       val consumersBuilder = GreyhoundConsumersBuilder(config)
         .withConsumer(
           GreyhoundConsumer(
@@ -246,13 +246,13 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
 
       val (err, recordOnErrorHandler) = Await.result(
         for {
-          consumers <- consumersBuilder.build
-          producer  <- GreyhoundProducerBuilder(config).build
-          _ <- producer.produce(
-            record = ProducerRecord(topic, "hello world", Some(123)),
-            keySerializer = Serdes.IntSerde,
-            valueSerializer = Serdes.StringSerde
-          )
+          consumers    <- consumersBuilder.build
+          producer     <- GreyhoundProducerBuilder(config).build
+          _            <- producer.produce(
+                            record = ProducerRecord(topic, "hello world", Some(123)),
+                            keySerializer = Serdes.IntSerde,
+                            valueSerializer = Serdes.StringSerde
+                          )
           errorRecord  <- errorRecord.future
           errorMessage <- errorMessage.future
           _            <- producer.shutdown
@@ -267,8 +267,8 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
 
   "override consumer properties" in
     new Ctx {
-      val handlerInvocations = new AtomicInteger(0)
-      val config             = GreyhoundConfig(environment.kafka.bootstrapServers)
+      val handlerInvocations                     = new AtomicInteger(0)
+      val config                                 = GreyhoundConfig(environment.kafka.bootstrapServers)
       val accumulator: Handle[Partition, String] = aRecordHandler {
         new RecordHandler[Partition, String] {
           override def handle(record: ConsumerRecord[Partition, String])(implicit ec: ExecutionContext): Future[Any] =
@@ -299,11 +299,11 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
         for {
           consumers <- consumersBuilder.build
           producer  <- GreyhoundProducerBuilder(config).build
-          _ <- producer.produce(
-            record = ProducerRecord(topic, "hello world", Some(123)),
-            keySerializer = Serdes.IntSerde,
-            valueSerializer = Serdes.StringSerde
-          )
+          _         <- producer.produce(
+                         record = ProducerRecord(topic, "hello world", Some(123)),
+                         keySerializer = Serdes.IntSerde,
+                         valueSerializer = Serdes.StringSerde
+                       )
         } yield (consumers, producer),
         60.seconds
       )
@@ -318,16 +318,16 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
 
   "override producer properties" in
     new Ctx {
-      val config = GreyhoundConfig(environment.kafka.bootstrapServers)
+      val config      = GreyhoundConfig(environment.kafka.bootstrapServers)
       val produceFail = Try(
         Await.result(
           for {
             producer <- GreyhoundProducerBuilder(config, mutateProducer = _.withProperties(Map("max.request.size" -> "1"))).build
-            _ <- producer.produce(
-              record = ProducerRecord(topic, "hello world", Some(123)),
-              keySerializer = Serdes.IntSerde,
-              valueSerializer = Serdes.StringSerde
-            )
+            _        <- producer.produce(
+                          record = ProducerRecord(topic, "hello world", Some(123)),
+                          keySerializer = Serdes.IntSerde,
+                          valueSerializer = Serdes.StringSerde
+                        )
           } yield (),
           60.seconds
         )

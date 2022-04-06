@@ -39,7 +39,7 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
           recordFrom(now, retryAttempt, record)
             .fold(_ => NoMoreRetries, RetryWith)
         )
-      case NonRetriableError =>
+      case NonRetriableError                      =>
         UIO(NoMoreRetries)
     }
 

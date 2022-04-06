@@ -80,18 +80,21 @@ trait BaseTestWithSharedEnv[R <: Has[_], SHARED] extends SpecificationWithJUnit 
         putStrLn(s"***** Shared environment initializing ****") *>
           (for {
             reservation <- sharedEnv.reserve
-            acquired <- reservation.acquire
-              .provide(e)
-              .timed
-              .tapBoth(
-                (error: Throwable) =>
-                  UIO(
-                    new Throwable(s"***** shared environment initialization failed - ${error.getClass.getName}: ${error.getMessage}", error)
-                      .printStackTrace()
-                  ),
-                { case (elapsed, _) => putStrLn(s"***** Shared environment initialized in ${elapsed.toMillis} ms *****") }
-              )
-            (_, res) = acquired
+            acquired    <- reservation.acquire
+                             .provide(e)
+                             .timed
+                             .tapBoth(
+                               (error: Throwable) =>
+                                 UIO(
+                                   new Throwable(
+                                     s"***** shared environment initialization failed - ${error.getClass.getName}: ${error.getMessage}",
+                                     error
+                                   )
+                                     .printStackTrace()
+                                 ),
+                               { case (elapsed, _) => putStrLn(s"***** Shared environment initialized in ${elapsed.toMillis} ms *****") }
+                             )
+            (_, res)     = acquired
           } yield res -> reservation.release(Exit.unit).unit.provide(e))
       )
     )

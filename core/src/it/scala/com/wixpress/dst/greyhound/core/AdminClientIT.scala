@@ -117,10 +117,10 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       val topic = aTopicConfig()
       for {
         TestResources(kafka, _) <- getShared
-        group = "group1"
-        groups <- RecordConsumer
-          .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), RecordHandler.empty)
-          .use { _ => kafka.adminClient.listGroups() }
+        group                    = "group1"
+        groups                  <- RecordConsumer
+                                     .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), RecordHandler.empty)
+                                     .use { _ => kafka.adminClient.listGroups() }
       } yield {
         (groups === Set(group))
       }
@@ -133,22 +133,23 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         _                                 <- kafka.adminClient.createTopics(Set(topic))
         groupOffsetsRef                   <- Ref.make[Map[GroupTopicPartition, PartitionOffset]](Map.empty)
         calledGroupsTopicsAfterAssignment <- CountDownLatch.make(1)
-        group = s"group1-${System.currentTimeMillis}"
-        handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-          {
-            kafka.adminClient.groupOffsets(Set(group)).flatMap(r => groupOffsetsRef.set(r)) *> calledGroupsTopicsAfterAssignment.countDown
-          }
-        }
-        (awaitResult, groupOffsets) <- RecordConsumer
-          .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
-          .use { _ =>
-            for {
-              recordPartition <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
-              _               <- producer.produce(recordPartition)
-              awaitResult     <- calledGroupsTopicsAfterAssignment.await.timeout(fromScala(10.seconds))
-              groupOffsets    <- groupOffsetsRef.get
-            } yield (awaitResult, groupOffsets)
-          }
+        group                              = s"group1-${System.currentTimeMillis}"
+        handler                            = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+                                               {
+                                                 kafka.adminClient.groupOffsets(Set(group)).flatMap(r => groupOffsetsRef.set(r)) *>
+                                                   calledGroupsTopicsAfterAssignment.countDown
+                                               }
+                                             }
+        (awaitResult, groupOffsets)       <- RecordConsumer
+                                               .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
+                                               .use { _ =>
+                                                 for {
+                                                   recordPartition <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
+                                                   _               <- producer.produce(recordPartition)
+                                                   awaitResult     <- calledGroupsTopicsAfterAssignment.await.timeout(fromScala(10.seconds))
+                                                   groupOffsets    <- groupOffsetsRef.get
+                                                 } yield (awaitResult, groupOffsets)
+                                               }
       } yield {
         (awaitResult aka "awaitResult" must not(beNone)) and
           (groupOffsets === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L)))
@@ -163,24 +164,24 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         _                                <- kafka.adminClient.createTopics(Set(topic))
         groupStateRef                    <- Ref.make[Option[GroupState]](None)
         calledGroupsStateAfterAssignment <- CountDownLatch.make(1)
-        group = "group1"
-        handler = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-          {
-            kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *>
-              calledGroupsStateAfterAssignment.countDown
-          }
-        }
-        (awaitResult, stateWhenStarted) <- RecordConsumer
-          .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
-          .use { _ =>
-            for {
-              recordPartition  <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
-              _                <- producer.produce(recordPartition)
-              awaitResult      <- calledGroupsStateAfterAssignment.await.timeout(fromScala(10.seconds))
-              stateWhenStarted <- groupStateRef.get
-            } yield (awaitResult, stateWhenStarted)
-          }
-        stateAfterShutdown <- kafka.adminClient.groupState(Set(group)).map(_.get(group))
+        group                             = "group1"
+        handler                           = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+                                              {
+                                                kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *>
+                                                  calledGroupsStateAfterAssignment.countDown
+                                              }
+                                            }
+        (awaitResult, stateWhenStarted)  <- RecordConsumer
+                                              .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
+                                              .use { _ =>
+                                                for {
+                                                  recordPartition  <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
+                                                  _                <- producer.produce(recordPartition)
+                                                  awaitResult      <- calledGroupsStateAfterAssignment.await.timeout(fromScala(10.seconds))
+                                                  stateWhenStarted <- groupStateRef.get
+                                                } yield (awaitResult, stateWhenStarted)
+                                              }
+        stateAfterShutdown               <- kafka.adminClient.groupState(Set(group)).map(_.get(group))
       } yield {
         (awaitResult aka "awaitResult" must not(beNone)) and
           (stateWhenStarted === Some(GroupState(Set(TopicPartition(topic.name, 0), TopicPartition(topic.name, 1))))) and
@@ -227,17 +228,17 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         for {
           TestResources(kafka, _) <- getShared
           _                       <- kafka.adminClient.createTopics(Set(topic))
-          _ <- kafka.adminClient.updateTopicConfigProperties(
-            topic.name,
-            Map(
-              MAX_MESSAGE_BYTES_CONFIG   -> ConfigPropOp.Set("2000000"),
-              RETENTION_MS_CONFIG        -> ConfigPropOp.Set("3000000"),
-              DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
-            ),
-            nonIncremental
-          )
-          props         <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
-          updatedEvents <- TestMetrics.reportedOf[TopicConfigUpdated]()
+          _                       <- kafka.adminClient.updateTopicConfigProperties(
+                                       topic.name,
+                                       Map(
+                                         MAX_MESSAGE_BYTES_CONFIG   -> ConfigPropOp.Set("2000000"),
+                                         RETENTION_MS_CONFIG        -> ConfigPropOp.Set("3000000"),
+                                         DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
+                                       ),
+                                       nonIncremental
+                                     )
+          props                   <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
+          updatedEvents           <- TestMetrics.reportedOf[TopicConfigUpdated]()
         } yield (props.properties.toSeq must
           contain(
             MAX_MESSAGE_BYTES_CONFIG -> "2000000",

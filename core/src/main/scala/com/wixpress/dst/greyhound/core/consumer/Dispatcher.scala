@@ -56,8 +56,8 @@ object Dispatcher {
     } yield new Dispatcher[R] {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
         for {
-          _ <- report(SubmittingRecord(group, clientId, record, consumerAttributes))
-          partition = RecordTopicPartition(record)
+          _         <- report(SubmittingRecord(group, clientId, record, consumerAttributes))
+          partition  = RecordTopicPartition(record)
           worker    <- workerFor(partition)
           submitted <- worker.submit(record)
         } yield if (submitted) Submitted else Rejected
@@ -104,10 +104,10 @@ object Dispatcher {
 
       override def pause: URIO[GreyhoundMetrics, Unit] = for {
         resume <- Promise.make[Nothing, Unit]
-        _ <- state.updateSome {
-          case DispatcherState.Running =>
-            DispatcherState.Paused(resume)
-        }
+        _      <- state.updateSome {
+                    case DispatcherState.Running =>
+                      DispatcherState.Paused(resume)
+                  }
       } yield ()
 
       override def resume: URIO[GreyhoundMetrics, Unit] = state.modify {
@@ -129,11 +129,11 @@ object Dispatcher {
         workers.get.flatMap { workers1 =>
           workers1.get(partition) match {
             case Some(worker) => ZIO.succeed(worker)
-            case None =>
+            case None         =>
               for {
-                _      <- report(StartingWorker(group, clientId, partition, consumerAttributes))
-                worker <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout, consumerAttributes)
-                _      <- workers.update(_ + (partition -> worker))
+                _               <- report(StartingWorker(group, clientId, partition, consumerAttributes))
+                worker          <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout, consumerAttributes)
+                _               <- workers.update(_ + (partition -> worker))
                 shutdownPromise <- AwaitShutdown.make
                 _               <- workersShutdownRef.update(_.updated(partition, shutdownPromise))
               } yield worker
@@ -197,7 +197,7 @@ object Dispatcher {
     ): URIO[R with Env, Worker] = for {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
-      fiber <-
+      fiber         <-
         pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
           .repeatWhile(_ == true)
           .forkDaemon
@@ -254,17 +254,17 @@ object Dispatcher {
     ): URIO[R with Env, Boolean] =
       internalState.update(s => s.cleared).commit *>
         state.get.flatMap {
-          case DispatcherState.Running =>
+          case DispatcherState.Running        =>
             queue.poll.flatMap {
               case Some(record) =>
                 report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *> internalState.update(_.started).commit *>
                   handle(record).interruptible *> isActive(internalState)
-              case None => isActive(internalState).delay(5.millis)
+              case None         => isActive(internalState).delay(5.millis)
             }
           case DispatcherState.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes)) *> resume.await.timeout(30.seconds) *>
               isActive(internalState)
-          case DispatcherState.ShuttingDown =>
+          case DispatcherState.ShuttingDown   =>
             UIO(false)
         }
   }

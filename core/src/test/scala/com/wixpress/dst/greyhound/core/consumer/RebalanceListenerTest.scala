@@ -11,16 +11,19 @@ class RebalanceListenerTest extends JUnitRunnableSpec {
     testM("*> operator") {
       for {
         loggedRef <- Ref.make(Vector.empty[String])
-        log = (s: String) => loggedRef.update(_ :+ s)
-        runtime <- ZIO.runtime[Any]
-        unsafeLog = (s: String) => runtime.unsafeRunTask(log(s))
-        listener = (id: String) =>
-          new RebalanceListener[Any] {
-            override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] =
-              log(s"$id.revoke $partitions").as(DelayedRebalanceEffect(unsafeLog(s"$id.revoke.tle $partitions")))
-            override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, Any] =
-              log(s"$id.assigned $partitions")
-          }
+        log        = (s: String) => loggedRef.update(_ :+ s)
+        runtime   <- ZIO.runtime[Any]
+        unsafeLog  = (s: String) => runtime.unsafeRunTask(log(s))
+        listener   = (id: String) =>
+                       new RebalanceListener[Any] {
+                         override def onPartitionsRevoked(
+                           consumer: Consumer,
+                           partitions: Set[TopicPartition]
+                         ): URIO[Any, DelayedRebalanceEffect] =
+                           log(s"$id.revoke $partitions").as(DelayedRebalanceEffect(unsafeLog(s"$id.revoke.tle $partitions")))
+                         override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, Any] =
+                           log(s"$id.assigned $partitions")
+                       }
         l1l2       = listener("l1") *> listener("l2")
         partitions = Set(TopicPartition("topic", 0))
 
