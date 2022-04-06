@@ -58,11 +58,11 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_]: ClassTag](
     }))
 
   def startPolling(): URIO[R with ZEnv with GreyhoundMetrics, Unit] = for {
-    _ <- report(StartingEventLoop(clientId, group, consumerAttributes))
+    _     <- report(StartingEventLoop(clientId, group, consumerAttributes))
     fiber <- pollOnce().sandbox.ignore
-      .repeatWhileM(_ => elState.notShutdown)
-      .forkDaemon
-    _ <- loopFiberRef.set(Some(fiber))
+               .repeatWhileM(_ => elState.notShutdown)
+               .forkDaemon
+    _     <- loopFiberRef.set(Some(fiber))
   } yield ()
 
   private[greyhound] def shutDown(): UIO[Unit] = for {
@@ -93,14 +93,15 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_]: ClassTag](
       )
 
   private def pollAndHandle(): URIO[R with Clock, Unit] = for {
-    _ <- pauseAndResume().provide(capturedR)
-    records <- consumer
-      .poll(config.pollTimeout)
-      .provide(capturedR)
-      .catchAll(_ => UIO(Nil))
-      .flatMap(records => seekRequests.get.map(seeks => records.filterNot(record => seeks.keys.toSet.contains(record.topicPartition))))
-    _ <- handleRecords(records).timed
-      .tap { case (duration, _) => report(FullBatchHandled(clientId, group, records.toSeq, duration, consumerAttributes)) }
+    _       <- pauseAndResume().provide(capturedR)
+    records <-
+      consumer
+        .poll(config.pollTimeout)
+        .provide(capturedR)
+        .catchAll(_ => UIO(Nil))
+        .flatMap(records => seekRequests.get.map(seeks => records.filterNot(record => seeks.keys.toSet.contains(record.topicPartition))))
+    _       <- handleRecords(records).timed
+                 .tap { case (duration, _) => report(FullBatchHandled(clientId, group, records.toSeq, duration, consumerAttributes)) }
   } yield ()
 
   private def pauseAndResume() = for {
@@ -118,18 +119,18 @@ private[greyhound] class BatchEventLoopImpl[R <: Has[_]: ClassTag](
 
   private def handleWithRetry(polled: Records, retryBackoff: Duration): ZIO[R, Nothing, Unit] = {
     for {
-      forRetryPairs <- elState.readyForRetryAndBlocked(retryBackoff).provide(capturedR)
+      forRetryPairs                     <- elState.readyForRetryAndBlocked(retryBackoff).provide(capturedR)
       (forRetry, stillPending)           = forRetryPairs
       blockedPartitions                  = stillPending.keySet
       (polledReadyToGo, polledOnBlocked) = polled.partition(r => !blockedPartitions(r.topicPartition))
       polledByPartition                  = recordsByPartition(polledReadyToGo)
       // we shouldn't get polled records for partitions with pending records, as they should be paused
       // but if we do for some reason - we append them to the pending records
-      _ <- elState.appendPending(polledOnBlocked)
+      _                                 <- elState.appendPending(polledOnBlocked)
       // some for partitions ready for retry
-      readyToHandle = concatByKey(forRetry, polledByPartition)
-      _ <- report(EventLoopIteration(group, clientId, polled.toSeq, forRetry, stillPending, consumerAttributes))
-      _ <- handleInParallelWithRetry(readyToHandle)
+      readyToHandle                      = concatByKey(forRetry, polledByPartition)
+      _                                 <- report(EventLoopIteration(group, clientId, polled.toSeq, forRetry, stillPending, consumerAttributes))
+      _                                 <- handleInParallelWithRetry(readyToHandle)
     } yield ()
   }
 
@@ -189,30 +190,30 @@ object BatchEventLoop {
     config: BatchEventLoopConfig = BatchEventLoopConfig.Default
   ): RManaged[R with ExtraEnv, BatchEventLoop[R]] = {
     val start = for {
-      state              <- BatchEventLoopState.make
-      partitionsAssigned <- Promise.make[Nothing, Unit]
-      rebalanceListener = listener(state, config, partitionsAssigned)
+      state               <- BatchEventLoopState.make
+      partitionsAssigned  <- Promise.make[Nothing, Unit]
+      rebalanceListener    = listener(state, config, partitionsAssigned)
       _                   <- subscribe(initialSubscription, rebalanceListener)(consumer)
       fiberRef            <- Ref.make(Option.empty[Fiber[_, _]])
       instrumentedHandler <- handlerWithMetrics(group, clientId, handler, consumer.config.consumerAttributes)
       env                 <- ZIO.environment[ExtraEnv]
       _                   <- ZIO.when(config.startPaused)(state.pause())
       seekRequests        <- Ref.make(Map.empty[TopicPartition, Offset])
-      eventLoop = new BatchEventLoopImpl[R](
-        group,
-        clientId,
-        consumer,
-        instrumentedHandler,
-        retry,
-        config,
-        state,
-        rebalanceListener,
-        fiberRef,
-        env,
-        seekRequests
-      )
-      _ <- eventLoop.startPolling()
-      _ <- ZIO.when(!config.startPaused)(partitionsAssigned.await)
+      eventLoop            = new BatchEventLoopImpl[R](
+                               group,
+                               clientId,
+                               consumer,
+                               instrumentedHandler,
+                               retry,
+                               config,
+                               state,
+                               rebalanceListener,
+                               fiberRef,
+                               env,
+                               seekRequests
+                             )
+      _                   <- eventLoop.startPolling()
+      _                   <- ZIO.when(!config.startPaused)(partitionsAssigned.await)
     } yield eventLoop
 
     start.toManaged(_.shutDown())
@@ -249,25 +250,27 @@ object BatchEventLoop {
       new Handler[R, E] {
         override def handle(records: ConsumerRecordBatch[Chunk[Byte], Chunk[Byte]]): ZIO[R, HandleError[E], Any] = {
           val effect = for {
-            now <- currentTime
+            now         <- currentTime
             sinceProduce = now - records.records.headOption.fold(now)(_.producedTimestamp)
             sincePoll    = now - records.records.headOption.fold(now)(_.pollTime)
-            _ <- report(
-              HandlingRecords(
-                records.topic,
-                group,
-                records.partition,
-                clientId,
-                records.records,
-                sinceProduce,
-                sincePoll,
-                consumerAttributes
-              )
-            ) *>
-              handler.handle(records).timedWith(nanoTime).flatMap {
-                case (duration, _) =>
-                  report(RecordsHandled(records.topic, group, records.partition, clientId, records.records, duration, consumerAttributes))
-              }
+            _           <- report(
+                             HandlingRecords(
+                               records.topic,
+                               group,
+                               records.partition,
+                               clientId,
+                               records.records,
+                               sinceProduce,
+                               sincePoll,
+                               consumerAttributes
+                             )
+                           ) *>
+                             handler.handle(records).timedWith(nanoTime).flatMap {
+                               case (duration, _) =>
+                                 report(
+                                   RecordsHandled(records.topic, group, records.partition, clientId, records.records, duration, consumerAttributes)
+                                 )
+                             }
           } yield ()
           effect
         }

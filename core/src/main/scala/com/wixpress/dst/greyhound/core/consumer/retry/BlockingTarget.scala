@@ -6,7 +6,7 @@ sealed trait BlockingTarget {
   def topic: Topic
 }
 
-case class TopicTarget(topic: Topic) extends BlockingTarget
+case class TopicTarget(topic: Topic)                            extends BlockingTarget
 case class TopicPartitionTarget(topicPartition: TopicPartition) extends BlockingTarget {
   def topic = topicPartition.topic
 }

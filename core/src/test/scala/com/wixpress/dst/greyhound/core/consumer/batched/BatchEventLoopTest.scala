@@ -155,7 +155,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
         ZIO.runtime[Any].flatMap { rt => UIO(DelayedRebalanceEffect(rt.unsafeRunTask(committedOffsetsRef.update(_ ++ offsets)))) }
       }
     }
-    val handler = new BatchRecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]] {
+    val handler  = new BatchRecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]] {
       override def handle(records: RecordBatch): ZIO[Any, HandleError[Throwable], Any] = {
         UIO(println(s"handle($records)")) *>
           (handlerErrorsRef.get.flatMap(he => he(records.records).fold(ZIO.unit: IO[HandleError[Throwable], Unit])(ZIO.halt(_))) *>

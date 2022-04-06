@@ -46,17 +46,17 @@ object BatchConsumer {
   ): ZManaged[R with Env, Throwable, BatchConsumer[R]] = for {
     consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
     assignments             <- Ref.make(Set.empty[TopicPartition]).toManaged_
-    assignmentsListener = trackAssignments(assignments)
-    consumer <- Consumer.make(consumerConfig(config, assignmentsListener))
-    eventLoop <- BatchEventLoop.make[R](
-      config.groupId,
-      config.initialSubscription,
-      ReportingConsumer(config.clientId, config.groupId, consumer),
-      handler,
-      config.clientId,
-      config.retryConfig,
-      config.eventLoopConfig
-    )
+    assignmentsListener      = trackAssignments(assignments)
+    consumer                <- Consumer.make(consumerConfig(config, assignmentsListener))
+    eventLoop               <- BatchEventLoop.make[R](
+                                 config.groupId,
+                                 config.initialSubscription,
+                                 ReportingConsumer(config.clientId, config.groupId, consumer),
+                                 handler,
+                                 config.clientId,
+                                 config.retryConfig,
+                                 config.eventLoopConfig
+                               )
   } yield new BatchConsumer[R] {
     override def group: Group = config.groupId
 
@@ -74,24 +74,28 @@ object BatchConsumer {
       listener: RebalanceListener[R1]
     ): RIO[Env with R1, AssignedPartitions] =
       for {
-        assigned <- Ref.make[AssignedPartitions](Set.empty)
-        promise  <- Promise.make[Nothing, AssignedPartitions]
-        rebalanceListener = eventLoop.rebalanceListener *> listener *>
-          new RebalanceListener[R1] {
-            override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
-              DelayedRebalanceEffect.zioUnit
+        assigned          <- Ref.make[AssignedPartitions](Set.empty)
+        promise           <- Promise.make[Nothing, AssignedPartitions]
+        rebalanceListener  = eventLoop.rebalanceListener *> listener *>
+                               new RebalanceListener[R1] {
+                                 override def onPartitionsRevoked(
+                                   consumer: Consumer,
+                                   partitions: Set[TopicPartition]
+                                 ): URIO[R1, DelayedRebalanceEffect] =
+                                   DelayedRebalanceEffect.zioUnit
 
-            override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] = for {
-              allAssigned <- assigned.updateAndGet(_ => partitions)
-              _           <- consumerSubscriptionRef.set(subscription)
-              _           <- promise.succeed(allAssigned)
-            } yield ()
-          }
-        _ <- subscribe[R1](subscription, rebalanceListener)(consumer)
+                                 override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] =
+                                   for {
+                                     allAssigned <- assigned.updateAndGet(_ => partitions)
+                                     _           <- consumerSubscriptionRef.set(subscription)
+                                     _           <- promise.succeed(allAssigned)
+                                   } yield ()
+                               }
+        _                 <- subscribe[R1](subscription, rebalanceListener)(consumer)
         resubscribeTimeout = config.resubscribeTimeout
-        result <- promise.await.disconnect
-          .timeoutFail(BatchResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
-          .catchAll(_ => UIO(Set.empty[TopicPartition]))
+        result            <- promise.await.disconnect
+                               .timeoutFail(BatchResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
+                               .catchAll(_ => UIO(Set.empty[TopicPartition]))
       } yield result
 
     override def pause: URIO[R, Unit] = eventLoop.pause

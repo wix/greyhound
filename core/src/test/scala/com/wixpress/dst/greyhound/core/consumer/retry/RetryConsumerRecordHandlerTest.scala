@@ -31,27 +31,27 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
   "withRetries" should {
     "produce a message to the retry topic after failure" in {
       for {
-        producer <- FakeProducer.make
-        topic    <- randomTopicName
-        retryTopic = s"$topic-retry"
+        producer      <- FakeProducer.make
+        topic         <- randomTopicName
+        retryTopic     = s"$topic-retry"
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandler,
-          ZRetryConfig.nonBlockingRetry(1.second),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key          <- bytes
-        value        <- bytes
-        _            <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
-        record       <- producer.records.take
-        now          <- currentTime
-        retryAttempt <- IntSerde.serialize(retryTopic, 0)
-        submittedAt  <- InstantSerde.serialize(retryTopic, now)
-        backoff      <- DurationSerde.serialize(retryTopic, 1.second)
+        retryHandler   = RetryRecordHandler.withRetries(
+                           group,
+                           failingHandler,
+                           ZRetryConfig.nonBlockingRetry(1.second),
+                           producer,
+                           Topics(Set(topic)),
+                           blockingState,
+                           FakeRetryHelper(topic)
+                         )
+        key           <- bytes
+        value         <- bytes
+        _             <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+        record        <- producer.records.take
+        now           <- currentTime
+        retryAttempt  <- IntSerde.serialize(retryTopic, 0)
+        submittedAt   <- InstantSerde.serialize(retryTopic, now)
+        backoff       <- DurationSerde.serialize(retryTopic, 1.second)
       } yield {
         record ===
           ProducerRecord(
@@ -66,90 +66,90 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
 
     "delay execution of user handler by configured backoff" in {
       for {
-        producer <- FakeProducer.make
-        topic    <- randomTopicName
-        retryTopic = s"$topic-retry"
+        producer      <- FakeProducer.make
+        topic         <- randomTopicName
+        retryTopic     = s"$topic-retry"
         executionTime <- Promise.make[Nothing, Instant]
-        handler = RecordHandler[Clock, HandlerError, Chunk[Byte], Chunk[Byte]] { _ => currentTime.flatMap(executionTime.succeed) }
+        handler        = RecordHandler[Clock, HandlerError, Chunk[Byte], Chunk[Byte]] { _ => currentTime.flatMap(executionTime.succeed) }
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          handler,
-          ZRetryConfig.nonBlockingRetry(1.second),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        value        <- bytes
-        begin        <- currentTime
-        retryAttempt <- IntSerde.serialize(retryTopic, 0)
-        submittedAt  <- InstantSerde.serialize(retryTopic, begin)
-        backoff      <- DurationSerde.serialize(retryTopic, 1.second)
-        headers = Headers("retry-attempt" -> retryAttempt, "retry-submitted-at" -> submittedAt, "retry-backoff" -> backoff)
-        _   <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0L, 0L, 0L)).fork
-        _   <- TestClock.adjust(1.second)
-        end <- executionTime.await.disconnect.timeoutFail(TimeoutWaitingForAssertion)(5.seconds)
+        retryHandler   = RetryRecordHandler.withRetries(
+                           group,
+                           handler,
+                           ZRetryConfig.nonBlockingRetry(1.second),
+                           producer,
+                           Topics(Set(topic)),
+                           blockingState,
+                           FakeRetryHelper(topic)
+                         )
+        value         <- bytes
+        begin         <- currentTime
+        retryAttempt  <- IntSerde.serialize(retryTopic, 0)
+        submittedAt   <- InstantSerde.serialize(retryTopic, begin)
+        backoff       <- DurationSerde.serialize(retryTopic, 1.second)
+        headers        = Headers("retry-attempt" -> retryAttempt, "retry-submitted-at" -> submittedAt, "retry-backoff" -> backoff)
+        _             <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0L, 0L, 0L)).fork
+        _             <- TestClock.adjust(1.second)
+        end           <- executionTime.await.disconnect.timeoutFail(TimeoutWaitingForAssertion)(5.seconds)
       } yield end must equalTo(begin.plusSeconds(1))
     }
 
     "retry according to provided intervals" in {
       for {
-        producer <- FakeProducer.make
-        topic    <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
+        producer       <- FakeProducer.make
+        topic          <- randomTopicName
+        tpartition      = TopicPartition(topic, partition)
         handleCountRef <- Ref.make(0)
         blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandlerWith(handleCountRef),
-          ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key   <- bytes
-        value <- bytes
-        record = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
-        _ <- retryHandler.handle(record).fork
-        _ <- adjustTestClockFor(100.millis)
-        _ <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(record)))
-        _ <- adjustTestClockFor(4.seconds)
-        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(
-          _.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
-        )
-        _ <- adjustTestClockFor(1.second)
-        _ <- eventuallyZ(handleCountRef.get)(_ == 3)
-        _ <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(InternalBlocking))
+        retryHandler    = RetryRecordHandler.withRetries(
+                            group,
+                            failingHandlerWith(handleCountRef),
+                            ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis),
+                            producer,
+                            Topics(Set(topic)),
+                            blockingState,
+                            FakeRetryHelper(topic)
+                          )
+        key            <- bytes
+        value          <- bytes
+        record          = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+        _              <- retryHandler.handle(record).fork
+        _              <- adjustTestClockFor(100.millis)
+        _              <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(record)))
+        _              <- adjustTestClockFor(4.seconds)
+        _              <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(
+                            _.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
+                          )
+        _              <- adjustTestClockFor(1.second)
+        _              <- eventuallyZ(handleCountRef.get)(_ == 3)
+        _              <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(InternalBlocking))
       } yield ok
     }
 
     "no retry if fails with NonRetriableError" in {
       for {
-        producer <- FakeProducer.make
-        topic    <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
+        producer       <- FakeProducer.make
+        topic          <- randomTopicName
+        tpartition      = TopicPartition(topic, partition)
         handleCountRef <- Ref.make(0)
         blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          nonRetryableHandlerWith(handleCountRef),
-          ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key   <- bytes
-        value <- bytes
-        _     <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _     <- adjustTestClockFor(4.seconds)
-        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(
-          _.contains(NoRetryOnNonRetryableFailure(tpartition, offset, cause))
-        )
-        _           <- adjustTestClockFor(1.second)
-        handleCount <- handleCountRef.get.delay(100.milliseconds).provideSomeLayer(Clock.live)
+        retryHandler    = RetryRecordHandler.withRetries(
+                            group,
+                            nonRetryableHandlerWith(handleCountRef),
+                            ZRetryConfig.finiteBlockingRetry(10.millis, 500.millis),
+                            producer,
+                            Topics(Set(topic)),
+                            blockingState,
+                            FakeRetryHelper(topic)
+                          )
+        key            <- bytes
+        value          <- bytes
+        _              <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _              <- adjustTestClockFor(4.seconds)
+        _              <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(
+                            _.contains(NoRetryOnNonRetryableFailure(tpartition, offset, cause))
+                          )
+        _              <- adjustTestClockFor(1.second)
+        handleCount    <- handleCountRef.get.delay(100.milliseconds).provideSomeLayer(Clock.live)
       } yield handleCount === 1
     }
 
@@ -159,21 +159,21 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
         topic          <- randomTopicName
         handleCountRef <- Ref.make(0)
         blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandlerWith(handleCountRef),
-          ZRetryConfig.infiniteBlockingRetry(100.millis),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key     <- bytes
-        value   <- bytes
-        _       <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _       <- adjustTestClockFor(1.second, 1.2)
-        metrics <- TestMetrics.reported
-        _       <- eventuallyZ(handleCountRef.get)(_ >= 10)
+        retryHandler    = RetryRecordHandler.withRetries(
+                            group,
+                            failingHandlerWith(handleCountRef),
+                            ZRetryConfig.infiniteBlockingRetry(100.millis),
+                            producer,
+                            Topics(Set(topic)),
+                            blockingState,
+                            FakeRetryHelper(topic)
+                          )
+        key            <- bytes
+        value          <- bytes
+        _              <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _              <- adjustTestClockFor(1.second, 1.2)
+        metrics        <- TestMetrics.reported
+        _              <- eventuallyZ(handleCountRef.get)(_ >= 10)
       } yield {
         metrics must contain(BlockingRetryHandlerInvocationFailed(TopicPartition(topic, partition), offset, "RetriableError"))
       }
@@ -182,71 +182,71 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
     Fragment.foreach(Seq(Seq(50.millis, 1.second), Seq(100.millis, 1.second), Seq(1.second, 1.second))) { retryDurations =>
       s"release blocking retry once for retry with duration ${retryDurations.map(_.toMillis)} millis" in {
         for {
-          producer <- FakeProducer.make
-          topic    <- randomTopicName
-          tpartition = TopicPartition(topic, partition)
+          producer      <- FakeProducer.make
+          topic         <- randomTopicName
+          tpartition     = TopicPartition(topic, partition)
           blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-          retryHandler = RetryRecordHandler.withRetries(
-            group,
-            failingHandler,
-            ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1): _*),
-            producer,
-            Topics(Set(topic)),
-            blockingState,
-            FakeRetryHelper(topic)
-          )
-          key   <- bytes
-          value <- bytes
-          record = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
-          fiber <- retryHandler.handle(record).fork
-          _     <- adjustTestClockFor(retryDurations.head, 0.5)
-          _ <- eventuallyZ(TestMetrics.reported)(metrics =>
-            !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset)) &&
-              metrics.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
-          )
-          _ <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(record)))
-          _ <- blockingState.set(Map(TopicPartitionTarget(tpartition) -> IgnoringOnce))
-          _ <- adjustTestClockFor(retryDurations.head)
-          _ <- fiber.join
-          _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredOnceFor(tpartition, offset)))
-          _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-          _ <- adjustTestClockFor(retryDurations.head, 1.5)
-          _ <- eventuallyZ(TestMetrics.reported)(metrics =>
-            !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset + 1)) &&
-              metrics.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset + 1, "RetriableError"))
-          )
+          retryHandler   = RetryRecordHandler.withRetries(
+                             group,
+                             failingHandler,
+                             ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1): _*),
+                             producer,
+                             Topics(Set(topic)),
+                             blockingState,
+                             FakeRetryHelper(topic)
+                           )
+          key           <- bytes
+          value         <- bytes
+          record         = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+          fiber         <- retryHandler.handle(record).fork
+          _             <- adjustTestClockFor(retryDurations.head, 0.5)
+          _             <- eventuallyZ(TestMetrics.reported)(metrics =>
+                             !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset)) &&
+                               metrics.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
+                           )
+          _             <- eventuallyZ(blockingState.get)(_.get(TopicPartitionTarget(tpartition)).contains(Blocked(record)))
+          _             <- blockingState.set(Map(TopicPartitionTarget(tpartition) -> IgnoringOnce))
+          _             <- adjustTestClockFor(retryDurations.head)
+          _             <- fiber.join
+          _             <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredOnceFor(tpartition, offset)))
+          _             <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+          _             <- adjustTestClockFor(retryDurations.head, 1.5)
+          _             <- eventuallyZ(TestMetrics.reported)(metrics =>
+                             !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset + 1)) &&
+                               metrics.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset + 1, "RetriableError"))
+                           )
         } yield ok
       }
     }
 
     s"release blocking retry once AHEAD OF TIME" in {
       for {
-        producer <- FakeProducer.make
-        topic    <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
+        producer      <- FakeProducer.make
+        topic         <- randomTopicName
+        tpartition     = TopicPartition(topic, partition)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandler,
-          ZRetryConfig.finiteBlockingRetry(50.millis, 1.second),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key   <- bytes
-        value <- bytes
-        _     <- blockingState.set(Map(TopicPartitionTarget(tpartition) -> IgnoringOnce))
-        fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _     <- adjustTestClockFor(50.millis)
-        _     <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredOnceFor(tpartition, offset)))
-        _     <- fiber.join
-        _     <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _     <- adjustTestClockFor(50.millis, 1.5)
-        _ <- eventuallyZ(TestMetrics.reported)(metrics =>
-          !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset + 1)) &&
-            metrics.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset + 1, "RetriableError"))
-        )
+        retryHandler   = RetryRecordHandler.withRetries(
+                           group,
+                           failingHandler,
+                           ZRetryConfig.finiteBlockingRetry(50.millis, 1.second),
+                           producer,
+                           Topics(Set(topic)),
+                           blockingState,
+                           FakeRetryHelper(topic)
+                         )
+        key           <- bytes
+        value         <- bytes
+        _             <- blockingState.set(Map(TopicPartitionTarget(tpartition) -> IgnoringOnce))
+        fiber         <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _             <- adjustTestClockFor(50.millis)
+        _             <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredOnceFor(tpartition, offset)))
+        _             <- fiber.join
+        _             <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _             <- adjustTestClockFor(50.millis, 1.5)
+        _             <- eventuallyZ(TestMetrics.reported)(metrics =>
+                           !metrics.contains(BlockingIgnoredOnceFor(tpartition, offset + 1)) &&
+                             metrics.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset + 1, "RetriableError"))
+                         )
       } yield ok
     }
 
@@ -263,34 +263,34 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
       val (retryDurations, target) = pair
       s"release blocking retry for all for ${target(TopicPartition("", 0))} for retry with duration ${retryDurations.map(_.toMillis)} millis" in {
         for {
-          producer <- FakeProducer.make
-          topic    <- randomTopicName
-          tpartition = TopicPartition(topic, partition)
+          producer       <- FakeProducer.make
+          topic          <- randomTopicName
+          tpartition      = TopicPartition(topic, partition)
           handleCountRef <- Ref.make(0)
           blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-          retryHandler = RetryRecordHandler.withRetries(
-            group,
-            failingHandlerWith(handleCountRef),
-            ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1): _*),
-            producer,
-            Topics(Set(topic)),
-            blockingState,
-            FakeRetryHelper(topic)
-          )
-          key   <- bytes
-          value <- bytes
-          fiber <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-          _     <- adjustTestClockFor(retryDurations.head, 0.5)
-          _ <- eventuallyZ(TestMetrics.reported)(list =>
-            !list.contains(BlockingIgnoredForAllFor(tpartition, offset)) &&
-              list.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
-          )
-          _ <- blockingState.set(Map(target(tpartition) -> IgnoringAll))
-          _ <- adjustTestClockFor(retryDurations.head)
-          _ <- fiber.join
-          _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredForAllFor(tpartition, offset)))
-          _ <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L))
-          _ <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredForAllFor(tpartition, offset + 1)))
+          retryHandler    = RetryRecordHandler.withRetries(
+                              group,
+                              failingHandlerWith(handleCountRef),
+                              ZRetryConfig.finiteBlockingRetry(retryDurations.head, retryDurations.drop(1): _*),
+                              producer,
+                              Topics(Set(topic)),
+                              blockingState,
+                              FakeRetryHelper(topic)
+                            )
+          key            <- bytes
+          value          <- bytes
+          fiber          <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+          _              <- adjustTestClockFor(retryDurations.head, 0.5)
+          _              <- eventuallyZ(TestMetrics.reported)(list =>
+                              !list.contains(BlockingIgnoredForAllFor(tpartition, offset)) &&
+                                list.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
+                            )
+          _              <- blockingState.set(Map(target(tpartition) -> IgnoringAll))
+          _              <- adjustTestClockFor(retryDurations.head)
+          _              <- fiber.join
+          _              <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredForAllFor(tpartition, offset)))
+          _              <- retryHandler.handle(ConsumerRecord(topic, partition, offset + 1, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+          _              <- eventuallyZ(TestMetrics.reported)(_.contains(BlockingIgnoredForAllFor(tpartition, offset + 1)))
 
           _ <- blockingState.set(Map(target(tpartition) -> InternalBlocking))
           _ <- handleCountRef.set(0)
@@ -305,57 +305,58 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
 
     "blocking then non blocking retries" in {
       for {
-        producer <- FakeProducer.make
-        topic    <- randomTopicName
-        retryTopic = s"$topic-retry"
-        tpartition = TopicPartition(topic, partition)
+        producer       <- FakeProducer.make
+        topic          <- randomTopicName
+        retryTopic      = s"$topic-retry"
+        tpartition      = TopicPartition(topic, partition)
         handleCountRef <- Ref.make(0)
         blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandlerWith(handleCountRef),
-          ZRetryConfig.blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), NonBlockingBackoffPolicy(List(1.second))),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key   <- bytes
-        value <- bytes
-        _     <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
-        _     <- adjustTestClockFor(4.seconds)
-        _ <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(
-          _.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
-        )
-        _      <- adjustTestClockFor(1.second)
-        record <- producer.records.take
-        _      <- eventuallyZ(handleCountRef.get)(_ == 3)
+        retryHandler    = RetryRecordHandler.withRetries(
+                            group,
+                            failingHandlerWith(handleCountRef),
+                            ZRetryConfig
+                              .blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), NonBlockingBackoffPolicy(List(1.second))),
+                            producer,
+                            Topics(Set(topic)),
+                            blockingState,
+                            FakeRetryHelper(topic)
+                          )
+        key            <- bytes
+        value          <- bytes
+        _              <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).fork
+        _              <- adjustTestClockFor(4.seconds)
+        _              <- eventuallyZ(TestClock.adjust(100.millis) *> TestMetrics.reported)(
+                            _.contains(BlockingRetryHandlerInvocationFailed(tpartition, offset, "RetriableError"))
+                          )
+        _              <- adjustTestClockFor(1.second)
+        record         <- producer.records.take
+        _              <- eventuallyZ(handleCountRef.get)(_ == 3)
       } yield record.topic === retryTopic
     }
 
     "override policy for topic" in {
       for {
-        producer      <- FakeProducer.make
-        topic         <- randomTopicName
-        otherTopic    <- randomTopicName
-        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        policy = ZRetryConfig.perTopicRetries {
-          case `otherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
-        }
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandler,
-          policy,
-          producer,
-          Topics(Set(topic, otherTopic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key    <- bytes
-        value  <- bytes
-        value2 <- bytes
-        _      <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)) // no retry
-        _ <- retryHandler.handle(ConsumerRecord(otherTopic, partition, offset, Headers.Empty, Some(key), value2, 0L, 0L, 0L)) // with retry
+        producer        <- FakeProducer.make
+        topic           <- randomTopicName
+        otherTopic      <- randomTopicName
+        blockingState   <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+        policy           = ZRetryConfig.perTopicRetries {
+                             case `otherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
+                           }
+        retryHandler     = RetryRecordHandler.withRetries(
+                             group,
+                             failingHandler,
+                             policy,
+                             producer,
+                             Topics(Set(topic, otherTopic)),
+                             blockingState,
+                             FakeRetryHelper(topic)
+                           )
+        key             <- bytes
+        value           <- bytes
+        value2          <- bytes
+        _               <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))       // no retry
+        _               <- retryHandler.handle(ConsumerRecord(otherTopic, partition, offset, Headers.Empty, Some(key), value2, 0L, 0L, 0L)) // with retry
         producedRecords <- producer.records.takeAll
       } yield {
         producedRecords.map(_.value.get) === value2 :: Nil
@@ -365,27 +366,26 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
     "on blocking retry, if failing to produce, retry until successful" in {
       val produceRetryBackoff = 100.millis
       for {
-        producerFails <- Ref.make(true)
-        producer <- FakeProducer.make(beforeComplete =
-          r => ZIO.whenM(producerFails.get)(ZIO.fail(ProducerError.from(new RuntimeException))).as(r)
-        )
-        topic         <- randomTopicName
-        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandler,
-          ZRetryConfig.nonBlockingRetry(1.second).withProduceRetryBackoff(produceRetryBackoff.asScala),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic)
-        )
-        key      <- bytes
-        value    <- bytes
-        handling <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
-        _        <- producer.records.takeN(3)
-        _        <- producerFails.set(false)
-        _        <- handling.join.withTimeout(10.seconds)
+        producerFails   <- Ref.make(true)
+        producer        <-
+          FakeProducer.make(beforeComplete = r => ZIO.whenM(producerFails.get)(ZIO.fail(ProducerError.from(new RuntimeException))).as(r))
+        topic           <- randomTopicName
+        blockingState   <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+        retryHandler     = RetryRecordHandler.withRetries(
+                             group,
+                             failingHandler,
+                             ZRetryConfig.nonBlockingRetry(1.second).withProduceRetryBackoff(produceRetryBackoff.asScala),
+                             producer,
+                             Topics(Set(topic)),
+                             blockingState,
+                             FakeRetryHelper(topic)
+                           )
+        key             <- bytes
+        value           <- bytes
+        handling        <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
+        _               <- producer.records.takeN(3)
+        _               <- producerFails.set(false)
+        _               <- handling.join.withTimeout(10.seconds)
         produceAttempts <- producer.producedCount
       } yield {
         produceAttempts === 4
@@ -397,28 +397,28 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
         producer      <- FakeProducer.make
         topic         <- randomTopicName
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHelper = alwaysBackOffRetryHelper(3.seconds)
-        handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
-          val retryHandler = RetryRecordHandler.withRetries(
-            group,
-            failingHandler,
-            ZRetryConfig.nonBlockingRetry(1.second),
-            producer,
-            Topics(Set(topic)),
-            blockingState,
-            retryHelper,
-            awaitShutdown = _ => UIO(awaitShutdown)
-          )
-          for {
-            key   <- bytes
-            value <- bytes
-            handling <- retryHandler
-              .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
-              .forkDaemon
-          } yield handling
-        }
+        retryHelper    = alwaysBackOffRetryHelper(3.seconds)
+        handling      <- AwaitShutdown.makeManaged.use { awaitShutdown =>
+                           val retryHandler = RetryRecordHandler.withRetries(
+                             group,
+                             failingHandler,
+                             ZRetryConfig.nonBlockingRetry(1.second),
+                             producer,
+                             Topics(Set(topic)),
+                             blockingState,
+                             retryHelper,
+                             awaitShutdown = _ => UIO(awaitShutdown)
+                           )
+                           for {
+                             key      <- bytes
+                             value    <- bytes
+                             handling <- retryHandler
+                                           .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+                                           .forkDaemon
+                           } yield handling
+                         }
         // we expect for the backoff sleep to be interrupted
-        result <- handling.join.resurrect.either.withTimeout(10.seconds)
+        result        <- handling.join.resurrect.either.withTimeout(10.seconds)
       } yield {
         result must beLeft(beAnInstanceOf[InterruptedException])
       }
@@ -431,26 +431,28 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
       topic          <- randomTopicName
       handleCountRef <- Ref.make(0)
       blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-      handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
-        val retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandlerWith(handleCountRef),
-          ZRetryConfig.finiteBlockingRetry(10.seconds),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic),
-          _ => UIO(awaitShutdown.tapShutdown(_ => UIO(println("interrupting await shutdown"))))
-        )
-        for {
-          key      <- bytes
-          value    <- bytes
-          handling <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
-        } yield handling
-      }
+      handling       <- AwaitShutdown.makeManaged.use { awaitShutdown =>
+                          val retryHandler = RetryRecordHandler.withRetries(
+                            group,
+                            failingHandlerWith(handleCountRef),
+                            ZRetryConfig.finiteBlockingRetry(10.seconds),
+                            producer,
+                            Topics(Set(topic)),
+                            blockingState,
+                            FakeRetryHelper(topic),
+                            _ => UIO(awaitShutdown.tapShutdown(_ => UIO(println("interrupting await shutdown"))))
+                          )
+                          for {
+                            key      <- bytes
+                            value    <- bytes
+                            handling <- retryHandler
+                                          .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+                                          .forkDaemon
+                          } yield handling
+                        }
       // we expect for the backoff sleep to be interrupted
-      result        <- handling.join.resurrect.either.withTimeout(5.seconds)
-      handlerCalled <- handleCountRef.get
+      result         <- handling.join.resurrect.either.withTimeout(5.seconds)
+      handlerCalled  <- handleCountRef.get
     } yield {
       result must beLeft(beAnInstanceOf[InterruptedException])
       handlerCalled === 1
@@ -462,25 +464,27 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
       producer      <- FakeProducer.make.map(_.failing)
       topic         <- randomTopicName
       blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-      handling <- AwaitShutdown.makeManaged.use { awaitShutdown =>
-        val retryHandler = RetryRecordHandler.withRetries(
-          group,
-          failingHandler,
-          ZRetryConfig.nonBlockingRetry(1.second),
-          producer,
-          Topics(Set(topic)),
-          blockingState,
-          FakeRetryHelper(topic),
-          _ => UIO(awaitShutdown)
-        )
-        for {
-          key      <- bytes
-          value    <- bytes
-          handling <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
-        } yield handling
-      }
+      handling      <- AwaitShutdown.makeManaged.use { awaitShutdown =>
+                         val retryHandler = RetryRecordHandler.withRetries(
+                           group,
+                           failingHandler,
+                           ZRetryConfig.nonBlockingRetry(1.second),
+                           producer,
+                           Topics(Set(topic)),
+                           blockingState,
+                           FakeRetryHelper(topic),
+                           _ => UIO(awaitShutdown)
+                         )
+                         for {
+                           key      <- bytes
+                           value    <- bytes
+                           handling <- retryHandler
+                                         .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+                                         .forkDaemon
+                         } yield handling
+                       }
       // we expect produce retries to be interrupted
-      result <- handling.join.resurrect.either.withTimeout(10.seconds)
+      result        <- handling.join.resurrect.either.withTimeout(10.seconds)
     } yield {
       result must beLeft(beAnInstanceOf[InterruptedException])
     }
@@ -520,7 +524,7 @@ object RetryConsumerRecordHandlerTest {
 
   def alwaysBackOffRetryHelper(backoff: Duration) = {
     new FakeNonBlockingRetryHelper {
-      override val topic: Topic = ""
+      override val topic: Topic                                                                                                = ""
       override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = UIO(
         Some(RetryAttempt(topic, 1, Instant.now, backoff))
       )

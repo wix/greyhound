@@ -45,55 +45,55 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic                                <- kafka.createRandomTopic(prefix = s"buffered-1")
-      test <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
-        for {
-          queue <- Queue.unbounded[ConsumerRecord[String, String]]
-          handler = RecordHandler(queue.offer).withDeserializers(StringSerde, StringSerde)
-          record  = ProducerRecord(topic, "bar", Some("foo"))
-          _ <- RecordConsumer.make(configFor(kafka, "group123", topic), handler).use_ {
-            localBufferProducer.produce(record, StringSerde, StringSerde) *> eventuallyZ(queue.takeUpTo(100))(_.nonEmpty) *>
-              eventuallyZ(localBufferProducer.currentState)(s => (s.inflight == 0) && s.enqueued == 0)
-          }
-        } yield ok
-      }
+      test                                 <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
+                                                for {
+                                                  queue  <- Queue.unbounded[ConsumerRecord[String, String]]
+                                                  handler = RecordHandler(queue.offer).withDeserializers(StringSerde, StringSerde)
+                                                  record  = ProducerRecord(topic, "bar", Some("foo"))
+                                                  _      <- RecordConsumer.make(configFor(kafka, "group123", topic), handler).use_ {
+                                                              localBufferProducer.produce(record, StringSerde, StringSerde) *> eventuallyZ(queue.takeUpTo(100))(_.nonEmpty) *>
+                                                                eventuallyZ(localBufferProducer.currentState)(s => (s.inflight == 0) && s.enqueued == 0)
+                                                            }
+                                                } yield ok
+                                              }
     } yield test
   }
 
   "produce in order of per key" in {
     for {
       BufferTestResources(kafka, _) <- getShared
-      _ <- Producer
-        .makeR[Any](ProducerConfig(kafka.bootstrapServers, extraProperties = Map("linger.ms" -> "3")))
-        .map(p => ReportingProducer(p))
-        .use { producer =>
-          for {
-            topic <- kafka.createRandomTopic(prefix = s"buffered-2")
-            maxConcurrency           = 30
-            (keyCount, recordPerKey) = (500, 50)
-            test <- makeProducer(producer, strategy(maxConcurrency), maxMessagesOnDisk = keyCount * recordPerKey).use {
-              localBufferProducer =>
-                for {
-                  consumed <- Ref.make(Map.empty[String, Seq[Int]])
-                  handler = RecordHandler(putIn(consumed)).withDeserializers(StringSerde, IntSerde)
-                  record  = ProducerRecord(topic, 0)
-                  _ <- RecordConsumer
-                    .make(configFor(kafka, "group234", topic), handler)
-                    .use_ {
-                      produceMultiple(keyCount, recordPerKey)(localBufferProducer, record) *>
-                        eventuallyTimeoutFail(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(40.seconds)
-                    }
-                    .timed
-                    .tap { case (d, _) => console.putStrLn(s"Finished in ${d.toMillis} ms") }
-                  state <- localBufferProducer.currentState
-                  queryCountAfterComplete = state.localBufferQueryCount
-                  queryCountAfterDelay <- localBufferProducer.currentState.delay(1.second).map(_.localBufferQueryCount)
-                } yield ((state.maxRecordedConcurrency === maxConcurrency) and
-                  (queryCountAfterDelay === queryCountAfterComplete) and
-                  (state.runningFiberCount === maxConcurrency) and
-                  (queryCountAfterComplete must beGreaterThan(1)))
-            }
-          } yield test
-        }
+      _                             <- Producer
+                                         .makeR[Any](ProducerConfig(kafka.bootstrapServers, extraProperties = Map("linger.ms" -> "3")))
+                                         .map(p => ReportingProducer(p))
+                                         .use { producer =>
+                                           for {
+                                             topic                   <- kafka.createRandomTopic(prefix = s"buffered-2")
+                                             maxConcurrency           = 30
+                                             (keyCount, recordPerKey) = (500, 50)
+                                             test                    <- makeProducer(producer, strategy(maxConcurrency), maxMessagesOnDisk = keyCount * recordPerKey).use {
+                                                                          localBufferProducer =>
+                                                                            for {
+                                                                              consumed               <- Ref.make(Map.empty[String, Seq[Int]])
+                                                                              handler                 = RecordHandler(putIn(consumed)).withDeserializers(StringSerde, IntSerde)
+                                                                              record                  = ProducerRecord(topic, 0)
+                                                                              _                      <- RecordConsumer
+                                                                                                          .make(configFor(kafka, "group234", topic), handler)
+                                                                                                          .use_ {
+                                                                                                            produceMultiple(keyCount, recordPerKey)(localBufferProducer, record) *>
+                                                                                                              eventuallyTimeoutFail(consumed.get)(_ == expectedMap(recordPerKey, keyCount))(40.seconds)
+                                                                                                          }
+                                                                                                          .timed
+                                                                                                          .tap { case (d, _) => console.putStrLn(s"Finished in ${d.toMillis} ms") }
+                                                                              state                  <- localBufferProducer.currentState
+                                                                              queryCountAfterComplete = state.localBufferQueryCount
+                                                                              queryCountAfterDelay   <- localBufferProducer.currentState.delay(1.second).map(_.localBufferQueryCount)
+                                                                            } yield ((state.maxRecordedConcurrency === maxConcurrency) and
+                                                                              (queryCountAfterDelay === queryCountAfterComplete) and
+                                                                              (state.runningFiberCount === maxConcurrency) and
+                                                                              (queryCountAfterComplete must beGreaterThan(1)))
+                                                                        }
+                                           } yield test
+                                         }
     } yield ok
   }
 
@@ -110,12 +110,12 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
       topic                                <- kafka.createRandomTopic(prefix = s"buffered-3", partitions = 1)
 
       test <- makeProducer(producer, strategy(maxConcurrency = 10)).use { localBufferProducer =>
-        for {
-          kafkaResult1 <- produceIO(topic, localBufferProducer)
-          kafkaResult2 <- produceIO(topic, localBufferProducer)
-        } yield (kafkaResult1 === RecordMetadata(topic, partition = 0, offset = 0L) and
-          kafkaResult2 === RecordMetadata(topic, partition = 0, offset = 1L))
-      }
+                for {
+                  kafkaResult1 <- produceIO(topic, localBufferProducer)
+                  kafkaResult2 <- produceIO(topic, localBufferProducer)
+                } yield (kafkaResult1 === RecordMetadata(topic, partition = 0, offset = 0L) and
+                  kafkaResult2 === RecordMetadata(topic, partition = 0, offset = 1L))
+              }
     } yield test
   }
 
@@ -124,28 +124,35 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
 
     for {
       BufferTestResources(kafka, _) <- getShared
-      localBufferBatchSize = 35
-      test <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
-        for {
-          topic <- kafka.createRandomTopic(prefix = s"buffered-4", partitions = 1)
-          (timeoutCount, state) <- makeProducer(
-            producer,
-            strategy(maxConcurrency = 1),
-            flushTimeout = 1.second,
-            localBufferBatchSize = localBufferBatchSize
-          ).use { localBufferProducer =>
-            for {
-              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).repeat(Schedule.recurs(200))
-              _ <- localBufferProducer.produce(record(topic, Some(0)), IntSerde, StringSerde).flatMap(_.kafkaResult).timeout(10.second)
-              timeouts <- TestMetrics.reported.map(_.collect { case e @ LocalBufferProduceAttemptFailed(TimeoutError(_), false) => e })
-              state    <- localBufferProducer.currentState
-            } yield (timeouts.size, state)
-          }.timeoutFail(TimeoutProducingRecord)(20.seconds)
-        } yield ((timeoutCount must beGreaterThan(1)) and
-          (state.inflight must beBetween(1, localBufferBatchSize)) and
-          (state.inflight + state.enqueued === 202))
-      }
-      flushTimeouts <- TestMetrics.reported.map(_.collect { case e: LocalBufferFlushTimeout => e })
+      localBufferBatchSize           = 35
+      test                          <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
+                                         for {
+                                           topic                 <- kafka.createRandomTopic(prefix = s"buffered-4", partitions = 1)
+                                           (timeoutCount, state) <- makeProducer(
+                                                                      producer,
+                                                                      strategy(maxConcurrency = 1),
+                                                                      flushTimeout = 1.second,
+                                                                      localBufferBatchSize = localBufferBatchSize
+                                                                    ).use { localBufferProducer =>
+                                                                      for {
+                                                                        _        <- localBufferProducer
+                                                                                      .produce(record(topic, Some(0)), IntSerde, StringSerde)
+                                                                                      .repeat(Schedule.recurs(200))
+                                                                        _        <- localBufferProducer
+                                                                                      .produce(record(topic, Some(0)), IntSerde, StringSerde)
+                                                                                      .flatMap(_.kafkaResult)
+                                                                                      .timeout(10.second)
+                                                                        timeouts <- TestMetrics.reported.map(_.collect {
+                                                                                      case e @ LocalBufferProduceAttemptFailed(TimeoutError(_), false) => e
+                                                                                    })
+                                                                        state    <- localBufferProducer.currentState
+                                                                      } yield (timeouts.size, state)
+                                                                    }.timeoutFail(TimeoutProducingRecord)(20.seconds)
+                                         } yield ((timeoutCount must beGreaterThan(1)) and
+                                           (state.inflight must beBetween(1, localBufferBatchSize)) and
+                                           (state.inflight + state.enqueued === 202))
+                                       }
+      flushTimeouts                 <- TestMetrics.reported.map(_.collect { case e: LocalBufferFlushTimeout => e })
     } yield flushTimeouts.count(_.recordsFlushed == 202) === 1
   }
 
@@ -157,25 +164,25 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic                                <- kafka.createRandomTopic(prefix = s"restart", partitions = 1)
-      producerPath = 500 + Random.nextInt(100000) // same path in same test run
-      _ <- Producer
-        .makeR[Any](failFastInvalidBrokersConfig)
-        .use { producer =>
-          makeProducer(producer, strategy(1), pathSuffix = producerPath, flushTimeout = 5.seconds).use { localBufferProducer =>
-            localBufferProducer.produce(record(topic, key), IntSerde, StringSerde).repeat(once)
-          }
-        }
-        .timeout(15.seconds)
+      producerPath                          = 500 + Random.nextInt(100000) // same path in same test run
+      _                                    <- Producer
+                                                .makeR[Any](failFastInvalidBrokersConfig)
+                                                .use { producer =>
+                                                  makeProducer(producer, strategy(1), pathSuffix = producerPath, flushTimeout = 5.seconds).use { localBufferProducer =>
+                                                    localBufferProducer.produce(record(topic, key), IntSerde, StringSerde).repeat(once)
+                                                  }
+                                                }
+                                                .timeout(15.seconds)
 
       consumed <- Ref.make(Map.empty[Int, Seq[String]])
-      handler = RecordHandler(putIn(consumed)).withDeserializers(IntSerde, StringSerde)
-      _ <- RecordConsumer.make(configFor(kafka, "GROUPYYYY", topic), handler).use_ {
-        consumed.get.map(_.get(key) must beEmpty).delay(2.second) *>
-          makeProducer(producer, strategy(1), pathSuffix = producerPath)
-            .use_ { // this time with a good producer it will pick up the pending 2 messages
-              eventuallyZ(consumed.get)(_.get(key).exists(_ == value :: value :: Nil))
-            }
-      }
+      handler   = RecordHandler(putIn(consumed)).withDeserializers(IntSerde, StringSerde)
+      _        <- RecordConsumer.make(configFor(kafka, "GROUPYYYY", topic), handler).use_ {
+                    consumed.get.map(_.get(key) must beEmpty).delay(2.second) *>
+                      makeProducer(producer, strategy(1), pathSuffix = producerPath)
+                        .use_ { // this time with a good producer it will pick up the pending 2 messages
+                          eventuallyZ(consumed.get)(_.get(key).exists(_ == value :: value :: Nil))
+                        }
+                  }
     } yield ok
   }
 
@@ -183,20 +190,20 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic                                <- kafka.createRandomTopic(1, params = Map("max.message.bytes" -> "100"))
-      record  = ProducerRecord(topic, value = Random.alphanumeric.take(300).mkString)
-      record2 = ProducerRecord(topic, value = Random.alphanumeric.take(10).mkString, partition = Some(-100))
-      test <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
-        for {
-          producerError1 <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
-          producerError2 <- localBufferProducer.produce(record2, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
-          metrics        <- TestMetrics.reported
-          reportedNonRetriableErrors = metrics.collect { case s @ LocalBufferProduceAttemptFailed(_, true) => s }
-          state <- localBufferProducer.currentState
-        } yield (reportedNonRetriableErrors.size === 2) and
-          (state.failedRecords === 2) and
-          (producerError1.getCause.getClass === classOf[RecordTooLargeException]) and
-          (producerError2.getCause.getClass === classOf[IllegalArgumentException])
-      }
+      record                                = ProducerRecord(topic, value = Random.alphanumeric.take(300).mkString)
+      record2                               = ProducerRecord(topic, value = Random.alphanumeric.take(10).mkString, partition = Some(-100))
+      test                                 <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
+                                                for {
+                                                  producerError1            <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
+                                                  producerError2            <- localBufferProducer.produce(record2, IntSerde, StringSerde).flatMap(_.kafkaResult.flip)
+                                                  metrics                   <- TestMetrics.reported
+                                                  reportedNonRetriableErrors = metrics.collect { case s @ LocalBufferProduceAttemptFailed(_, true) => s }
+                                                  state                     <- localBufferProducer.currentState
+                                                } yield (reportedNonRetriableErrors.size === 2) and
+                                                  (state.failedRecords === 2) and
+                                                  (producerError1.getCause.getClass === classOf[RecordTooLargeException]) and
+                                                  (producerError2.getCause.getClass === classOf[IllegalArgumentException])
+                                              }
     } yield test
   }
 
@@ -204,34 +211,38 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic                                <- kafka.createRandomTopic(1)
-      record = ProducerRecord(topic, value = "0")
-      test <- makeProducer(producer, strategy(maxConcurrency = 1), maxMessagesOnDisk = 10).use { localBufferProducer =>
-        localBufferProducer
-          .produce(record, IntSerde, StringSerde)
-          .repeat(recurs(999))
-          .flip
-          .map(_ === LocalBufferError(LocalBufferFull(10)))
-      }
+      record                                = ProducerRecord(topic, value = "0")
+      test                                 <- makeProducer(producer, strategy(maxConcurrency = 1), maxMessagesOnDisk = 10).use { localBufferProducer =>
+                                                localBufferProducer
+                                                  .produce(record, IntSerde, StringSerde)
+                                                  .repeat(recurs(999))
+                                                  .flip
+                                                  .map(_ === LocalBufferError(LocalBufferFull(10)))
+                                              }
     } yield test
   }
 
   "not try to send messages if their submit time is older than configured timeout" in {
     for {
       BufferTestResources(kafka, _) <- getShared
-      result <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
-        for {
-          topic <- kafka.createRandomTopic(1)
-          record = ProducerRecord(topic, value = "0")
-          test <- makeProducer(producer, strategy(maxConcurrency = 1), giveUpAfter = 10.millis).use { localBufferProducer =>
-            for {
-              produceError <- localBufferProducer.produce(record, IntSerde, StringSerde).flatMap(_.kafkaResult).repeat(recurs(1000)).either
-              _            <- localBufferProducer.close
-              produceAfterShutdown <- localBufferProducer.produce(record, IntSerde, StringSerde).flip
-            } yield (produceError.left.get.getClass === classOf[TimeoutError]) and
-              (produceAfterShutdown.cause.getClass === classOf[ProducerClosed])
-          }
-        } yield test
-      }
+      result                        <- Producer.makeR[Any](failFastInvalidBrokersConfig).use { producer =>
+                                         for {
+                                           topic <- kafka.createRandomTopic(1)
+                                           record = ProducerRecord(topic, value = "0")
+                                           test  <- makeProducer(producer, strategy(maxConcurrency = 1), giveUpAfter = 10.millis).use { localBufferProducer =>
+                                                      for {
+                                                        produceError         <- localBufferProducer
+                                                                                  .produce(record, IntSerde, StringSerde)
+                                                                                  .flatMap(_.kafkaResult)
+                                                                                  .repeat(recurs(1000))
+                                                                                  .either
+                                                        _                    <- localBufferProducer.close
+                                                        produceAfterShutdown <- localBufferProducer.produce(record, IntSerde, StringSerde).flip
+                                                      } yield (produceError.left.get.getClass === classOf[TimeoutError]) and
+                                                        (produceAfterShutdown.cause.getClass === classOf[ProducerClosed])
+                                                    }
+                                         } yield test
+                                       }
     } yield result
   }
 
@@ -239,12 +250,12 @@ abstract class LocalBufferProducerIT extends BaseTestWithSharedEnv[ITEnv.Env, Bu
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic                                <- kafka.createRandomTopic(1)
-      record = ProducerRecord(topic, value = "0")
-      results <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
-        ZIO.foreach(0 until 1000: Seq[Int])(i => localBufferProducer.produce(record.copy(key = Some(i)), IntSerde, StringSerde))
-      }
+      record                                = ProducerRecord(topic, value = "0")
+      results                              <- makeProducer(producer, strategy(maxConcurrency = 1)).use { localBufferProducer =>
+                                                ZIO.foreach(0 until 1000: Seq[Int])(i => localBufferProducer.produce(record.copy(key = Some(i)), IntSerde, StringSerde))
+                                              }
       // producer is shutdown out of managed scope - checking that the promises are still fulfilled eventually
-      recordsProduced <- ZIO.foreach(results)(_.kafkaResult).timeoutFail(new RuntimeException("TIMEOUT!"))(15.seconds)
+      recordsProduced                      <- ZIO.foreach(results)(_.kafkaResult).timeoutFail(new RuntimeException("TIMEOUT!"))(15.seconds)
     } yield recordsProduced.size === 1000
   }
 
@@ -344,21 +355,21 @@ class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
     for {
       BufferTestResources(kafka, producer) <- getShared
       topic                                <- kafka.createRandomTopic(prefix = s"buffered-1")
-      _ <- makeBuffer(Random.nextInt(100000).toString).use { buffer =>
-        makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second, maxMessagesOnDisk = 1).use {
-          localBufferProducer =>
-            for {
-              _ <- buffer.close
-              record = ProducerRecord(topic, "bar", Some("foo"))
-              produceIO = localBufferProducer
-                .produce(record, StringSerde, StringSerde)
-                .flatMap(_.kafkaResult)
-                .timeoutFail(LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed)(5.seconds)
-              _ <- (produceIO *> produceIO) /*maxMessagesOnDisk=1 ==> second produce will fail if we don't dequeue count from memory */
-                .map(_.topic === topic)
-            } yield ok
-        }
-      }
+      _                                    <- makeBuffer(Random.nextInt(100000).toString).use { buffer =>
+                                                makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second, maxMessagesOnDisk = 1).use {
+                                                  localBufferProducer =>
+                                                    for {
+                                                      _        <- buffer.close
+                                                      record    = ProducerRecord(topic, "bar", Some("foo"))
+                                                      produceIO = localBufferProducer
+                                                                    .produce(record, StringSerde, StringSerde)
+                                                                    .flatMap(_.kafkaResult)
+                                                                    .timeoutFail(LocalBufferProducerTimeoutWaitingForDirectProduceWithH2Closed)(5.seconds)
+                                                      _        <- (produceIO *> produceIO) /*maxMessagesOnDisk=1 ==> second produce will fail if we don't dequeue count from memory */
+                                                        .map(_.topic === topic)
+                                                    } yield ok
+                                                }
+                                              }
     } yield ok
 
   }
@@ -367,16 +378,16 @@ class LocalBufferProducerUnorderedIT extends LocalBufferProducerIT {
     for {
       BufferTestResources(kafka, _) <- getShared
       topic                         <- kafka.createRandomTopic(prefix = s"buffered-1")
-      _ <- Producer.make(failSlowInvalidBrokersConfig).use { producer =>
-        makeBuffer(Random.nextInt(100000).toString).use { buffer =>
-          makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second).use { localBufferProducer =>
-            buffer.close *>
-              localBufferProducer
-                .produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)
-                .timeoutFail(LocalBufferProducerShouldNotWaitForKafkaSend)(50.millis)
-          }
-        }
-      }
+      _                             <- Producer.make(failSlowInvalidBrokersConfig).use { producer =>
+                                         makeBuffer(Random.nextInt(100000).toString).use { buffer =>
+                                           makeProducerWith(buffer, producer, strategy(maxConcurrency = 1), flushTimeout = 1.second).use { localBufferProducer =>
+                                             buffer.close *>
+                                               localBufferProducer
+                                                 .produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde)
+                                                 .timeoutFail(LocalBufferProducerShouldNotWaitForKafkaSend)(50.millis)
+                                           }
+                                         }
+                                       }
     } yield ok
   }
 }

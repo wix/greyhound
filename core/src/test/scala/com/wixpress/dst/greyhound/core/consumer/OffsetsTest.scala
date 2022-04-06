@@ -11,10 +11,10 @@ class OffsetsTest extends BaseTest[Any] {
 
   "get current offsets" in {
     for {
-      offsets <- Offsets.make
+      offsets       <- Offsets.make
       topicPartition = TopicPartition(topic, 0)
-      _           <- offsets.update(topicPartition, 0L)
-      committable <- offsets.committable
+      _             <- offsets.update(topicPartition, 0L)
+      committable   <- offsets.committable
     } yield committable must havePair(topicPartition -> 0L)
   }
 

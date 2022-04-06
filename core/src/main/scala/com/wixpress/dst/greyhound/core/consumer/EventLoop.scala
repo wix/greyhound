@@ -36,33 +36,33 @@ object EventLoop {
     workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]
   ): RManaged[R with Env, EventLoop[GreyhoundMetrics with Blocking]] = {
     val start = for {
-      _       <- report(StartingEventLoop(clientId, group, consumerAttributes))
-      offsets <- Offsets.make
-      handle = handler.andThen(offsets.update).handle(_)
-      dispatcher <- Dispatcher.make(
-        group,
-        clientId,
-        handle,
-        config.lowWatermark,
-        config.highWatermark,
-        config.drainTimeout,
-        config.delayResumeOfPausedPartition,
-        consumerAttributes,
-        workersShutdownRef,
-        config.startPaused
-      )
+      _                   <- report(StartingEventLoop(clientId, group, consumerAttributes))
+      offsets             <- Offsets.make
+      handle               = handler.andThen(offsets.update).handle(_)
+      dispatcher          <- Dispatcher.make(
+                               group,
+                               clientId,
+                               handle,
+                               config.lowWatermark,
+                               config.highWatermark,
+                               config.drainTimeout,
+                               config.delayResumeOfPausedPartition,
+                               consumerAttributes,
+                               workersShutdownRef,
+                               config.startPaused
+                             )
       positionsRef        <- Ref.make(Map.empty[TopicPartition, Offset])
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned  <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
-      rebalanceListener = listener(pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
-      _       <- subscribe(initialSubscription, rebalanceListener)(consumer)
-      running <- Ref.make[EventLoopState](Running)
-      fiber <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, positionsRef, offsets, config, clientId, group)
-        .repeatWhile(_ == true)
-        .forkDaemon
-      _   <- partitionsAssigned.await
-      env <- ZIO.environment[R with Env]
+      rebalanceListener    = listener(pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
+      _                   <- subscribe(initialSubscription, rebalanceListener)(consumer)
+      running             <- Ref.make[EventLoopState](Running)
+      fiber               <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, positionsRef, offsets, config, clientId, group)
+                               .repeatWhile(_ == true)
+                               .forkDaemon
+      _                   <- partitionsAssigned.await
+      env                 <- ZIO.environment[R with Env]
     } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provide(env))
 
     start
@@ -72,8 +72,8 @@ object EventLoop {
             _       <- report(StoppingEventLoop(clientId, group, consumerAttributes))
             _       <- running.set(ShuttingDown)
             drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
-            _ <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
-            _ <- commitOffsets(consumer, offsets)
+            _       <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
+            _       <- commitOffsets(consumer, offsets)
           } yield ()
       }
       .map {
@@ -177,14 +177,14 @@ object EventLoop {
     for {
       paused             <- pausedRef.get
       partitionsToResume <- dispatcher.resumeablePartitions(paused)
-      _ <- ZIO.when(partitionsToResume.nonEmpty)(
-        report(LowWatermarkReached(clientId, group, partitionsToResume, consumer.config.consumerAttributes))
-      )
-      _ <- consumer
-        .resume(partitionsToResume)
-        .tapError(e => UIO(e.printStackTrace()))
-        .ignore
-      _ <- pausedRef.update(_ -- partitionsToResume)
+      _                  <- ZIO.when(partitionsToResume.nonEmpty)(
+                              report(LowWatermarkReached(clientId, group, partitionsToResume, consumer.config.consumerAttributes))
+                            )
+      _                  <- consumer
+                              .resume(partitionsToResume)
+                              .tapError(e => UIO(e.printStackTrace()))
+                              .ignore
+      _                  <- pausedRef.update(_ -- partitionsToResume)
     } yield ()
 
   private def pollAndHandle[R1, R2](
@@ -194,21 +194,21 @@ object EventLoop {
     config: EventLoopConfig
   ) =
     for {
-      records <- consumer.poll(config.pollTimeout).catchAll(_ => UIO(Nil))
-      paused  <- pausedRef.get
+      records      <- consumer.poll(config.pollTimeout).catchAll(_ => UIO(Nil))
+      paused       <- pausedRef.get
       pausedTopics <- ZIO.foldLeft(records)(paused) { (acc, record) =>
-        val partition = record.topicPartition
-        if (acc contains partition)
-          report(PartitionThrottled(partition, record.offset, consumer.config.consumerAttributes)).as(acc)
-        else
-          dispatcher.submit(record).flatMap {
-            case SubmitResult.Submitted => ZIO.succeed(acc)
-            case SubmitResult.Rejected =>
-              report(HighWatermarkReached(partition, record.offset, consumer.config.consumerAttributes)) *>
-                consumer.pause(record).fold(_ => acc, _ => acc + partition)
-          }
-      }
-      _ <- pausedRef.update(_ => pausedTopics)
+                        val partition = record.topicPartition
+                        if (acc contains partition)
+                          report(PartitionThrottled(partition, record.offset, consumer.config.consumerAttributes)).as(acc)
+                        else
+                          dispatcher.submit(record).flatMap {
+                            case SubmitResult.Submitted => ZIO.succeed(acc)
+                            case SubmitResult.Rejected  =>
+                              report(HighWatermarkReached(partition, record.offset, consumer.config.consumerAttributes)) *>
+                                consumer.pause(record).fold(_ => acc, _ => acc + partition)
+                          }
+                      }
+      _            <- pausedRef.update(_ => pausedTopics)
     } yield records
 
   private def commitOffsets(consumer: Consumer, offsets: Offsets): URIO[Blocking with GreyhoundMetrics, Unit] =

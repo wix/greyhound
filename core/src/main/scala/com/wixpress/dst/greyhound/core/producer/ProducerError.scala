@@ -19,7 +19,7 @@ case class IllegalArgumentError(e: IllegalArgumentException)   extends ProducerE
 case class UnknownError(cause: Throwable)                      extends ProducerError(cause)
 
 object ProducerError {
-  def from(exception: Throwable): ProducerError = {
+  def from(exception: Throwable): ProducerError               = {
     exception match {
       case e: ProducerError            => e
       case e: AuthenticationException  => AuthenticationError(e)

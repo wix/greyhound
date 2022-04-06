@@ -27,18 +27,18 @@ object AwaitShutdown {
     override def awaitShutdown: UIO[Nothing] = ZIO.never
   }
 
-  trait OnShutdown {
+  trait OnShutdown                                                                 {
     def shuttingDown: UIO[Unit]
   }
   case class ShutdownPromise(onShutdown: OnShutdown, awaitShutdown: AwaitShutdown) {
     def toManaged = ZIO.unit.toManaged(_ => onShutdown.shuttingDown)
   }
 
-  def make = Promise.make[Nothing, Nothing].map { promise =>
+  def make                                 = Promise.make[Nothing, Nothing].map { promise =>
     val onShutdown: OnShutdown = new OnShutdown {
       override def shuttingDown: UIO[Unit] = promise.die(new InterruptedException("shutting down")).unit
     }
-    val awaitShutdown = new AwaitShutdown {
+    val awaitShutdown          = new AwaitShutdown {
       override def awaitShutdown: UIO[Nothing] = promise.await
       override def isShutDown: UIO[Boolean]    = promise.isDone
     }

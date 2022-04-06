@@ -38,7 +38,7 @@ object GreyhoundMetrics {
       val logger = LoggerFactory.getLogger("metrics")
       fromReporter(metric => logger.info(metric.toString))
     }
-    val noop = new Service {
+    val noop      = new Service {
       override def report(metric: GreyhoundMetric): URIO[Blocking, Unit] = ZIO.unit
     }
   }
@@ -63,12 +63,12 @@ object GreyhoundMetrics {
     def map[B](f: A => B)                                 = copy(result = result.map(f))
     def mapExit[B, E1 >: E](f: Exit[E, A] => Exit[E1, B]) = copy(result = f(result))
     def mapError[E1](f: E => E1)                          = copy(result = result.mapError(f))
-    def toTry(implicit ev: E <:< Throwable): Try[A] =
+    def toTry(implicit ev: E <:< Throwable): Try[A]       =
       result.fold(c => Failure(c.squashTrace), Success.apply)
-    def value: Option[A]     = result.fold(_ => None, Some(_))
-    def interrupted: Boolean = result.fold(_.interrupted, _ => false)
-    def succeeded: Boolean   = result.succeeded
-    def failed: Boolean      = !succeeded
+    def value: Option[A]                                  = result.fold(_ => None, Some(_))
+    def interrupted: Boolean                              = result.fold(_.interrupted, _ => false)
+    def succeeded: Boolean                                = result.succeeded
+    def failed: Boolean                                   = !succeeded
   }
 }
 

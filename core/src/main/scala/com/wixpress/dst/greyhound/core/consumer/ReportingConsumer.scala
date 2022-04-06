@@ -23,8 +23,8 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
       r <- ZIO.environment[R1 with GreyhoundMetrics with Blocking]
       _ <- GreyhoundMetrics.report(SubscribingToTopicWithPattern(clientId, group, pattern.toString, config.consumerAttributes))
       _ <- internal
-        .subscribePattern(pattern, rebalanceListener = listener(r, rebalanceListener))
-        .tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
+             .subscribePattern(pattern, rebalanceListener = listener(r, rebalanceListener))
+             .tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
     } yield ()
 
   override def subscribe[R1](
@@ -35,8 +35,8 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
       r <- ZIO.environment[Blocking with R1 with GreyhoundMetrics]
       _ <- GreyhoundMetrics.report(SubscribingToTopics(clientId, group, topics, config.consumerAttributes))
       _ <- internal
-        .subscribe(topics = topics, rebalanceListener = listener(r, rebalanceListener))
-        .tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
+             .subscribe(topics = topics, rebalanceListener = listener(r, rebalanceListener))
+             .tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
     } yield ()
 
   private def listener[R1](r: R1 with GreyhoundMetrics with Blocking, rebalanceListener: RebalanceListener[R1]) = {
@@ -54,9 +54,9 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
   override def poll(timeout: Duration): RIO[Blocking with GreyhoundMetrics, Records] =
     for {
       records <- internal.poll(timeout).tapError { error =>
-        GreyhoundMetrics.report(PollingFailed(clientId, group, error, config.consumerAttributes))
-      }
-      _ <- GreyhoundMetrics.report(PolledRecords(clientId, group, orderedPolledRecords(records), config.consumerAttributes)).as(records)
+                   GreyhoundMetrics.report(PollingFailed(clientId, group, error, config.consumerAttributes))
+                 }
+      _       <- GreyhoundMetrics.report(PolledRecords(clientId, group, orderedPolledRecords(records), config.consumerAttributes)).as(records)
     } yield records
 
   private def orderedPolledRecords(records: Records): OrderedOffsets = {

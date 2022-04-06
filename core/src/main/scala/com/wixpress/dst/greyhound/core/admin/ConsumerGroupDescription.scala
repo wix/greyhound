@@ -18,7 +18,7 @@ object ConsumerGroupDescription {
     )
   }
 }
-object MemberDescription {
+object MemberDescription        {
   def apply(member: admin.MemberDescription): MemberDescription = {
     MemberDescription(
       member.consumerId(),

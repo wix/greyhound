@@ -81,22 +81,22 @@ object Consumer {
   }
 
   def make(cfg: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
-    semaphore <- Semaphore.make(1).toManaged_
-    consumer  <- makeConsumer(cfg, semaphore)
-    metrics   <- ZIO.environment[GreyhoundMetrics].toManaged_
+    semaphore          <- Semaphore.make(1).toManaged_
+    consumer           <- makeConsumer(cfg, semaphore)
+    metrics            <- ZIO.environment[GreyhoundMetrics].toManaged_
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
     // we also may want to seek forward to some given initial offsets
     offsetsInitializer <- OffsetsInitializer
-      .make(
-        cfg.clientId,
-        cfg.groupId,
-        UnsafeOffsetOperations.make(consumer),
-        timeout = 500.millis,
-        timeoutIfSeek = 10.seconds,
-        initialSeek = cfg.initialSeek
-      )
-      .toManaged_
+                            .make(
+                              cfg.clientId,
+                              cfg.groupId,
+                              UnsafeOffsetOperations.make(consumer),
+                              timeout = 500.millis,
+                              timeoutIfSeek = 10.seconds,
+                              initialSeek = cfg.initialSeek
+                            )
+                            .toManaged_
   } yield {
     new Consumer {
       override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
@@ -237,7 +237,7 @@ object Consumer {
     config: ConsumerConfig,
     semaphore: Semaphore
   ): RManaged[Blocking with GreyhoundMetrics, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
-    val acquire = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
+    val acquire                              = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     def close(consumer: KafkaConsumer[_, _]) =
       effectBlocking(consumer.close())
         .reporting(ClosedConsumer(config.groupId, config.clientId, _))
@@ -261,9 +261,9 @@ case class ConsumerConfig(
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = Map(
-    KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG -> bootstrapServers,
-    KafkaConsumerConfig.GROUP_ID_CONFIG          -> groupId,
-    KafkaConsumerConfig.CLIENT_ID_CONFIG         -> clientId,
+    KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG  -> bootstrapServers,
+    KafkaConsumerConfig.GROUP_ID_CONFIG           -> groupId,
+    KafkaConsumerConfig.CLIENT_ID_CONFIG          -> clientId,
     (
       KafkaConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
       offsetReset match {

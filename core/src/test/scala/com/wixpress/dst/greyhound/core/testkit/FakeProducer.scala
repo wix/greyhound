@@ -25,18 +25,18 @@ case class FakeProducer(
     config match {
       case ProducerConfig.Standard =>
         for {
-          modified <- beforeProduce(record)
-          _        <- records.offer(modified)
-          _        <- counterRef.update(_ + 1)
+          modified      <- beforeProduce(record)
+          _             <- records.offer(modified)
+          _             <- counterRef.update(_ + 1)
           topic          = modified.topic
           partition      = modified.partition.getOrElse(0)
           topicPartition = TopicPartition(topic, partition)
-          offset <- offsets.modify { offsets =>
-            val offset = offsets.get(topicPartition).fold(0L)(_ + 1)
-            (offset, offsets + (topicPartition -> offset))
-          }
-          promise <- Promise.make[ProducerError, RecordMetadata]
-          _       <- promise.complete(beforeComplete(RecordMetadata(topic, partition, offset))).fork
+          offset        <- offsets.modify { offsets =>
+                             val offset = offsets.get(topicPartition).fold(0L)(_ + 1)
+                             (offset, offsets + (topicPartition -> offset))
+                           }
+          promise       <- Promise.make[ProducerError, RecordMetadata]
+          _             <- promise.complete(beforeComplete(RecordMetadata(topic, partition, offset))).fork
         } yield promise.await
 
       case ProducerConfig.Failing =>

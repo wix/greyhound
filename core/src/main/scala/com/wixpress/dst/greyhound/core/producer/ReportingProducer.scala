@@ -45,18 +45,19 @@ object ReportingProducer {
     attributes: Map[String, String] = Map.empty
   ): ZIO[Blocking with Clock with GreyhoundMetrics with R, ProducerError, IO[ProducerError, RecordMetadata]] = {
     for {
-      started <- currentTime(TimeUnit.MILLISECONDS)
-      env     <- ZIO.environment[Clock with GreyhoundMetrics with Blocking]
-      _       <- GreyhoundMetrics.report(ProducingRecord(record, attributes))
-      onError <- ZIO.memoize((error: ProducerError) => GreyhoundMetrics.report(ProduceFailed(error, record.topic, attributes)).provide(env))
-      onSuccess <- ZIO.memoize((metadata: RecordMetadata) =>
-        currentTime(TimeUnit.MILLISECONDS)
-          .flatMap(ended =>
-            GreyhoundMetrics.report(RecordProduced(record, metadata, attributes, FiniteDuration(ended - started, MILLISECONDS)))
-          )
-          .provide(env)
-      )
-      promise <- produceAsync(record).map(_.tapBoth(onError, onSuccess))
+      started   <- currentTime(TimeUnit.MILLISECONDS)
+      env       <- ZIO.environment[Clock with GreyhoundMetrics with Blocking]
+      _         <- GreyhoundMetrics.report(ProducingRecord(record, attributes))
+      onError   <- ZIO.memoize((error: ProducerError) => GreyhoundMetrics.report(ProduceFailed(error, record.topic, attributes)).provide(env))
+      onSuccess <-
+        ZIO.memoize((metadata: RecordMetadata) =>
+          currentTime(TimeUnit.MILLISECONDS)
+            .flatMap(ended =>
+              GreyhoundMetrics.report(RecordProduced(record, metadata, attributes, FiniteDuration(ended - started, MILLISECONDS)))
+            )
+            .provide(env)
+        )
+      promise   <- produceAsync(record).map(_.tapBoth(onError, onSuccess))
     } yield promise
   }
 }

@@ -62,7 +62,7 @@ private[retry] object NonBlockingRetryRecordHandler {
         subscription match {
           case _: TopicPattern =>
             record.topic.startsWith(patternRetryTopicPrefix(group))
-          case _: Topics =>
+          case _: Topics       =>
             record.topic.startsWith(fixedRetryTopicPrefix(originalTopic(record.topic, group), group))
         }
       }

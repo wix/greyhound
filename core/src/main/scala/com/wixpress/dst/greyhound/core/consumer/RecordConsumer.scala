@@ -67,43 +67,43 @@ object RecordConsumer {
     handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]
   ): ZManaged[R with Env with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     for {
-      consumerShutdown <- AwaitShutdown.make.toManaged_
-      _ <- GreyhoundMetrics
-        .report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers, config.consumerAttributes))
-        .toManaged_
-      _                       <- validateRetryPolicy(config)
-      consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
-      nonBlockingRetryHelper = NonBlockingRetryHelper(config.group, config.retryConfig)
-      consumer <- Consumer.make(consumerConfig(config))
+      consumerShutdown                     <- AwaitShutdown.make.toManaged_
+      _                                    <- GreyhoundMetrics
+                                                .report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers, config.consumerAttributes))
+                                                .toManaged_
+      _                                    <- validateRetryPolicy(config)
+      consumerSubscriptionRef              <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
+      nonBlockingRetryHelper                = NonBlockingRetryHelper(config.group, config.retryConfig)
+      consumer                             <- Consumer.make(consumerConfig(config))
       (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
-        maybeAddRetryTopics(policy, config, nonBlockingRetryHelper)
-      )
-      _ <- AdminClient
-        .make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes)
-        .use(client =>
-          client.createTopics(
-            topicsToCreate.map(topic =>
-              TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))
-            )
-          )
-        )
-        .toManaged_
-      blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
-      blockingStateResolver = BlockingStateResolver(blockingState)
-      workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty).toManaged_
-      combinedAwaitShutdown = combineAwaitShutdowns(consumerShutdown, workersShutdownRef)
-      handlerWithRetries <- addRetriesToHandler(config, handler, blockingState, nonBlockingRetryHelper, combinedAwaitShutdown)
-      eventLoop <- EventLoop.make(
-        group = config.group,
-        initialSubscription = initialSubscription,
-        consumer = ReportingConsumer(config.clientId, config.group, consumer),
-        handler = handlerWithRetries,
-        config = config.eventLoopConfig,
-        clientId = config.clientId,
-        consumerAttributes = config.consumerAttributes,
-        workersShutdownRef = workersShutdownRef
-      )
-      _ <- consumerShutdown.toManaged // this will be called first on release
+                                                maybeAddRetryTopics(policy, config, nonBlockingRetryHelper)
+                                              )
+      _                                    <- AdminClient
+                                                .make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes)
+                                                .use(client =>
+                                                  client.createTopics(
+                                                    topicsToCreate.map(topic =>
+                                                      TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))
+                                                    )
+                                                  )
+                                                )
+                                                .toManaged_
+      blockingState                        <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty).toManaged_
+      blockingStateResolver                 = BlockingStateResolver(blockingState)
+      workersShutdownRef                   <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty).toManaged_
+      combinedAwaitShutdown                 = combineAwaitShutdowns(consumerShutdown, workersShutdownRef)
+      handlerWithRetries                   <- addRetriesToHandler(config, handler, blockingState, nonBlockingRetryHelper, combinedAwaitShutdown)
+      eventLoop                            <- EventLoop.make(
+                                                group = config.group,
+                                                initialSubscription = initialSubscription,
+                                                consumer = ReportingConsumer(config.clientId, config.group, consumer),
+                                                handler = handlerWithRetries,
+                                                config = config.eventLoopConfig,
+                                                clientId = config.clientId,
+                                                consumerAttributes = config.consumerAttributes,
+                                                workersShutdownRef = workersShutdownRef
+                                              )
+      _                                    <- consumerShutdown.toManaged // this will be called first on release
     } yield new RecordConsumer[R with Env] {
       override def pause: URIO[R with Env, Unit] =
         eventLoop.pause
@@ -144,25 +144,29 @@ object RecordConsumer {
         listener: RebalanceListener[R1]
       ): RIO[Env with R1, AssignedPartitions] =
         for {
-          assigned <- Ref.make[AssignedPartitions](Set.empty)
-          promise  <- Promise.make[Nothing, AssignedPartitions]
+          assigned         <- Ref.make[AssignedPartitions](Set.empty)
+          promise          <- Promise.make[Nothing, AssignedPartitions]
           rebalanceListener = eventLoop.rebalanceListener *> listener *>
-            new RebalanceListener[R1] {
-              override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, DelayedRebalanceEffect] =
-                DelayedRebalanceEffect.zioUnit
+                                new RebalanceListener[R1] {
+                                  override def onPartitionsRevoked(
+                                    consumer: Consumer,
+                                    partitions: Set[TopicPartition]
+                                  ): URIO[R1, DelayedRebalanceEffect] =
+                                    DelayedRebalanceEffect.zioUnit
 
-              override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] = for {
-                allAssigned <- assigned.updateAndGet(_ => partitions)
-                _           <- consumerSubscriptionRef.set(subscription)
-                _           <- promise.succeed(allAssigned)
-              } yield ()
-            }
+                                  override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] =
+                                    for {
+                                      allAssigned <- assigned.updateAndGet(_ => partitions)
+                                      _           <- consumerSubscriptionRef.set(subscription)
+                                      _           <- promise.succeed(allAssigned)
+                                    } yield ()
+                                }
 
-          _ <- subscribe[R1](subscription, rebalanceListener)(consumer)
+          _                 <- subscribe[R1](subscription, rebalanceListener)(consumer)
           resubscribeTimeout = config.eventLoopConfig.drainTimeout
-          result <- promise.await.disconnect
-            .timeoutFail(ResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
-            .catchAll(ex => report(ResubscribeError(ex, group, clientId)) *> UIO(Set.empty[TopicPartition]))
+          result            <- promise.await.disconnect
+                                 .timeoutFail(ResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
+                                 .catchAll(ex => report(ResubscribeError(ex, group, clientId)) *> UIO(Set.empty[TopicPartition]))
         } yield result
 
       override def clientId: ClientId = config.clientId
@@ -203,7 +207,7 @@ object RecordConsumer {
     helper: NonBlockingRetryHelper
   ): (ConsumerSubscription, Set[String]) = {
     config.initialSubscription match {
-      case Topics(topics) =>
+      case Topics(topics)           =>
         val retryTopics = topics.flatMap(helper.retryTopicsFor)
         (Topics(topics ++ retryTopics), retryTopics)
       case TopicPattern(pattern, _) =>
@@ -246,7 +250,7 @@ object RecordConsumer {
               awaitShutdown
             )
           )
-      case None =>
+      case None              =>
         ZManaged.succeed(
           handler.withErrorHandler((e, record) =>
             report(UncaughtHandlerError(e, record.topic, record.partition, record.offset, config.group, config.clientId))
@@ -258,7 +262,7 @@ object RecordConsumer {
     (config.initialSubscription match {
       case _: ConsumerSubscription.TopicPattern =>
         ZIO.unit
-      case _: ConsumerSubscription.Topics =>
+      case _: ConsumerSubscription.Topics       =>
         ZIO.when(config.retryConfig.exists(_.forPatternSubscription.exists(_.nonEmpty)))(ZIO.fail(InvalidRetryConfigForPatternSubscription))
     }).toManaged_
 

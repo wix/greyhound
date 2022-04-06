@@ -29,7 +29,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
           value         <- bytes
 
           resolver = BlockingStateResolver(blockingState)
-          _ <- blockingState.set(Map(TopicPartitionTarget(TopicPartition(topic, partition)) -> state))
+          _       <- blockingState.set(Map(TopicPartitionTarget(TopicPartition(topic, partition)) -> state))
 
           shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
         } yield shouldBlock === expectedShouldBlock
@@ -46,7 +46,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
           value         <- bytes
 
           resolver = BlockingStateResolver(blockingState)
-          _ <- blockingState.set(Map(TopicTarget(topic) -> state))
+          _       <- blockingState.set(Map(TopicTarget(topic) -> state))
 
           shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
         } yield shouldBlock === expectedShouldBlock
@@ -68,37 +68,37 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
     "switch state to Blocked(message) when previous state was empty for TopicPartitionTarget" in {
       for {
-        topic <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
+        topic         <- randomTopicName
+        tpartition     = TopicPartition(topic, partition)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        key     = "some-key"
-        value   = Foo("some-value")
-        headers = Headers.from("header-key" -> "header-value")
+        key            = "some-key"
+        value          = Foo("some-value")
+        headers        = Headers.from("header-key" -> "header-value")
 
         resolver = BlockingStateResolver(blockingState)
 
-        record = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        record           = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
         shouldBlock     <- resolver.resolve(record)
         updatedStateMap <- blockingState.get
-        updatedState = updatedStateMap(TopicPartitionTarget(tpartition))
+        updatedState     = updatedStateMap(TopicPartitionTarget(tpartition))
       } yield shouldBlock === true and updatedState === Blocked(record)
     }
 
     "switch state to Blocked(message) when previous state was Blocking for TopicPartitionTarget" in {
       for {
-        topic <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
+        topic         <- randomTopicName
+        tpartition     = TopicPartition(topic, partition)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map(TopicPartitionTarget(tpartition) -> InternalBlocking))
-        key     = "some-key"
-        value   = Foo("some-value")
-        headers = Headers.from("header-key" -> "header-value")
+        key            = "some-key"
+        value          = Foo("some-value")
+        headers        = Headers.from("header-key" -> "header-value")
 
         resolver = BlockingStateResolver(blockingState)
 
-        record = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        record           = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
         shouldBlock     <- resolver.resolve(record)
         updatedStateMap <- blockingState.get
-        updatedState = updatedStateMap(TopicPartitionTarget(tpartition))
+        updatedState     = updatedStateMap(TopicPartitionTarget(tpartition))
       } yield shouldBlock === true and updatedState === Blocked(record)
     }
 
@@ -113,7 +113,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
         shouldBlock     <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
         updatedStateMap <- blockingState.get
-        updatedState = updatedStateMap(TopicTarget(topic))
+        updatedState     = updatedStateMap(TopicTarget(topic))
       } yield shouldBlock === true and updatedState === InternalBlocking
     }
 
@@ -143,12 +143,12 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
             value         <- bytes
 
             resolver = BlockingStateResolver(blockingState)
-            _ <- blockingState.set(
-              Map(
-                TopicTarget(topic)                                     -> topicTargetState,
-                TopicPartitionTarget(TopicPartition(topic, partition)) -> topicPartitionTargetState
-              )
-            )
+            _       <- blockingState.set(
+                         Map(
+                           TopicTarget(topic)                                     -> topicTargetState,
+                           TopicPartitionTarget(TopicPartition(topic, partition)) -> topicPartitionTargetState
+                         )
+                       )
 
             shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
           } yield shouldBlock === expectedShouldBlock
@@ -157,21 +157,21 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
     "when setting blocking state for topicTarget, also set it to related topicPartitions targets transitively, but not to others" in {
       for {
-        topic <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
-        anotherTopic <- randomTopicName
+        topic            <- randomTopicName
+        tpartition        = TopicPartition(topic, partition)
+        anotherTopic     <- randomTopicName
         anotherTPartition = TopicPartition(anotherTopic, partition)
-        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](
-          Map(TopicPartitionTarget(tpartition) -> IgnoringAll, TopicPartitionTarget(anotherTPartition) -> IgnoringOnce)
-        )
-        key     = "some-key"
-        value   = Foo("some-value")
-        headers = Headers.from("header-key" -> "header-value")
+        blockingState    <- Ref.make[Map[BlockingTarget, BlockingState]](
+                              Map(TopicPartitionTarget(tpartition) -> IgnoringAll, TopicPartitionTarget(anotherTPartition) -> IgnoringOnce)
+                            )
+        key               = "some-key"
+        value             = Foo("some-value")
+        headers           = Headers.from("header-key" -> "header-value")
 
         resolver = BlockingStateResolver(blockingState)
 
-        record  = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
-        record2 = ConsumerRecord(anotherTopic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        record              = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        record2             = ConsumerRecord(anotherTopic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
         shouldBlockBefore  <- resolver.resolve(record)
         shouldBlockBefore2 <- resolver.resolve(record2)
         _                  <- resolver.setBlockingState(BlockErrors(topic))
@@ -179,8 +179,8 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
         shouldBlockAfter2  <- resolver.resolve(record2)
 
         updatedStateMap <- blockingState.get
-        updatedState  = updatedStateMap(TopicPartitionTarget(tpartition))
-        updatedState2 = updatedStateMap(TopicPartitionTarget(anotherTPartition))
+        updatedState     = updatedStateMap(TopicPartitionTarget(tpartition))
+        updatedState2    = updatedStateMap(TopicPartitionTarget(anotherTPartition))
       } yield (shouldBlockBefore aka "shouldBlockBefore" mustEqual false) and
         (shouldBlockAfter aka "shouldBlockAfter" mustEqual true) and
         (shouldBlockBefore2 aka "shouldBlockBefore2" mustEqual false) and
@@ -191,37 +191,37 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
     "fail ignoring once when the previous state was not blocked" in {
       for {
-        topic <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
-        anotherTopic <- randomTopicName
+        topic            <- randomTopicName
+        tpartition        = TopicPartition(topic, partition)
+        anotherTopic     <- randomTopicName
         anotherTPartition = TopicPartition(anotherTopic, partition)
-        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map(TopicPartitionTarget(tpartition) -> InternalBlocking))
+        blockingState    <- Ref.make[Map[BlockingTarget, BlockingState]](Map(TopicPartitionTarget(tpartition) -> InternalBlocking))
 
         resolver = BlockingStateResolver(blockingState)
         failed1 <- resolver.setBlockingState(IgnoreOnceFor(tpartition)).as(false).catchAll(_ => UIO(true))
         failed2 <- resolver.setBlockingState(IgnoreOnceFor(anotherTPartition)).as(false).catchAll(_ => UIO(true))
 
         updatedStateMap <- blockingState.get
-        updatedState1 = updatedStateMap(TopicPartitionTarget(tpartition))
-        updatedState2 = updatedStateMap.getOrElse(TopicPartitionTarget(anotherTPartition), InternalBlocking)
+        updatedState1    = updatedStateMap(TopicPartitionTarget(tpartition))
+        updatedState2    = updatedStateMap.getOrElse(TopicPartitionTarget(anotherTPartition), InternalBlocking)
       } yield failed1 === false and updatedState1 === IgnoringOnce and failed2 === true and updatedState2 === InternalBlocking
     }
 
     "Update state to Blocked when Blocking is set for TopicPartitionTarget while IgnoreAll is set for TopicTarget" in {
       for {
-        topic <- randomTopicName
-        tpartition = TopicPartition(topic, partition)
+        topic         <- randomTopicName
+        tpartition     = TopicPartition(topic, partition)
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](
-          Map(TopicTarget(topic) -> IgnoringAll, TopicPartitionTarget(tpartition) -> InternalBlocking)
-        )
-        key   <- bytes
-        value <- bytes
+                           Map(TopicTarget(topic) -> IgnoringAll, TopicPartitionTarget(tpartition) -> InternalBlocking)
+                         )
+        key           <- bytes
+        value         <- bytes
 
         resolver = BlockingStateResolver(blockingState)
 
-        record = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
-        shouldBlock     <- resolver.resolve(record)
-        updatedStateMap <- blockingState.get
+        record                     = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+        shouldBlock               <- resolver.resolve(record)
+        updatedStateMap           <- blockingState.get
         updatedStateTopic          = updatedStateMap(TopicTarget(topic))
         updatedStateTopicPartition = updatedStateMap(TopicPartitionTarget(tpartition))
       } yield shouldBlock === true and updatedStateTopic === IgnoringAll and updatedStateTopicPartition === Blocked(record)
