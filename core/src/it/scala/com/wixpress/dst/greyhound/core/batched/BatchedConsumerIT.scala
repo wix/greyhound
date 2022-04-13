@@ -248,11 +248,11 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     Map("metadata.max.age.ms" -> "0")
 
   private def consumerRecValuesByPartition(cr: Seq[ConsumerRecord[_, String]]) = {
-    cr.groupBy(_.partition).mapValues(_.map(_.value))
+    cr.groupBy(_.partition).mapValues(_.map(_.value)).toMap
   }
 
   private def producerRecValuesByPartition(cr: Seq[ProducerRecord[_, String]]) = {
-    cr.groupBy(_.partition.get).mapValues(_.map(_.value.get))
+    cr.groupBy(_.partition.get).mapValues(_.map(_.value.get)).toMap
   }
 
   private def producerRecords(topic: String, tag: String, partitions: Int, recsPerPartition: Int) = {
