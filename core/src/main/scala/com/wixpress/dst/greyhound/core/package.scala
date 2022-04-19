@@ -6,11 +6,12 @@ import zio.duration.Duration
 import java.time.Instant
 
 package object core {
-  type ClientId  = String
-  type Topic     = String
-  type Group     = String
-  type Partition = Int
-  type Offset    = Long
+  type ClientId        = String
+  type Topic           = String
+  type Group           = String
+  type Partition       = Int
+  type Offset          = Long
+  type ConsumerGroupId = Group
 
   type NonEmptySet[A]  = Set[A]
   type NonEmptyList[A] = List[A]
