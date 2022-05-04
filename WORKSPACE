@@ -13,7 +13,7 @@ http_archive(
 )
 
 wix_oss_infra_version="e1591c6fb45e665418225bbd034d3e5163278aa1"
-wix_oss_infra_version_sha256="667fa3c53697752b9b60ed20bc8c9cb1a4e5e4ac6fda309aaccf3b962d42db69"
+wix_oss_infra_version_sha256="399a68073420a3920069bd8220296df9c3c11f4cb983fd3f6f71e5e8efff8133"
 
 http_archive(
     name = "wix_oss_infra",
