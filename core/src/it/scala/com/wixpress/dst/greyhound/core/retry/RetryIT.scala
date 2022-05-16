@@ -40,7 +40,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
                          case `topic`        => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
                          case `anotherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
                        }
-                       .copy(produceEncryptor = dummyEncryptor)
+                       .copy(produceEncryptor = _ => ZIO.succeed(dummyEncryptor))
 
       toProduce    = ProducerRecord(topic, "bar", Some("foo"))
       retryHandler = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)

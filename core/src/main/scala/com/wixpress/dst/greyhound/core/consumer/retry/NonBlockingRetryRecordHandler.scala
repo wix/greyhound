@@ -93,8 +93,8 @@ private[retry] object NonBlockingRetryRecordHandler {
       ) = {
         awaitShutdown(record.topicPartition).flatMap(
           _.interruptOnShutdown(
-            retryConfig.produceEncryptor
-              .encrypt(retryRecord)
+            retryConfig.produceEncryptor(record)
+              .flatMap(_.encrypt(retryRecord))
               .flatMap(producer.produce)
               .tapError(e =>
                 report(RetryProduceFailedWillRetry(retryRecord.topic, retryAttempt, retryConfig.produceRetryBackoff.toMillis, record, e)) *>
