@@ -301,10 +301,21 @@ trait UnsafeOffsetOperations {
   def seek(offsets: Map[TopicPartition, Offset]): Unit
 
   def endOffsets(partitions: Set[TopicPartition], timeout: Duration): Map[TopicPartition, Offset]
+
+  def pause(partitions: Set[TopicPartition]): Unit
+
+  def resume(partitions: Set[TopicPartition]): Unit
 }
 
 object UnsafeOffsetOperations {
   def make(consumer: KafkaConsumer[_, _]) = new UnsafeOffsetOperations {
+
+    override def pause(partitions: Set[TopicPartition]): Unit =
+      consumer.pause(partitions.map(_.asKafka).asJava)
+
+    override def resume(partitions: Set[TopicPartition]): Unit =
+      consumer.resume(partitions.map(_.asKafka).asJava)
+
     override def committed(partitions: Set[TopicPartition], timeout: Duration): Map[TopicPartition, Offset] = {
       consumer
         .committed(partitions.map(_.asKafka).asJava, timeout)
