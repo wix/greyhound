@@ -28,12 +28,15 @@ class OffsetsInitializer(
     val effectiveTimeout = if (hasSeek) timeoutIfSeek else timeout
 
     withReporting(partitions, rethrow = hasSeek) {
-      val committed    = offsetOperations.committed(partitions, effectiveTimeout)
-      val beginning    = offsetOperations.beginningOffsets(partitions, effectiveTimeout)
-      val endOffsets   = offsetOperations.endOffsets(partitions, effectiveTimeout)
-      val toOffsets    = calculateTargetOffsets(partitions, beginning, committed, endOffsets, effectiveTimeout)
-      val notCommitted = partitions -- committed.keySet -- toOffsets.keySet
-      val positions    =
+      val committed                            = offsetOperations.committed(partitions, effectiveTimeout)
+      val beginning                            = offsetOperations.beginningOffsets(partitions, effectiveTimeout)
+      val endOffsets                           = offsetOperations.endOffsets(partitions, effectiveTimeout)
+      val PartitionActions(toOffsets, toPause) = calculateTargetOffsets(partitions, beginning, committed, endOffsets, effectiveTimeout)
+      val notCommitted                         = partitions -- committed.keySet -- toOffsets.keySet
+
+      offsetOperations.pause(toPause)
+
+      val positions =
         notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap ++ toOffsets
       if (toOffsets.nonEmpty) {
         offsetOperations.seek(toOffsets)
@@ -45,13 +48,15 @@ class OffsetsInitializer(
     }
   }
 
+  case class PartitionActions(offsetSeeks: Map[TopicPartition, Offset], partitionsToPause: Set[TopicPartition])
+
   private def calculateTargetOffsets(
     partitions: Set[TopicPartition],
     beginning: Map[TopicPartition, Offset],
     committed: Map[TopicPartition, Offset],
     endOffsets: Map[TopicPartition, Offset],
     timeout: Duration
-  ) = {
+  ): PartitionActions = {
     val seekTo: Map[TopicPartition, SeekTo] = initialSeek.seekOffsetsFor(
       assignedPartitions = partitions,
       beginningOffsets = partitions.map((_, None)).toMap ++ beginning.mapValues(Some.apply),
@@ -60,9 +65,11 @@ class OffsetsInitializer(
     )
     val seekToOffsets                       = seekTo.collect { case (k, v: SeekTo.SeekToOffset) => k -> v.offset }
     val seekToEndPartitions                 = seekTo.collect { case (k, SeekTo.SeekToEnd) => k }.toSet
+    val toPause                             = seekTo.collect { case (k, SeekTo.Pause) => k }
     val seekToEndOffsets                    = fetchEndOffsets(seekToEndPartitions, timeout)
     val toOffsets                           = seekToOffsets ++ seekToEndOffsets
-    toOffsets
+
+    PartitionActions(offsetSeeks = toOffsets, partitionsToPause = toPause.toSet)
   }
 
   private def fetchEndOffsets(seekToEndPartitions: Set[TopicPartition], timeout: Duration) = {
@@ -106,12 +113,20 @@ object SeekTo {
   case object SeekToEnd extends SeekTo
 
   case class SeekToOffset(offset: Offset) extends SeekTo
+
+  case object Pause extends SeekTo
 }
 
 object InitialOffsetsSeek {
   val default: InitialOffsetsSeek = (_, _, _, _) => Map.empty
 
   def setOffset(offsets: Map[TopicPartition, SeekTo]): InitialOffsetsSeek = (_, _, _, _) => offsets
+
+  def pauseAllBut(partition: TopicPartition, seekTo: SeekTo): InitialOffsetsSeek = (assigned, _, _, _) => assigned.collect{
+    case `partition` => partition -> seekTo
+    case tp => tp -> SeekTo.Pause
+  }.toMap
+
 }
 
 object OffsetsInitializer {
