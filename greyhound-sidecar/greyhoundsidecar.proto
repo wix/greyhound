@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+package com.wixpress.dst.greyhound.sidecar.api.v1;
+
+service GreyhoundSidecar {
+    rpc Produce (ProduceRequest) returns (ProduceResponse);
+    rpc CreateTopics (CreateTopicsRequest) returns (CreateTopicsResponse);
+
+}
+
+message ProduceRequest {
+    string topic = 1;
+    google.protobuf.StringValue payload = 2;
+    oneof Target {
+        string key = 3;
+    }
+    map<string, string> custom_headers = 4;
+}
+
+message ProduceResponse {
+
+}
+
+message CreateTopicsRequest {
+    repeated TopicToCreate topics = 1;
+}
+
+message TopicToCreate {
+    string name = 1;
+    google.protobuf.Int32Value partitions = 2;
+}
+
+message CreateTopicsResponse {
+
+}
