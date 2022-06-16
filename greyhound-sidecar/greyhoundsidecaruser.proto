@@ -2,7 +2,7 @@ syntax = "proto3";
 
 import "google/protobuf/wrappers.proto";
 import "google/protobuf/struct.proto";
-import "com/wixpress/dst/greyhound/sidecar/api/greyhoundsidecar.proto";
+import "com/wixpress/dst/greyhound/sidecar/api/v1/greyhoundsidecar.proto";
 package com.wixpress.dst.greyhound.sidecar.api;
 
 service GreyhoundSidecarUser {
