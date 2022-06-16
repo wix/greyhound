@@ -61,16 +61,18 @@ google_protobuf()
 
 register_toolchains("//:scala_toolchain")
 
-#load("@wix_oss_infra//test-agent/src/shared:tests_external_repository.bzl", "tests_external_repository")
-#
-#tests_external_repository(
-#    name = "tests",
-#    jdk_version = "11",
-#)
+load("@wix_oss_infra//test-agent/src/shared:tests_external_repository.bzl", "tests_external_repository")
 
-#load("@io_bazel_rules_scala//testing:specs2_junit.bzl", "specs2_junit_repositories", "specs2_junit_toolchain")
-#specs2_junit_repositories()
-#specs2_junit_toolchain()
+tests_external_repository(
+    name = "tests",
+    jdk_version = "11",
+)
+
+load("@io_bazel_rules_scala//testing:specs2_junit.bzl", "specs2_junit_repositories", "specs2_junit_toolchain")
+
+specs2_junit_repositories()
+
+specs2_junit_toolchain()
 
 register_toolchains("//:testing_toolchain")
 
@@ -88,10 +90,6 @@ http_archive(
     strip_prefix = "rules_jvm_external-%s" % RULES_JVM_EXTERNAL_TAG,
     url = "https://github.com/bazelbuild/rules_jvm_external/archive/%s.zip" % RULES_JVM_EXTERNAL_TAG,
 )
-#
-#load("@rules_jvm_external//:repositories.bzl", "rules_jvm_external_deps")
-#
-#rules_jvm_external_deps()
 
 load("//:third_party.bzl", "dependencies")
 
@@ -105,13 +103,13 @@ load("@maven//:compat.bzl", "compat_repositories")
 
 compat_repositories()
 
-#http_archive(
-#    name = "io_buildbuddy_toolchain",
-#    sha256 = "d00a2ba3aa689cced99fcfe4442a7ee7741ce6de744e4c0ccde2cfe47c5aa86f",
-#    strip_prefix = "toolchain-6a50799da26f34e9aab6b85dc187aa7fed4b127c",
-#    urls = ["https://github.com/buildbuddy-io/toolchain/archive/6a50799da26f34e9aab6b85dc187aa7fed4b127c.tar.gz"],
-#)
-#
-#load("@io_buildbuddy_toolchain//:rules.bzl", "register_buildbuddy_toolchain")
-#
-#register_buildbuddy_toolchain(name = "buildbuddy_toolchain")
+http_archive(
+    name = "io_buildbuddy_toolchain",
+    sha256 = "d00a2ba3aa689cced99fcfe4442a7ee7741ce6de744e4c0ccde2cfe47c5aa86f",
+    strip_prefix = "toolchain-6a50799da26f34e9aab6b85dc187aa7fed4b127c",
+    urls = ["https://github.com/buildbuddy-io/toolchain/archive/6a50799da26f34e9aab6b85dc187aa7fed4b127c.tar.gz"],
+)
+
+load("@io_buildbuddy_toolchain//:rules.bzl", "register_buildbuddy_toolchain")
+
+register_buildbuddy_toolchain(name = "buildbuddy_toolchain")
