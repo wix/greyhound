@@ -1,18 +1,17 @@
 load("@rules_jvm_external//:defs.bzl", "maven_install")
-load("@rules_jvm_external//:specs.bzl", "maven","parse")
+load("@rules_jvm_external//:specs.bzl", "maven", "parse")
 load("//:import_external_alias.bzl", "import_external_alias")
 
-
-def dependency(coordinates,exclusions=None):
+def dependency(coordinates, exclusions = None):
     artifact = parse.parse_maven_coordinate(coordinates)
     return maven.artifact(
-            group =  artifact['group'],
-            artifact = artifact['artifact'],
-            packaging =  artifact.get('packaging'),
-            classifier = artifact.get('classifier'),
-            version =  artifact['version'],
-            exclusions = exclusions,
-        )
+        group = artifact["group"],
+        artifact = artifact["artifact"],
+        packaging = artifact.get("packaging"),
+        classifier = artifact.get("classifier"),
+        version = artifact["version"],
+        exclusions = exclusions,
+    )
 
 scala_version = "2.12.12"
 
@@ -63,7 +62,15 @@ deps = [
     dependency("org.specs2:specs2-mock_2.12:4.8.3"),
     dependency("org.xerial.snappy:snappy-java:1.1.7.1"),
     dependency("net.openhft:chronicle-queue:5.20.123"),
-    dependency("com.kubukoz:better-tostring_" + scala_version +":0.2.4"),
+    dependency("com.kubukoz:better-tostring_" + scala_version + ":0.2.4"),
+    dependency("com.thesamet.scalapb:compilerplugin_2.12:0.9.4"),
+    dependency("com.thesamet.scalapb:lenses_2.12:0.9.4"),
+    dependency("com.thesamet.scalapb:protoc-bridge_2.12:0.9.5"),
+    dependency("com.thesamet.scalapb:scalapb-runtime_2.12:0.9.4"),
+    dependency("com.thesamet.scalapb:scalapb-runtime-grpc_2.12:0.9.4"),
+    dependency("com.thesamet.scalapb:scalapbc_2.12:0.9.4"),
+    dependency("com.thesamet.scalapb:scalapb-json4s_2.12:0.10.0"),
+    #    dependency("com.thesamet.scalapb:scalapb-runtime-grpc_2.12" + ":0.11.1"),
 ]
 
 def dependencies():
@@ -73,14 +80,14 @@ def dependencies():
             "https://repo.maven.apache.org/maven2/",
             "https://mvnrepository.com/artifact",
             "https://maven-central.storage.googleapis.com",
-            ],
+        ],
         generate_compat_repositories = True,
-#        maven_install_json = "//:maven_install.json",
+        #        maven_install_json = "//:maven_install.json",
     )
+
     # this is a compiler plugin with full scala version in its maven artifact name
     # so we create an alias without the minor scala version
     import_external_alias(
-       name = "com_kubukoz_better_tostring_2_12",
-       actual = "@maven//:com_kubukoz_better_tostring_" + scala_version.replace(".", "_"),
+        name = "com_kubukoz_better_tostring_2_12",
+        actual = "@maven//:com_kubukoz_better_tostring_" + scala_version.replace(".", "_"),
     )
-

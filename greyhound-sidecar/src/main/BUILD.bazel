@@ -1,0 +1,38 @@
+#load("@io_bazel_rules_scala//scala:scala.bzl", "scala_binary", "scala_library", "scala_test")
+#load("@io_bazel_rules_scala//scala_proto:scala_proto.bzl", "scalapb_proto_library")
+#
+#proto_library(
+#    name = "proto",
+#    srcs = ["src/main/proto/**/*.proto"],
+#    deps = ["@com_thesamet_scalapb//:scalapb_runtime_proto"],
+#)
+#
+#scala_library(
+#    name = "messages_proto_support_lib",
+#    srcs = [
+#        "src/main/scala/**/*.scala",
+#    ],
+#    visibility = ["//visibility:public"],
+#    deps = [
+#        "//3rdparty/jvm/com/thesamet/scalapb:scalapb_runtime",
+#    ],
+#)
+#
+#scalapb_proto_library(
+#    name = "messages_scala_proto",
+#    visibility = ["//visibility:public"],
+#    deps = [
+#        ":messages_proto_support_lib",
+#        ":proto",
+#    ],
+#)
+#
+#scala_binary(
+#    name = "scala_app_binary",
+#    srcs = glob(["src/main/**/*.scala"]),
+#    main_class = "org.example.Application$",
+#    visibility = ["//visibility:public"],
+#    deps = [
+#        ":messages_scala_proto",
+#    ],
+#)

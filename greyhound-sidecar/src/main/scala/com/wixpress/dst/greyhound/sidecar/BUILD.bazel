@@ -1,0 +1,14 @@
+load("@io_bazel_rules_scala//scala_proto:scala_proto.bzl", "scala_proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+sources()
+
+scala_library(
+    name = "sidecar",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+    ],
+)

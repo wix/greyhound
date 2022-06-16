@@ -1,0 +1,20 @@
+load("@io_bazel_rules_scala//scala_proto:scala_proto.bzl", "scalapb_proto_library")
+
+proto_library(
+    name = "proto",
+    srcs = ["greyhoundsidecar.proto"],
+    #    deps = [
+    #        "@com_google_protobuf//:struct_proto",
+    #        "@com_google_protobuf//:timestamp_proto",
+    #        "@com_google_protobuf//:wrappers_proto",
+    #    ],
+)
+
+scalapb_proto_library(
+    name = "messages_scala_proto",
+    visibility = ["//visibility:public"],
+    deps = [
+        #        "//greyhound-sidecar/src/main/proto/com/wixpress/dst/greyhound/sidecar/api/v1:proto",
+        "proto",
+    ],
+)
