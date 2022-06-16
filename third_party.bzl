@@ -37,6 +37,7 @@ deps = [
     dependency("dev.zio:zio-streams_2.12:1.0.9"),
     dependency("dev.zio:zio-test_2.12:1.0.9"),
     dependency("dev.zio:zio-test-junit_2.12:1.0.9"),
+    dependency("dev.zio:izumi-reflect_2.12:1.1.2"),
     dependency("junit:junit:4.13"),
     dependency("net.sf.jopt-simple:jopt-simple:5.0.4"),
     dependency("org.apache.curator:curator-test:2.12.0"),

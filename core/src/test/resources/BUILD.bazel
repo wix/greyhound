@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@wix_oss_infra//:macros.bzl", "resources")
+load("//:macros.bzl", "resources")
 
 resources(
     name = "resources",
