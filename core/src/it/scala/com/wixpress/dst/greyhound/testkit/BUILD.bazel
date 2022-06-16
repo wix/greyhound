@@ -15,6 +15,7 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         #        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
         "@dev_zio_zio_2_12",
+        "@dev_zio_izumi_reflect_2_12",
         "@dev_zio_zio_test_2_12",
         "@org_apache_curator_curator_test",
         "@org_apache_kafka_kafka_2_12",

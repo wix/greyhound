@@ -3,30 +3,37 @@ load("@io_bazel_rules_scala//scala:scala_toolchain.bzl", "scala_toolchain")
 load("@io_bazel_rules_scala//testing/toolchain:toolchain.bzl", "scala_testing_toolchain")
 load("@io_bazel_rules_scala//scala:providers.bzl", "declare_deps_provider")
 
+toolchain(
+    name = "scala_toolchain",
+    toolchain = ":scala_toolchain_impl",
+    toolchain_type = "@io_bazel_rules_scala//scala:toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
 scala_toolchain(
-        name = "scala_toolchain",
-        dep_providers = [
-                            "scala_xml_provider",
-                            "parser_combinators_provider",
-                            "scala_compile_classpath_provider",
-                            "scala_library_classpath_provider",
-                            "scala_macro_classpath_provider",
-                        ],
-        scalacopts = [
-                         "-unchecked",
-                         "-deprecation",
-                         "-feature",
-                         "-Xmax-classfile-name",
-                         "240",
-                         "-Ywarn-unused-import",
-                         "-Ywarn-unused",
-                         "-Ywarn-macros:after",
-                     ],
-        dependency_mode = "plus-one",
-        dependency_tracking_method = "ast",
-        strict_deps_mode = "off",
-        unused_dependency_checker_mode = "off",
-    )
+    name = "scala_toolchain_impl",
+    dep_providers = [
+        ":scala_xml_provider",
+        ":parser_combinators_provider",
+        ":scala_compile_classpath_provider",
+        ":scala_library_classpath_provider",
+        ":scala_macro_classpath_provider",
+    ],
+    dependency_mode = "plus-one",
+    dependency_tracking_method = "ast",
+    scalacopts = [
+        "-unchecked",
+        "-deprecation",
+        "-feature",
+        "-Xmax-classfile-name",
+        "240",
+        "-Ywarn-unused-import",
+        "-Ywarn-unused",
+        "-Ywarn-macros:after",
+    ],
+    strict_deps_mode = "off",
+    unused_dependency_checker_mode = "off",
+)
 
 toolchain(
     name = "testing_toolchain",
@@ -34,7 +41,6 @@ toolchain(
     toolchain_type = "@io_bazel_rules_scala//testing/toolchain:testing_toolchain_type",
     visibility = ["//visibility:public"],
 )
-
 
 scala_testing_toolchain(
     name = "testing_toolchain_def",
@@ -90,28 +96,32 @@ declare_deps_provider(
     deps = ["@org_scala_lang_modules_scala_parser_combinators_2_12"],
 )
 
-
 declare_deps_provider(
     name = "junit_classpath_provider",
     deps_id = "junit_classpath",
     visibility = ["//visibility:public"],
-    deps = ["@junit_junit","@org_hamcrest_hamcrest_core"],
+    deps = [
+        "@junit_junit",
+        "@org_hamcrest_hamcrest_core",
+    ],
 )
 
 declare_deps_provider(
     name = "specs2_classpath_provider",
     deps_id = "specs2_classpath",
     visibility = ["//visibility:public"],
-    deps = [    "@org_specs2_specs2_common_2_12",
-                "@org_specs2_specs2_core_2_12",
-                "@org_specs2_specs2_fp_2_12",
-                "@org_specs2_specs2_matcher_2_12",
-                "@org_specs2_specs2_mock_2_12",],
+    deps = [
+        "@org_specs2_specs2_common_2_12",
+        "@org_specs2_specs2_core_2_12",
+        "@org_specs2_specs2_fp_2_12",
+        "@org_specs2_specs2_matcher_2_12",
+        "@org_specs2_specs2_mock_2_12",
+    ],
 )
 
 declare_deps_provider(
     name = "specs2_junit_classpath_provider",
     deps_id = "specs2_junit_classpath",
     visibility = ["//visibility:public"],
-    deps = [                "@org_specs2_specs2_junit_2_12"],
+    deps = ["@org_specs2_specs2_junit_2_12"],
 )
