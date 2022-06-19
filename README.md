@@ -20,6 +20,7 @@ You can read more about it on this blog post - “[Building a High-level SDK for
  * ZIO based API
  * Scala Futures
  * Java
+ * Coming Soon...
 
 ### Greyhound main features:
 
@@ -52,11 +53,6 @@ You can read more about it on this blog post - “[Building a High-level SDK for
 
 ## Usage
 
-### Add greyhound to your build
-All Greyhound modules can be found in [Maven Central Repository](https://search.maven.org/search?q=greyhound).
-
-See [examples](docs/build.md) of how to add greyhound modules to your build (Maven, Gradle, SBT, etc...).
-
 ### Basics
 
 First let's review some basic messaging terminology:
@@ -65,6 +61,14 @@ First let's review some basic messaging terminology:
  * Processes that publish messages to a Kafka topic are called producers.
  * Processes that subscribe to topics and process the feed of published messages are called consumers.
  * Kafka is run as a cluster comprised of one or more servers, each of which is called a broker.
+
+
+### Scala Future
+
+### Add greyhound to your build
+All Greyhound modules can be found in [Maven Central Repository](https://search.maven.org/search?q=greyhound).
+
+See [examples](docs/build.md) of how to add greyhound modules to your build (Maven, Gradle, SBT, etc...).
 
 ### Scala `Future` based API
 
