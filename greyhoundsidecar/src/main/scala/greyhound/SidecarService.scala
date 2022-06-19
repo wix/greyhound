@@ -17,7 +17,7 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
     private def register0(request: RegisterRequest) = for {
       port <- ZIO.effect(request.port.toInt)
       _ <- register.add(request.host, port)
-      _ <- putStrLn("~~~ REGISTER ~~~").orDie
+      _ <- putStrLn(s"~~~ REGISTER $request ~~~").orDie
     } yield RegisterResponse()
 
   override def produce(request: ProduceRequest): ZIO[ZEnv, Status, ProduceResponse] =
@@ -26,7 +26,7 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
       .as(ProduceResponse())
 
   private def produce0(request: ProduceRequest) =
-    putStrLn("~~~ START PRODUCE ~~~").orDie *>
+    putStrLn(s"~~~ START PRODUCE $request~~~").orDie *>
       Produce(request)
         .tap(response => putStrLn(s"~~~ REACHED SERVER PRODUCE. response: $response"))
 
@@ -36,7 +36,7 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
       .as(CreateTopicsResponse())
 
   private def createTopics0(request: CreateTopicsRequest) =
-    putStrLn("~~~ START CREATE TOPICS ~~~").orDie *>
+    putStrLn(s"~~~ START CREATE TOPICS $request ~~~").orDie *>
       SidecarAdminClient.admin.use { client =>
         client.createTopics(request.topics.toSet.map(mapTopic))
       } *>
@@ -57,7 +57,7 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
 
   private def startConsuming0(request: StartConsumingRequest) =
     ZIO.foreach(request.consumers) { consumer =>
-      println("~~~ CREATE CONSUMER ~~~")
+      println(s"~~~ CREATE CONSUMER $request~~~")
       CreateConsumer(consumer.topic, consumer.group).forkDaemon
     }
 
