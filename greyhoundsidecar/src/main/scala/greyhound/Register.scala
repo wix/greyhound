@@ -29,9 +29,8 @@ case class RegisterLive(ref: Ref[HostDetails]) extends Register.Service {
 
 object RegisterLive {
 
-  val Layer: ULayer[Register.Register] = Ref.make(HostDetails.Default)
+  val Default  = Ref.make(HostDetails.Default)
     .map(RegisterLive(_))
-    .toLayer
 }
 
 case class Database(host: HostDetails)

@@ -7,5 +7,10 @@ object SidecarServerMain extends ServerMain {
 
   override def port: Int = Ports.SidecarGrpcPort
 
-  override def services: ServiceList[ZEnv] = ServiceList.add(SidecarService)
+  override def services: ServiceList[ZEnv] = ServiceList.addM {
+    for {
+      register <- RegisterLive.Default
+    } yield new SidecarService(register)
+  }
+
 }

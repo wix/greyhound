@@ -5,6 +5,8 @@ import zio.{URIO, ZIO, ZLayer}
 import zio.blocking.Blocking
 
 object DebugMetrics {
+  val Value = report(metric => println(s"-Metrics- $metric"))
+
   val layer = ZLayer.succeed(report(metric => println(s"-Metrics- $metric")))
 
   private def report(report: GreyhoundMetric => Unit): GreyhoundMetrics.Service  =
