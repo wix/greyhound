@@ -19,8 +19,4 @@ object CreateConsumer {
           .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
     ).useForever
 
-  val dummyHandler: RecordHandler[Any, Nothing, Chunk[Byte], Chunk[Byte]] = RecordHandler { record =>
-    ZIO.succeed(println("~~~ DUMMY HANDLER ~~~")) *> ZIO.succeed(record.value)
-  }
-
 }

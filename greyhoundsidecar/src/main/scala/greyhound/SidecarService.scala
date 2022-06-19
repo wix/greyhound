@@ -5,19 +5,18 @@ import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
 import io.grpc.Status
-import zio.{ZEnv, ZIO}
+import zio.{ULayer, ZEnv, ZIO, ZLayer}
 import zio.console.putStrLn
 
-object SidecarService extends RGreyhoundSidecar[ZEnv] {
+class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv] {
 
   override def register(request: RegisterRequest): ZIO[ZEnv, Status, RegisterResponse] =
     register0(request)
-      .provideCustomLayer(RegisterLive.Layer)
       .mapError(Status.fromThrowable)
 
     private def register0(request: RegisterRequest) = for {
       port <- ZIO.effect(request.port.toInt)
-      _ <- Register.add(request.host, port)
+      _ <- register.add(request.host, port)
       _ <- putStrLn("~~~ REGISTER ~~~").orDie
     } yield RegisterResponse()
 
@@ -52,7 +51,7 @@ object SidecarService extends RGreyhoundSidecar[ZEnv] {
 
   override def startConsuming(request: StartConsumingRequest): ZIO[ZEnv, Status, StartConsumingResponse] =
     startConsuming0(request)
-      .provideCustomLayer(RegisterLive.Layer ++ DebugMetrics.layer)
+      .provideCustomLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
 //      .mapError(Status.fromThrowable)
       .as(StartConsumingResponse())
 
