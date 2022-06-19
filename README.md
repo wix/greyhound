@@ -2,7 +2,7 @@
 
 [![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12/badge.svg?kill_cache=1)](https://maven-badges.herokuapp.com/maven-central/com.wix/greyhound-core_2.12) [![Github Actions](https://github.com/wix/greyhound/workflows/CI/badge.svg)](https://github.com/wix/greyhound/actions/)<br/>
 High-level SDK for [Apache Kafka](https://kafka.apache.org/).<br/>
-Available for Java, Scala, Python, .Net and coming soon for JavaScript
+Available for Java, Scala and coming soon for JavaScript, Python, .Net
 
 ![Greyhound](docs/logo.png)
 
@@ -16,7 +16,7 @@ semantics such as parallel message handling or retry policies with ease.
 You can read more about it on this blog post - “[Building a High-level SDK for Kafka: Greyhound Unleashed](https://www.wix.engineering/post/building-a-high-level-sdk-for-kafka-greyhound-unleashed)”
 
 > 📝 Note:  
-> For upcoming APIs - The open source version of Greyhound is still in still in the initial rollout stage, so the APIs might not be fully stable yet.
+> The open source version of Greyhound is still in the initial rollout stage, so the APIs might not be fully stable yet.
 
 ## Available APIs
 
