@@ -6,7 +6,7 @@ option java_package = "com.wixpress.dst.greyhound.sidecar.api.v1";
 import "google/protobuf/wrappers.proto";
 import "google/protobuf/struct.proto";
 import "com/wixpress/dst/greyhound/sidecar/api/v1/greyhoundsidecar.proto";
-package com.wixpress.dst.greyhound.sidecar.api;
+package com.wixpress.dst.greyhound.sidecar.api.v1;
 
 service GreyhoundSidecarUser {
   rpc HandleMessages (HandleMessagesRequest) returns (HandleMessagesResponse);
