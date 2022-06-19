@@ -1,21 +1,19 @@
 
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
-import greyhound.{DebugMetrics, Ports, SidecarClient, SidecarServerMain}
+import greyhound.{DebugMetrics, EnvArgs, Ports, SidecarClient, SidecarServerMain}
 import zio._
 import zio.console.{getStrLn, putStrLn}
 
 object Main extends App {
 
-  def initSidecarServer(kafkaAddress: String) = {
-    println(s"~~~ INIT Sidecar Server with kafka address $kafkaAddress")
-    new SidecarServerMain(kafkaAddress).myAppLogic.forkDaemon
-  }
+  val initSidecarServer = SidecarServerMain.myAppLogic.forkDaemon
 
   val initKafka = ManagedKafka.make(ManagedKafkaConfig.Default)
     .provideCustomLayer(DebugMetrics.layer)
     .useForever
     .forkDaemon
+    .whenM(EnvArgs.kafkaAddress.map(_.isEmpty))
 
   def startConsuming(topic: String, group: String) =  SidecarClient.managed.use { client =>
     client.startConsuming(StartConsumingRequest(Seq(Consumer("id1", group, topic))))
@@ -41,12 +39,9 @@ object Main extends App {
       port = Ports.RegisterPort.toString))
   }
 
-  val defaultKafkaAddress = s"localhost:${ManagedKafkaConfig.Default.kafkaPort}"
-  val kafkaAddress: Option[String] = scala.util.Properties.envOrNone("KAFKA_ADDRESS")
-
   val greyhoundProduceApp = for {
-    _ <- initKafka.when(kafkaAddress.isEmpty)
-    _ <- initSidecarServer(kafkaAddress getOrElse defaultKafkaAddress)
+    _ <- initKafka
+    _ <- initSidecarServer
 //    topic = "test-topic"
 //    _ <- createTopic(topic)
 //    _ <- register
