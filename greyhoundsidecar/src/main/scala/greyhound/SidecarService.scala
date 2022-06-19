@@ -1,5 +1,6 @@
 package greyhound
 
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
@@ -23,7 +24,7 @@ object SidecarService extends RGreyhoundSidecar[ZEnv] {
   override def produce(request: ProduceRequest): ZIO[ZEnv, Status, ProduceResponse] =
     produce0(request)
       .mapError(Status.fromThrowable)
-      .map(_ => ProduceResponse())
+      .as(ProduceResponse())
 
   private def produce0(request: ProduceRequest) =
     putStrLn("~~~ START PRODUCE ~~~").orDie *>
@@ -33,7 +34,7 @@ object SidecarService extends RGreyhoundSidecar[ZEnv] {
   override def createTopics(request: CreateTopicsRequest): ZIO[ZEnv, Status, CreateTopicsResponse] =
     createTopics0(request)
       .mapError(Status.fromThrowable)
-      .map(_ => CreateTopicsResponse())
+      .as(CreateTopicsResponse())
 
   private def createTopics0(request: CreateTopicsRequest) =
     putStrLn("~~~ START CREATE TOPICS ~~~").orDie *>
@@ -50,5 +51,15 @@ object SidecarService extends RGreyhoundSidecar[ZEnv] {
       cleanupPolicy = CleanupPolicy.Compact)
 
   override def startConsuming(request: StartConsumingRequest): ZIO[ZEnv, Status, StartConsumingResponse] =
-    ???
+    startConsuming0(request)
+      .provideCustomLayer(RegisterLive.Layer ++ DebugMetrics.layer)
+//      .mapError(Status.fromThrowable)
+      .as(StartConsumingResponse())
+
+  private def startConsuming0(request: StartConsumingRequest) =
+    ZIO.foreach(request.consumers) { consumer =>
+      println("~~~ CREATE CONSUMER ~~~")
+      CreateConsumer(consumer.topic, consumer.group).forkDaemon
+    }
+
 }
