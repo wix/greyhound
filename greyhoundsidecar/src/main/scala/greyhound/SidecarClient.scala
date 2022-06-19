@@ -9,8 +9,7 @@ object SidecarClient {
   val channel = ZManagedChannel[Any](
     ManagedChannelBuilder
       .forAddress("localhost", Ports.SidecarGrpcPort)
-      .usePlaintext()
-  )
+      .usePlaintext())
 
   val managed = GreyhoundSidecarClient.managed(channel)
 }
