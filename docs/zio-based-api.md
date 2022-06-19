@@ -332,3 +332,22 @@ for flushing a range of targets (so there's no ordering or synchronization betwe
   It will retry each record individually until successful, before continuing to the next record.
 - `ProduceStrategy.Async` will produce a batch of records and wait for them all to complete. If some failed, it will retry the failures until successful.
 - `ProduceStrategy.Unordered` is the same as Async, only it tries to produce to Kafka directly in the event of a local disk failure to append records.
+
+## Testing
+
+Use the embedded Kafka library to test your app:
+
+```scala
+import com.wixpress.dst.greyhound.testkit._
+
+ManagedKafka.make(ManagedKafkaConfig(kafkaPort = 9092, zooKeeperPort = 2181)).use { kafka =>
+  // Start producing and consuming messages,
+  // configure broker address on producers and consumers to localhost:9092
+
+
+  // outside of this scope Kafka will be shutdown.
+}
+```
+
+This starts a real Kafka broker and Zookeeper instance on defined ports. Use those ports to access Kafka within the managed
+scope.
