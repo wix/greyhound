@@ -3,12 +3,14 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import greyhound.{DebugMetrics, Ports, SidecarClient, SidecarServerMain}
 import zio._
-import zio.duration._
 import zio.console.{getStrLn, putStrLn}
 
 object Main extends App {
 
-  val initSidecarServer = SidecarServerMain.myAppLogic.forkDaemon
+  def initSidecarServer(kafkaAddress: String) = {
+    println(s"~~~ INIT Sidecar Server with kafka address $kafkaAddress")
+    new SidecarServerMain(kafkaAddress).myAppLogic.forkDaemon
+  }
 
   val initKafka = ManagedKafka.make(ManagedKafkaConfig.Default)
     .provideCustomLayer(DebugMetrics.layer)
@@ -39,9 +41,12 @@ object Main extends App {
       port = Ports.RegisterPort.toString))
   }
 
+  val defaultKafkaAddress = s"localhost:${ManagedKafkaConfig.Default.kafkaPort}"
+  val kafkaAddress: Option[String] = scala.util.Properties.envOrNone("KAFKA_ADDRESS")
+
   val greyhoundProduceApp = for {
-    _ <- initKafka
-    _ <- initSidecarServer
+    _ <- initKafka.when(kafkaAddress.isEmpty)
+    _ <- initSidecarServer(kafkaAddress getOrElse defaultKafkaAddress)
 //    topic = "test-topic"
 //    _ <- createTopic(topic)
 //    _ <- register
@@ -51,11 +56,7 @@ object Main extends App {
     _ <- getStrLn
   } yield scala.io.StdIn.readLine()
 
-  override def run(args: List[String]) =
+  override def run(args: List[String]) = {
     greyhoundProduceApp.exitCode
+  }
 }
-
-
-//add env args:
-//  1. grpc port (repace the hardcoded 9000)
-//  2.
