@@ -47,8 +47,6 @@ object Main extends App {
     _ <- register
     _ <- startConsuming(topic, "test-consumer")
     _ <- produce(topic)
-    _ <- produce(topic)
-    _ <- produce(topic)
     _ <- putStrLn("~~~ WAITING FOR USER INPUT")
     _ <- getStrLn
   } yield scala.io.StdIn.readLine()
@@ -56,3 +54,8 @@ object Main extends App {
   override def run(args: List[String]) =
     greyhoundProduceApp.exitCode
 }
+
+
+//add env args:
+//  1. grpc port (repace the hardcoded 9000)
+//  2.
