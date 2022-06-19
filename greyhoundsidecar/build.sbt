@@ -25,5 +25,9 @@ lazy val root = (project in file("."))
       "org.specs2" %% "specs2-core" % "4.14.1" % Test,
       "com.wix" %% "greyhound-testkit" % "0.2.0",
     ),
+    Docker / packageName := "greyhound-sidecar",
+    Docker / maintainer := "wix.com",
+    Docker / packageSummary := "Greyhound sidecar service",
+//    Docker / dockerBaseImage := ""
 //    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )
