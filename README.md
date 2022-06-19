@@ -81,31 +81,13 @@ First let's review some basic messaging terminology:
 
 ### Current APIs
 
-To dive into the 3 currently available APIs, follow the link to the relevant docs:
+To dive into the currently available APIs, follow the link to the relevant docs:
 
 - [Scala Futures](docs/scala-futures-api.md)
 - [Java](docs/java-api.md)
 - [ZIO based API](docs/zio-based-api.md)
+- [Non-JVM Languages](docs/non-jvm-languages.md)
 
 All Greyhound modules can be found in the [Maven Central Repository](https://search.maven.org/search?q=greyhound).
 
 See [examples](docs/build.md) of how to add greyhound modules to your build (Maven, Gradle, SBT, etc.)
-
-## Testing
-
-Use the embedded Kafka library to test your app:
-
-```scala
-import com.wixpress.dst.greyhound.testkit._
-
-ManagedKafka.make(ManagedKafkaConfig(kafkaPort = 9092, zooKeeperPort = 2181)).use { kafka =>
-  // Start producing and consuming messages,
-  // configure broker address on producers and consumers to localhost:9092
-
-
-  // outside of this scope Kafka will be shutdown.
-}
-```
-
-This starts a real Kafka broker and Zookeeper instance on defined ports. Use those ports to access Kafka within the managed
-scope.
