@@ -6,10 +6,10 @@ import scalapb.zio_grpc.ZManagedChannel
 
 object SidecarUserClient extends {
 
-  val channel = Register.get.map { host =>
+  val channel = Register.get.map { db =>
     ZManagedChannel[Any](
       ManagedChannelBuilder
-        .forAddress(host.host, host.port)
+        .forAddress(db.host.host, db.host.port)
         .usePlaintext())
   }
 

@@ -26,9 +26,12 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
       .as(ProduceResponse())
 
   private def produce0(request: ProduceRequest) =
-    putStrLn(s"~~~ START PRODUCE $request~~~").orDie *>
-      Produce(request)
+    for {
+      _ <- putStrLn(s"~~~ START PRODUCE $request~~~").orDie
+      kafkaAddress <- register.get.map(_.kafkaAddress)
+      _ <- Produce(request, kafkaAddress)
         .tap(response => putStrLn(s"~~~ REACHED SERVER PRODUCE. response: $response"))
+    } yield ()
 
   override def createTopics(request: CreateTopicsRequest): ZIO[ZEnv, Status, CreateTopicsResponse] =
     createTopics0(request)
@@ -36,11 +39,14 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
       .as(CreateTopicsResponse())
 
   private def createTopics0(request: CreateTopicsRequest) =
-    putStrLn(s"~~~ START CREATE TOPICS $request ~~~").orDie *>
-      SidecarAdminClient.admin.use { client =>
+    for {
+      _ <- putStrLn(s"~~~ START CREATE TOPICS $request ~~~").orDie
+      kafkaAddress <- register.get.map(_.kafkaAddress)
+      _ <- SidecarAdminClient.admin(kafkaAddress).use { client =>
         client.createTopics(request.topics.toSet.map(mapTopic))
-      } *>
-      putStrLn("~~~ END CREATE TOPICS ~~~")
+      }
+      _ <- putStrLn("~~~ END CREATE TOPICS ~~~")
+    } yield ()
 
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(
@@ -52,7 +58,6 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
   override def startConsuming(request: StartConsumingRequest): ZIO[ZEnv, Status, StartConsumingResponse] =
     startConsuming0(request)
       .provideCustomLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
-//      .mapError(Status.fromThrowable)
       .as(StartConsumingResponse())
 
   private def startConsuming0(request: StartConsumingRequest) =
