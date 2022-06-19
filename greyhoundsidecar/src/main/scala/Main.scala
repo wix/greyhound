@@ -42,11 +42,11 @@ object Main extends App {
   val greyhoundProduceApp = for {
     _ <- initKafka
     _ <- initSidecarServer
-    topic = "test-topic"
-    _ <- createTopic(topic)
-    _ <- register
-    _ <- startConsuming(topic, "test-consumer")
-    _ <- produce(topic)
+//    topic = "test-topic"
+//    _ <- createTopic(topic)
+//    _ <- register
+//    _ <- startConsuming(topic, "test-consumer")
+//    _ <- produce(topic)
     _ <- putStrLn("~~~ WAITING FOR USER INPUT")
     _ <- getStrLn
   } yield scala.io.StdIn.readLine()
