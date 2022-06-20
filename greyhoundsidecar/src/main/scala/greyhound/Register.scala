@@ -12,9 +12,9 @@ object Register {
 
     val get: UIO[Database]
   }
-  
+
   type Register = Has[Register.Service]
-  
+
   def add(host: String, port: Int): RIO[Register, Unit] =
     ZIO.serviceWith[Register.Service](_.add(host, port))
 
@@ -38,7 +38,8 @@ case class RegisterLive(ref: Ref[Database]) extends Register.Service {
 
 object RegisterLive {
 
-  val Default  = Ref.make(Database.Default)
+  val Default = Ref
+    .make(Database.Default)
     .map(RegisterLive(_))
 }
 
@@ -47,7 +48,7 @@ case class Database(host: HostDetails, kafkaAddress: String) {
     copy(host = HostDetails(host, port))
 
   def updateKafkaAddress(address: String): Database =
-    copy(kafkaAddress = kafkaAddress)
+    copy(kafkaAddress = address)
 }
 
 object Database {
