@@ -9,8 +9,7 @@ object Produce {
 
   val defaultKey: Option[String] = Some("")
 
-  def apply(request: ProduceRequest, kafkaAddress: String) = {
-    println(s"~~~ Prodcue Kafka address is $kafkaAddress")
+  def apply(request: ProduceRequest, kafkaAddress: String) =
     Producer.make(ProducerConfig(kafkaAddress)).use { producer =>
       producer
         .produce(
@@ -23,6 +22,4 @@ object Produce {
           response => ZIO.succeed(println(s"~~~ PRODUCE ~~~ produced a msg! response [$response]"))
         )
     }
-  }
-
 }

@@ -14,11 +14,11 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
     register0(request)
       .mapError(Status.fromThrowable)
 
-    private def register0(request: RegisterRequest) = for {
-      port <- ZIO.effect(request.port.toInt)
-      _ <- register.add(request.host, port)
-      _ <- putStrLn(s"~~~ REGISTER $request ~~~").orDie
-    } yield RegisterResponse()
+  private def register0(request: RegisterRequest) = for {
+    port <- ZIO.effect(request.port.toInt)
+    _    <- register.add(request.host, port)
+    _    <- putStrLn(s"~~~ REGISTER $request ~~~").orDie
+  } yield RegisterResponse()
 
   override def produce(request: ProduceRequest): ZIO[ZEnv, Status, ProduceResponse] =
     produce0(request)
@@ -27,10 +27,9 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
 
   private def produce0(request: ProduceRequest) =
     for {
-      _ <- putStrLn(s"~~~ START PRODUCE $request~~~").orDie
+      _            <- putStrLn(s"~~~ START PRODUCE $request~~~").orDie
       kafkaAddress <- register.get.map(_.kafkaAddress)
-      _ <- Produce(request, kafkaAddress)
-        .tap(response => putStrLn(s"~~~ REACHED SERVER PRODUCE. response: $response"))
+      _            <- Produce(request, kafkaAddress)
     } yield ()
 
   override def createTopics(request: CreateTopicsRequest): ZIO[ZEnv, Status, CreateTopicsResponse] =
@@ -40,20 +39,14 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
 
   private def createTopics0(request: CreateTopicsRequest) =
     for {
-      _ <- putStrLn(s"~~~ START CREATE TOPICS $request ~~~").orDie
+      _            <- putStrLn(s"~~~ START CREATE TOPICS $request ~~~").orDie
       kafkaAddress <- register.get.map(_.kafkaAddress)
-      _ <- SidecarAdminClient.admin(kafkaAddress).use { client =>
-        client.createTopics(request.topics.toSet.map(mapTopic))
-      }
-      _ <- putStrLn("~~~ END CREATE TOPICS ~~~")
+      _            <- SidecarAdminClient.admin(kafkaAddress).use { client => client.createTopics(request.topics.toSet.map(mapTopic)) }
+      _            <- putStrLn("~~~ END CREATE TOPICS ~~~")
     } yield ()
 
   private def mapTopic(topic: TopicToCreate): TopicConfig =
-    TopicConfig(
-      name = topic.name,
-      partitions = topic.partitions.getOrElse(1),
-      replicationFactor = 1,
-      cleanupPolicy = CleanupPolicy.Compact)
+    TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
   override def startConsuming(request: StartConsumingRequest): ZIO[ZEnv, Status, StartConsumingResponse] =
     startConsuming0(request)
