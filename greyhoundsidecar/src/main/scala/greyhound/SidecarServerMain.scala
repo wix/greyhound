@@ -12,10 +12,12 @@ object SidecarServerMain extends ServerMain {
 
   override def services: ServiceList[ZEnv] = ServiceList.addM {
     for {
-      register <- RegisterLive.Default
+      register     <- RegisterLive.Default
       kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(defaultKafkaAddress))
-      _ = println(s"~~~ INIT Sidecar Server with kafka address $kafkaAddress")
-      _ <- register.updateKafkaAddress(kafkaAddress)
+      _             = println(s"~~~ INIT Sidecar Server with kafka address $kafkaAddress")
+      _            <- register.updateKafkaAddress(kafkaAddress)
+      db           <- register.get
+      _             = println(s"~~~ now address is ${db.kafkaAddress}")
     } yield new SidecarService(register)
   }
 
