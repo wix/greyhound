@@ -17,7 +17,17 @@ It can communicate with various client SDKs, and gives easy access to produce an
 
 - **Create Topics**
 
-  Create Kafka Topics without any boilerplate - simply pass the topic name. Multiple topics can be created in a single API call 
+  Create Kafka Topics without any boilerplate - simply pass the topic name. Multiple topics can be created in a single API call
+```
+message CreateTopicsRequest {
+  repeated TopicToCreate topics = 1;
+}
+
+message TopicToCreate {
+  string name = 1;
+  google.protobuf.Int32Value partitions = 2;
+}
+```
 
 - **Register Endpoint**
 
@@ -27,7 +37,6 @@ message RegisterRequest {
  string host = 1;
  string port = 2;
 }
-
 ```
   
 - **Produce Messages**
@@ -44,8 +53,9 @@ message ProduceRequest {
 ```
   
 
-- **Consume Messages**
+- **Start Consuming**
 
+  This API will create kafka consumers
 ```
 message StartConsumingRequest {
   repeated Consumer consumers = 2;
@@ -62,6 +72,7 @@ message Consumer {
 
 - **Handle Messages**
 
+  Sidecar app will send below gRPC request to the endpoint that was set in `Register` API 
 ```
 message HandleMessagesRequest {
   string group = 1;
