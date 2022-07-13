@@ -13,11 +13,23 @@ package object testkit {
   def eventuallyZ[R <: Has[_], T](f: RIO[R, T], timeout: Duration = 4.seconds)(predicate: T => Boolean): ZIO[R, Throwable, Unit] =
     eventuallyTimeoutFail(f)(predicate)(timeout)
 
+  def eventuallyNotZ[R <: Has[_], T](f: RIO[R, T], timeout: Duration = 4.seconds)(predicate: T => Boolean): ZIO[R, Throwable, Unit] =
+    eventuallyNotTimeoutFail(f)(predicate)(timeout)
+
   def eventuallyTimeoutFail[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Unit] =
     for {
       timeoutRes <- eventuallyTimeout(f)(predicate)(timeout)
       result      = timeoutRes.map(_._2)
       _          <- ZIO.when(timeoutRes.isEmpty)(
+                      ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result"))
+                    )
+    } yield ()
+
+  def eventuallyNotTimeoutFail[R <: Has[_], T](f: RIO[R, T])(predicate: T => Boolean)(timeout: Duration): ZIO[R, Throwable, Unit] =
+    for {
+      timeoutRes <- eventuallyTimeout(f)(predicate)(timeout)
+      result      = timeoutRes.map(_._2)
+      _          <- ZIO.when(timeoutRes.nonEmpty)(
                       ZIO.fail(new RuntimeException(s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds. result: $result"))
                     )
     } yield ()
