@@ -334,6 +334,15 @@ object BatchEventLoopMetric {
     attributes: Map[String, String]
   ) extends BatchEventLoopMetric
 
+  case class RecordsPendingForRetry[K, V](
+    topic: String,
+    group: Group,
+    partition: Int,
+    clientId: ClientId,
+    records: Seq[ConsumerRecord[K, V]],
+    attributes: Map[String, String]
+  ) extends BatchEventLoopMetric
+
   case class EventloopWaitedForResume(group: Group, clientId: ClientId, waitedFor: Duration, attributes: Map[String, String])
       extends BatchEventLoopMetric
 
