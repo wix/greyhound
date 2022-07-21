@@ -33,7 +33,6 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
   ): RIO[Blocking with GreyhoundMetrics with R1, Unit] =
     for {
       r <- ZIO.environment[Blocking with R1 with GreyhoundMetrics]
-      _ <- GreyhoundMetrics.report(LogstashTestMetric(clientId, group, topics, config.consumerAttributes))
       _ <- GreyhoundMetrics.report(SubscribingToTopics(clientId, group, topics, config.consumerAttributes))
       _ <- internal
              .subscribe(topics = topics, rebalanceListener = listener(r, rebalanceListener))
@@ -170,9 +169,6 @@ object ConsumerMetric {
 
   case class CreatingConsumer(clientId: ClientId, group: Group, connectUrl: String, attributes: Map[String, String] = Map.empty)
       extends ConsumerMetric
-
-  case class LogstashTestMetric(clientId: ClientId, group: Group, topics: Set[Topic], attributes: Map[String, String] = Map.empty)
-    extends ConsumerMetric
 
   case class SubscribingToTopics(clientId: ClientId, group: Group, topics: Set[Topic], attributes: Map[String, String] = Map.empty)
       extends ConsumerMetric
