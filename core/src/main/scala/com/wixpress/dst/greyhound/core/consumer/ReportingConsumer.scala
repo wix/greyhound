@@ -6,57 +6,53 @@ import com.wixpress.dst.greyhound.core.{TopicPartition, _}
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric._
 import com.wixpress.dst.greyhound.core.consumer.ReportingConsumer.OrderedOffsets
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.MetricResult
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{report, MetricResult}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import zio.blocking.Blocking
-import zio.clock.Clock
-import zio.duration.Duration
-import zio.{RIO, Task, UIO, ZIO}
+import zio.{Duration, RIO, Task, Trace, UIO, ZEnvironment, ZIO, ZLayer}
 
 case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consumer) extends Consumer {
 
   override def subscribePattern[R1](
     pattern: Pattern,
     rebalanceListener: RebalanceListener[R1]
-  ): RIO[Blocking with GreyhoundMetrics with R1, Unit] =
+  )(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
     for {
-      r <- ZIO.environment[R1 with GreyhoundMetrics with Blocking]
-      _ <- GreyhoundMetrics.report(SubscribingToTopicWithPattern(clientId, group, pattern.toString, config.consumerAttributes))
+      r <- ZIO.environment[R1 with GreyhoundMetrics]
+      _ <- report(SubscribingToTopicWithPattern(clientId, group, pattern.toString, config.consumerAttributes))
       _ <- internal
-             .subscribePattern(pattern, rebalanceListener = listener(r, rebalanceListener))
-             .tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
+             .subscribePattern[R1](pattern, rebalanceListener = listener(r, rebalanceListener))(trace)
+             .tapError(error => report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
     } yield ()
 
-  override def subscribe[R1](
-    topics: Set[Topic],
-    rebalanceListener: RebalanceListener[R1]
-  ): RIO[Blocking with GreyhoundMetrics with R1, Unit] =
+  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1])(
+    implicit trace: Trace
+  ): RIO[GreyhoundMetrics with R1, Unit] =
     for {
-      r <- ZIO.environment[Blocking with R1 with GreyhoundMetrics]
+      r <- ZIO.environment[R1 with GreyhoundMetrics]
       _ <- GreyhoundMetrics.report(SubscribingToTopics(clientId, group, topics, config.consumerAttributes))
       _ <- internal
              .subscribe(topics = topics, rebalanceListener = listener(r, rebalanceListener))
-             .tapError(error => GreyhoundMetrics.report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
+             .tapError(error => report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
     } yield ()
 
-  private def listener[R1](r: R1 with GreyhoundMetrics with Blocking, rebalanceListener: RebalanceListener[R1]) = {
+  private def listener[R1](r: ZEnvironment[R1 with  GreyhoundMetrics], rebalanceListener: RebalanceListener[R1]) = {
     new RebalanceListener[Any] {
-      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): UIO[DelayedRebalanceEffect] =
-        (GreyhoundMetrics.report(PartitionsRevoked(clientId, group, partitions, config.consumerAttributes)) *>
-          rebalanceListener.onPartitionsRevoked(consumer, partitions)).provide(r)
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
+        implicit trace: Trace
+      ): UIO[DelayedRebalanceEffect] =
+        (report(PartitionsRevoked(clientId, group, partitions, config.consumerAttributes)) *>
+          rebalanceListener.onPartitionsRevoked(consumer, partitions)).provideEnvironment(r)
 
-      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): UIO[Any] =
-        (GreyhoundMetrics.report(PartitionsAssigned(clientId, group, partitions, config.consumerAttributes)) *>
-          rebalanceListener.onPartitionsAssigned(consumer, partitions)).provide(r)
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
+        (report(PartitionsAssigned(clientId, group, partitions, config.consumerAttributes)) *>
+          rebalanceListener.onPartitionsAssigned(consumer, partitions)).provideEnvironment(r)
     }
   }
 
-  override def poll(timeout: Duration): RIO[Blocking with GreyhoundMetrics, Records] =
+  override def poll(timeout: Duration)(implicit trace: Trace): RIO[GreyhoundMetrics, Records] =
     for {
-      records <- internal.poll(timeout).tapError { error =>
-                   GreyhoundMetrics.report(PollingFailed(clientId, group, error, config.consumerAttributes))
-                 }
-      _       <- GreyhoundMetrics.report(PolledRecords(clientId, group, orderedPolledRecords(records), config.consumerAttributes)).as(records)
+      records <- internal.poll(timeout).tapError { error => report(PollingFailed(clientId, group, error, config.consumerAttributes)) }
+      _       <- report(PolledRecords(clientId, group, orderedPolledRecords(records), config.consumerAttributes)).as(records)
     } yield records
 
   private def orderedPolledRecords(records: Records): OrderedOffsets = {
@@ -70,89 +66,103 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
       .sortBy(_._1)
   }
 
-  override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] =
-    ZIO.runtime[Blocking with GreyhoundMetrics].flatMap { runtime =>
+  override def commitOnRebalance(
+    offsets: Map[TopicPartition, Offset]
+  )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
+    ZIO.runtime[GreyhoundMetrics].flatMap { runtime =>
       if (offsets.nonEmpty) {
-        GreyhoundMetrics
-          .report(CommittingOffsets(clientId, group, offsets, calledOnRebalance = true, attributes = config.consumerAttributes)) *>
+        report(CommittingOffsets(clientId, group, offsets, calledOnRebalance = true, attributes = config.consumerAttributes)) *>
           internal
             .commitOnRebalance(offsets)
             .tapError { error =>
-              GreyhoundMetrics
-                .report(CommitFailed(clientId, group, error, offsets, calledOnRebalance = true, attributes = config.consumerAttributes))
+              report(CommitFailed(clientId, group, error, offsets, calledOnRebalance = true, attributes = config.consumerAttributes))
             }
             .map(
               _.tapError { error => // handle commit errors in ThreadLockedEffect
-                runtime.unsafeRunTask(
-                  GreyhoundMetrics
-                    .report(CommitFailed(clientId, group, error, offsets, calledOnRebalance = true, attributes = config.consumerAttributes))
-                )
+                zio.Unsafe.unsafe { implicit s =>
+                  runtime.unsafe
+                    .run(
+                      report(
+                        CommitFailed(clientId, group, error, offsets, calledOnRebalance = true, attributes = config.consumerAttributes)
+                      )
+                    )
+                    .getOrThrowFiberFailure()
+                }
               } *>
                 DelayedRebalanceEffect(
-                  runtime.unsafeRunTask(
-                    GreyhoundMetrics
-                      .report(CommittedOffsets(clientId, group, offsets, calledOnRebalance = true, attributes = config.consumerAttributes))
-                  )
+                  zio.Unsafe.unsafe { implicit s =>
+                    runtime.unsafe
+                      .run(
+                        report(CommittedOffsets(clientId, group, offsets, calledOnRebalance = true, attributes = config.consumerAttributes))
+                      )
+                      .getOrThrowFiberFailure()
+                  }
                 )
             )
       } else DelayedRebalanceEffect.zioUnit
     }
 
-  override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
-    ZIO.when(offsets.nonEmpty) {
-      GreyhoundMetrics.report(
-        CommittingOffsets(clientId, group, offsets, calledOnRebalance = false, attributes = config.consumerAttributes)
-      ) *> internal.commit(offsets).tapError { error => GreyhoundMetrics.report(CommitFailed(clientId, group, error, offsets)) } *>
-        GreyhoundMetrics.report(
-          CommittedOffsets(clientId, group, offsets, calledOnRebalance = false, attributes = config.consumerAttributes)
-        )
-    }
+  override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+    ZIO
+      .when(offsets.nonEmpty) {
+        report(
+          CommittingOffsets(clientId, group, offsets, calledOnRebalance = false, attributes = config.consumerAttributes)
+        ) *> internal.commit(offsets).tapError { error => report(CommitFailed(clientId, group, error, offsets)) } *>
+          report(
+            CommittedOffsets(clientId, group, offsets, calledOnRebalance = false, attributes = config.consumerAttributes)
+          )
+      }
+      .unit
   }
 
-  override def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] =
-    ZIO.when(partitions.nonEmpty) {
-      GreyhoundMetrics.report(PausingPartitions(clientId, group, partitions, config.consumerAttributes)) *>
-        internal.pause(partitions).tapError { error =>
-          GreyhoundMetrics.report(PausePartitionsFailed(clientId, group, error, partitions, config.consumerAttributes))
-        }
-    }
+  override def pause(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit] =
+    ZIO
+      .when(partitions.nonEmpty) {
+        report(PausingPartitions(clientId, group, partitions, config.consumerAttributes)) *>
+          internal.pause(partitions).tapError { error =>
+            report(PausePartitionsFailed(clientId, group, error, partitions, config.consumerAttributes))
+          }
+      }
+      .unit
 
-  override def resume(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] =
-    ZIO.when(partitions.nonEmpty) {
-      GreyhoundMetrics.report(ResumingPartitions(clientId, group, partitions, config.consumerAttributes)) *>
-        internal.resume(partitions).tapError { error =>
-          GreyhoundMetrics.report(ResumePartitionsFailed(clientId, group, error, partitions, config.consumerAttributes))
-        }
-    }
+  override def resume(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit] =
+    ZIO
+      .when(partitions.nonEmpty) {
+        report(ResumingPartitions(clientId, group, partitions, config.consumerAttributes)) *>
+          internal.resume(partitions).tapError { error =>
+            report(ResumePartitionsFailed(clientId, group, error, partitions, config.consumerAttributes))
+          }
+      }
+      .unit
 
-  override def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] =
-    GreyhoundMetrics.report(SeekingToOffset(clientId, group, partition, offset, config.consumerAttributes)) *>
+  override def seek(partition: TopicPartition, offset: Offset)(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit] =
+    report(SeekingToOffset(clientId, group, partition, offset, config.consumerAttributes)) *>
       internal.seek(partition, offset).tapError { error =>
-        GreyhoundMetrics.report(SeekToOffsetFailed(clientId, group, error, partition, offset, config.consumerAttributes))
+        report(SeekToOffsetFailed(clientId, group, error, partition, offset, config.consumerAttributes))
       }
 
-  override def assignment: Task[Set[TopicPartition]] = internal.assignment
+  override def assignment(implicit trace: Trace): Task[Set[TopicPartition]] = internal.assignment
 
-  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
+  override def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
     internal.endOffsets(partitions)
 
-  override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
+  override def beginningOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
     internal.beginningOffsets(partitions)
 
-  override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
+  override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
     internal.committedOffsets(partitions)
 
-  override def position(topicPartition: TopicPartition): Task[Offset] =
+  override def position(topicPartition: TopicPartition)(implicit trace: Trace): Task[Offset] =
     internal.position(topicPartition)
 
-  override def config: ConsumerConfig = internal.config
+  override def config(implicit trace: Trace): ConsumerConfig = internal.config
 
   override def offsetsForTimes(
     topicPartitionsOnTimestamp: Map[TopicPartition, Long]
-  ): RIO[Clock with Blocking, Map[TopicPartition, Offset]] =
+  )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
     internal.offsetsForTimes(topicPartitionsOnTimestamp)
 
-  override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = internal.listTopics
+  override def listTopics(implicit trace: Trace): RIO[Any, Map[Topic, List[core.PartitionInfo]]] = internal.listTopics
 }
 
 object ReportingConsumer {
