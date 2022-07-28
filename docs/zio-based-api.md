@@ -291,7 +291,7 @@ import com.wixpress.dst.greyhound.core.producer.buffered.buffers._
 import zio.duration._
 import zio._
 
-def producer: RManaged[GreyhoundMetrics, LocalBufferProducer[Any]] =
+def producer: RManaged[ZEnv with GreyhoundMetrics, LocalBufferProducer[Any]] =
     for {
       producer <- Producer.make(ProducerConfig(brokers))
       h2LocalBuffer <- H2LocalBuffer.make(s"/writable/path/to/db/files", keepDeadMessages = 1.day)
