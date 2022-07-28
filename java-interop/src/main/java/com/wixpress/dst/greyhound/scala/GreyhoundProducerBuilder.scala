@@ -14,32 +14,32 @@ import zio.{Exit, ZIO, ZLayer}
 import scala.concurrent.ExecutionContext
 
 class GreyhoundProducerBuilder(val config: GreyhoundConfig) {
-  private implicit val ec      = ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
+  private implicit val ec = ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
   def build: GreyhoundProducer = config.runtime.unsafeRun {
     for {
-      runtime       <- ZIO.runtime[Env]
+      runtime <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers, extraProperties = config.extraProperties)
-      makeProducer   = Producer.makeR[Any](producerConfig)
-      producer      <- makeProducer.provide(ZLayer.succeed(zio.Scope.global))
+      makeProducer = Producer.makeR[Any](producerConfig)
+      producer <- makeProducer.provide(ZLayer.succeed(zio.Scope.global))
     } yield new GreyhoundProducer {
       override def produce[K, V](
-        record: KafkaProducerRecord[K, V],
-        keySerializer: KafkaSerializer[K],
-        valueSerializer: KafkaSerializer[V]
-      ): CompletableFuture[OffsetAndMetadata] = {
+                                  record: KafkaProducerRecord[K, V],
+                                  keySerializer: KafkaSerializer[K],
+                                  valueSerializer: KafkaSerializer[V]
+                                ): CompletableFuture[OffsetAndMetadata] = {
         val result = for {
           metadata <- producer.produce(
-                        toGreyhoundRecord(record), // TODO headers
-                        Serializer(keySerializer),
-                        Serializer(valueSerializer)
-                      )
+            toGreyhoundRecord(record), // TODO headers
+            Serializer(keySerializer),
+            Serializer(valueSerializer)
+          )
         } yield new OffsetAndMetadata(metadata.offset)
 
         val future = new CompletableFuture[OffsetAndMetadata]()
 
         zio.Unsafe.unsafe { implicit s =>
           runtime.unsafe.runToFuture(result).onComplete {
-            case scala.util.Success(metadata)  => future.complete(metadata)
+            case scala.util.Success(metadata) => future.complete(metadata)
             case scala.util.Failure(throwable) => future.completeExceptionally(throwable)
           }
         }

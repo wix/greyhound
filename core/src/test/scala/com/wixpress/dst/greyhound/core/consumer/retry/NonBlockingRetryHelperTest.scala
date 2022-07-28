@@ -53,7 +53,7 @@ class NonBlockingRetryHelperTest extends BaseTest[TestEnvironment] {
     }
   }
 
-  override def env = testEnvironment
+  override def env  = testEnvironment
 
   def makeString(value: Chunk[Byte]) =
     ZIO.succeed(new String(value.toArray, StandardCharsets.US_ASCII))

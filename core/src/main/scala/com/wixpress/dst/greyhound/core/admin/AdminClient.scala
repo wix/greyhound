@@ -6,13 +6,13 @@ import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Offset, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
 import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
-import org.apache.kafka.common.errors.{InvalidTopicException, TopicExistsException, UnknownTopicOrPartitionException}
+import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
 import zio.{IO, RIO, Scope, Trace, ZIO}
 import GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
@@ -23,9 +23,9 @@ import scala.collection.JavaConverters._
 import zio.ZIO.attemptBlocking
 
 trait AdminClient {
-  def shutdown(implicit trace: Trace): RIO[Any, Unit]
+  def shutdown(implicit trace: Trace) : RIO[Any, Unit]
 
-  def listTopics()(implicit trace: Trace): RIO[Any, Set[String]]
+  def listTopics() (implicit trace: Trace): RIO[Any, Set[String]]
 
   def topicExists(topic: String)(implicit trace: Trace): RIO[Any, Boolean]
 
@@ -50,9 +50,7 @@ trait AdminClient {
 
   def describeConsumerGroups(groupIds: Set[Group])(implicit trace: Trace): RIO[Any, Map[Group, ConsumerGroupDescription]]
 
-  def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None)(
-    implicit trace: Trace
-  ): RIO[Any, Map[TopicPartition, OffsetAndMetadata]]
+  def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None)(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
 
   def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[Any with GreyhoundMetrics, Unit]
 
@@ -123,7 +121,7 @@ object AdminClient {
     ZIO.acquireRelease(acquire)(client => attemptBlocking(client.close()).ignore).map { client =>
       new AdminClient {
 
-        override def shutdown(implicit trace: Trace): RIO[Any, Unit] =
+        override def shutdown (implicit trace: Trace): RIO[Any, Unit] =
           ZIO.attempt(client.close()).ignore
 
         override def topicExists(topic: String)(implicit trace: Trace): RIO[Any, Boolean] =
@@ -137,7 +135,6 @@ object AdminClient {
                   topicResult.asZio.either.flatMap {
                     case Right(_)                                  => ZIO.succeed(true)
                     case Left(_: UnknownTopicOrPartitionException) => ZIO.succeed(false)
-                    case Left(_: InvalidTopicException)            => ZIO.succeed(false)
                     case Left(ex)                                  => ZIO.fail(ex)
                   }
               }
@@ -253,14 +250,14 @@ object AdminClient {
         override def consumerGroupOffsets(
           groupId: Group,
           onlyPartitions: Option[Set[TopicPartition]] = None
-        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]] = {
+        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
           val maybePartitions: util.List[common.TopicPartition] = onlyPartitions.map(_.map(_.asKafka).toList.asJava).orNull
           for {
             desc <- attemptBlocking(
                       client.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions))
                     )
             res  <- attemptBlocking(desc.partitionsToOffsetAndMetadata().get())
-          } yield res.asScala.toMap.map { case (tp, om) => (TopicPartition(tp), OffsetAndMetadata(om)) }
+          } yield res.asScala.toMap.map { case (tp, o) => (TopicPartition(tp), o.offset()) }
         }
 
         override def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
@@ -334,8 +331,7 @@ object AdminClient {
                     )
                 }
                 .catchSome {
-                  case _: UnknownTopicOrPartitionException =>
-                    ZIO.succeed(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
+                  case _: UnknownTopicOrPartitionException => ZIO.succeed(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
                 }
           }
         )
@@ -359,9 +355,7 @@ object AdminClient {
                       replication
                     )
                 }
-                .catchSome {
-                  case _: UnknownTopicOrPartitionException => ZIO.succeed(topic -> TopicPropertiesResult.TopicDoesnExist(topic))
-                }
+                .catchSome { case _: UnknownTopicOrPartitionException => ZIO.succeed(topic -> TopicPropertiesResult.TopicDoesnExist(topic)) }
           })
           .map(_.toMap)
       }

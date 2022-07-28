@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.zioutils
 
 import zio.managed._
-import zio.{durationInt, Duration, Exit, Trace, UIO, ZIO}
+import zio.{UIO,Trace,ZIO,Exit, durationInt, Duration}
 
 import scala.concurrent.TimeoutException
 import zio.managed._
@@ -15,10 +15,10 @@ object AcquiredManagedResource {
   def acquire[R <: Any: zio.Tag, T](
     resources: ZManaged[R, Throwable, T],
     releaseTimeout: Duration = 10.seconds
-  )(implicit trace: Trace): ZIO[R, Throwable, AcquiredManagedResource[T]] = for {
+  ) (implicit trace: Trace): ZIO[R, Throwable, AcquiredManagedResource[T]] = for {
     runtime  <- ZIO.runtime[Any]
     r        <- resources.reserve
-    env      <- ZIO.environment[R]
+    env <- ZIO.environment[R]
     acquired <- r.acquire
   } yield {
     val releaseWithTimeout = r

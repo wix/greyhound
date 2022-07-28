@@ -5,10 +5,11 @@ import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopState.{Paused, Running, ShuttingDown}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{report, trace}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import zio._
+import zio.Clock
 
 trait EventLoop[-R] extends Resource[R] {
   self =>
@@ -33,7 +34,7 @@ object EventLoop {
     config: EventLoopConfig = EventLoopConfig.Default,
     consumerAttributes: Map[String, String] = Map.empty,
     workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]
-  )(implicit trace: Trace): RIO[R with Env, EventLoop[GreyhoundMetrics]] = {
+  )(implicit trace: Trace, tag: Tag[Env]): RIO[R with Env, EventLoop[GreyhoundMetrics]] = {
     val start = for {
       _                   <- report(StartingEventLoop(clientId, group, consumerAttributes))
       offsets             <- Offsets.make
@@ -62,7 +63,7 @@ object EventLoop {
                                .forkDaemon
       _                   <- partitionsAssigned.await
       env                 <- ZIO.environment[Env]
-    } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provideEnvironment(env))
+    } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provide(env.get))
 
     start
       .map {
@@ -108,6 +109,7 @@ object EventLoop {
     dispatcher: Dispatcher[R]
   ) =
     for {
+      _ <- ZIO.debug("stopping event loop !@#")
       _       <- report(StoppingEventLoop(clientId, group, consumerAttributes))
       _       <- running.set(ShuttingDown)
       drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
@@ -255,7 +257,7 @@ case class EventLoopConfig(
   rebalanceListener: RebalanceListener[Any],
   delayResumeOfPausedPartition: Long,
   startPaused: Boolean
-)
+) // TODO parametrize?
 
 object EventLoopConfig {
   val Default = EventLoopConfig(
