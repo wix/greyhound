@@ -11,9 +11,8 @@ import com.wixpress.dst.greyhound.core.consumer.retry.{BlockingHandlerFailed, No
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.FakeRetryHelper._
 import zio._
-import zio.Clock
-
-import zio.Clock
+import zio.clock.Clock
+import zio.duration._
 
 trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
   val topic: Topic
@@ -21,7 +20,7 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
   override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
     Set(s"$originalTopic-retry")
 
-  override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription) (implicit trace: Trace): UIO[Option[RetryAttempt]] =
+  override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] =
     (for {
       attempt     <- headers.get(Header.Attempt, IntSerde)
       submittedAt <- headers.get(Header.SubmittedAt, InstantSerde)
@@ -33,7 +32,7 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
     record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
     error: E,
     subscription: ConsumerSubscription
-  )(implicit trace: Trace): URIO[Any, RetryDecision] =
+  ): URIO[Clock, RetryDecision] =
     error match {
       case RetriableError | BlockingHandlerFailed =>
         currentTime.flatMap(now =>
@@ -41,7 +40,7 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
             .fold(_ => NoMoreRetries, RetryWith)
         )
       case NonRetriableError                      =>
-        ZIO.succeed(NoMoreRetries)
+        UIO(NoMoreRetries)
     }
 
   private def retryAttemptInternal(topic: Topic, attempt: Option[Int], submittedAt: Option[Instant], backoff: Option[Duration]) =
@@ -51,7 +50,7 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
       b <- backoff
     } yield RetryAttempt(topic, a, s, b)
 
-  private def recordFrom(now: Instant, retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]])(implicit trace: Trace) = {
+  private def recordFrom(now: Instant, retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) = {
     val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
     for {
       retryAttempt <- IntSerde.serialize(topic, nextRetryAttempt)
@@ -70,14 +69,14 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
 case class FakeRetryHelper(topic: Topic) extends FakeNonBlockingRetryHelper
 
 object FakeRetryHelper {
-  implicit private val trace = Trace.empty
+
   object Header {
     val Attempt     = "retry-attempt"
     val SubmittedAt = "retry-submitted-at"
     val Backoff     = "retry-backoff"
   }
 
-  val currentTime = Clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
+  val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
 }
 
 sealed trait HandlerError
