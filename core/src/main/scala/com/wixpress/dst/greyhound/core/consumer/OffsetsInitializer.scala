@@ -4,10 +4,9 @@ import java.time.Clock
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-
+import zio.blocking.Blocking
 import zio.{URIO, ZIO}
-
-import zio._
+import zio.duration._
 
 /**
  * Called from `onPartitionsAssigned`. Commits missing offsets to current position on assign - otherwise messages may be lost, in case of
@@ -18,8 +17,8 @@ class OffsetsInitializer(
   clientId: ClientId,
   group: Group,
   offsetOperations: UnsafeOffsetOperations,
-  timeout: zio.Duration,
-  timeoutIfSeek: zio.Duration,
+  timeout: zio.duration.Duration,
+  timeoutIfSeek: zio.duration.Duration,
   reporter: GreyhoundMetric => Unit,
   initialSeek: InitialOffsetsSeek,
   clock: Clock = Clock.systemUTC
@@ -135,20 +134,20 @@ object OffsetsInitializer {
     clientId: ClientId,
     group: Group,
     offsetOperations: UnsafeOffsetOperations,
-    timeout: zio.Duration,
-    timeoutIfSeek: zio.Duration,
+    timeout: zio.duration.Duration,
+    timeoutIfSeek: zio.duration.Duration,
     initialSeek: InitialOffsetsSeek,
     clock: Clock = Clock.systemUTC
-  ) (implicit trace: Trace): URIO[GreyhoundMetrics, OffsetsInitializer] = for {
+  ): URIO[Blocking with GreyhoundMetrics, OffsetsInitializer] = for {
     metrics <- ZIO.environment[GreyhoundMetrics].map(_.get)
-    runtime <- ZIO.runtime[Any]
+    runtime <- ZIO.runtime[Blocking]
   } yield new OffsetsInitializer(
     clientId,
     group,
     offsetOperations,
     timeout,
     timeoutIfSeek,
-    m => zio.Unsafe.unsafe { implicit s => runtime.unsafe.run(metrics.report(m)).getOrThrowFiberFailure() },
+    m => runtime.unsafeRunTask(metrics.report(m)),
     initialSeek: InitialOffsetsSeek,
     clock
   )
