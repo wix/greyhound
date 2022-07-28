@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import org.apache.kafka.common.serialization.{Deserializer => KafkaDeserializer}
-import zio.{Chunk, Task, UIO}
+import zio.{Chunk, Task, ZIO}
 
 trait Deserializer[+A] {
   def deserialize(topic: Topic, headers: Headers, data: Chunk[Byte]): Task[A]
@@ -27,12 +27,12 @@ trait Deserializer[+A] {
 
 object Deserializer {
   def apply[A](deserializer: KafkaDeserializer[A]): Deserializer[A] =
-    (topic: Topic, _: Headers, data: Chunk[Byte]) => Task(deserializer.deserialize(topic, data.toArray))
+    (topic: Topic, _: Headers, data: Chunk[Byte]) => ZIO.attempt(deserializer.deserialize(topic, data.toArray))
 
   def apply[A](f: (Topic, Headers, Chunk[Byte]) => Task[A]): Deserializer[A] =
     (topic: Topic, headers: Headers, data: Chunk[Byte]) => f(topic, headers, data)
 
   val noOp = new Deserializer[Chunk[Byte]] {
-    override def deserialize(topic: Topic, headers: Headers, data: Chunk[Byte]): Task[Chunk[Byte]] = UIO(data)
+    override def deserialize(topic: Topic, headers: Headers, data: Chunk[Byte]): Task[Chunk[Byte]] = ZIO.succeed(data)
   }
 }
