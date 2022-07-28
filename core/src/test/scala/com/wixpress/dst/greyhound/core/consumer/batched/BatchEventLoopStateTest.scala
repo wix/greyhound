@@ -6,8 +6,8 @@ import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
 class BatchEventLoopStateTest extends JUnitRunnableSpec {
-  private implicit val trace = zio.Trace.empty
-  def spec                   = suite("BatchEventLoopState")(
+  private implicit val  trace = zio.Trace.empty
+  def spec = suite("BatchEventLoopState")(
     test("pause, resume, shutdown") {
       for {
         state              <- BatchEventLoopState.make

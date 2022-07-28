@@ -23,7 +23,7 @@ class EventLoopTest extends BaseTest[TestMetrics] {
     for {
       invocations <- Ref.make(0)
       consumer     = new EmptyConsumer {
-                       override def poll(timeout: Duration)(implicit trace: Trace): Task[Records] =
+                       override def poll(timeout: Duration) (implicit trace: Trace): Task[Records] =
                          invocations.updateAndGet(_ + 1).flatMap {
                            case 1 => ZIO.fail(exception)
                            case 2 => ZIO.succeed(recordsFrom(record))
@@ -34,11 +34,9 @@ class EventLoopTest extends BaseTest[TestMetrics] {
       handler      = RecordHandler(promise.succeed)
       ref         <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
       handled     <-
-        ZIO.scoped(
-          EventLoop
-            .make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId", workersShutdownRef = ref)
-            .flatMap(_ => promise.await)
-        )
+        ZIO.scoped(EventLoop
+          .make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId", workersShutdownRef = ref)
+          .flatMap(_ => promise.await))
       metrics     <- TestMetrics.reported
     } yield (handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception)))
   }
@@ -49,44 +47,34 @@ class EventLoopTest extends BaseTest[TestMetrics] {
       commitInvocations <- Ref.make(0)
       promise           <- Promise.make[Nothing, Map[TopicPartition, Offset]]
       consumer           = new EmptyConsumer {
-                             override def poll(timeout: Duration)(implicit trace: Trace): Task[Records] =
+                             override def poll(timeout: Duration) (implicit trace: Trace): Task[Records] =
                                pollInvocations.updateAndGet(_ + 1).flatMap {
                                  case 1 => ZIO.succeed(recordsFrom(record))
                                  case _ => ZIO.succeed(Iterable.empty)
                                }
 
-                             override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace) =
+                             override def commit(offsets: Map[TopicPartition, Offset]) (implicit trace: Trace) =
                                commitInvocations.updateAndGet(_ + 1).flatMap {
                                  case 1 => ZIO.fail(exception)
                                  case _ => promise.succeed(offsets).unit
                                }
                            }
       ref               <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      committed         <- ZIO.scoped(
-                             EventLoop
-                               .make(
-                                 "group",
-                                 Topics(Set(topic)),
-                                 ReportingConsumer(clientId, group, consumer),
-                                 RecordHandler.empty,
-                                 "clientId",
-                                 workersShutdownRef = ref
-                               )
-                               .flatMap(_ => promise.await)
-                           )
+      committed         <- ZIO.scoped(EventLoop
+                             .make(
+                               "group",
+                               Topics(Set(topic)),
+                               ReportingConsumer(clientId, group, consumer),
+                               RecordHandler.empty,
+                               "clientId",
+                               workersShutdownRef = ref
+                             )
+                             .flatMap(_ => promise.await))
       metrics           <- TestMetrics.reported
-      _                 <- ZIO.debug(s"metrics===$metrics")
+      _ <- ZIO.debug(s"metrics===$metrics")
 
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
-      (metrics must
-        contain(
-          CommitFailed(
-            clientId,
-            group,
-            exception,
-            Map(TopicPartition(record.topic, record.partition) -> (offset + 1))
-          )
-        ))
+      (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic, record.partition) -> (offset + 1)))))
   }
 
 //  "expose event loop health" in {
@@ -123,14 +111,10 @@ object EventLoopTest {
 }
 
 trait EmptyConsumer extends Consumer {
-  override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(
-    implicit trace: Trace
-  ): RIO[GreyhoundMetrics with R1, Unit] =
+  override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
     rebalanceListener.onPartitionsAssigned(this, Set(TopicPartition("", 0))).unit
 
-  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1])(
-    implicit trace: Trace
-  ): RIO[GreyhoundMetrics with R1, Unit] =
+  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
     rebalanceListener.onPartitionsAssigned(this, topics.map(TopicPartition(_, 0))).unit
 
   override def poll(timeout: Duration)(implicit trace: Trace): Task[Records] =
@@ -139,38 +123,33 @@ trait EmptyConsumer extends Consumer {
   override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): Task[Unit] =
     ZIO.unit
 
-  override def commitOnRebalance(offsets: Map[TopicPartition, Offset])(
-    implicit trace: Trace
-  ): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
+  override def commitOnRebalance(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
     DelayedRebalanceEffect.zioUnit
 
-  override def pause(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+  override def pause(partitions: Set[TopicPartition]) (implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def resume(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+  override def resume(partitions: Set[TopicPartition]) (implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def seek(partition: TopicPartition, offset: Offset)(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+  override def seek(partition: TopicPartition, offset: Offset) (implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def assignment(implicit trace: Trace): Task[Set[TopicPartition]] = ZIO.succeed(Set.empty)
+  override def assignment (implicit trace: Trace): Task[Set[TopicPartition]] = ZIO.succeed(Set.empty)
 
-  override def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
-    ZIO.succeed(Map.empty)
+  override def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
 
-  override def beginningOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
-    ZIO.succeed(Map.empty)
+  override def beginningOffsets(partitions: Set[TopicPartition]) (implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
 
-  override def position(topicPartition: TopicPartition)(implicit trace: Trace): Task[Offset] = ZIO.attempt(-1L)
+  override def position(topicPartition: TopicPartition) (implicit trace: Trace): Task[Offset] = ZIO.attempt(-1L)
 
   override def config(implicit trace: Trace): ConsumerConfig = ConsumerConfig("", "")
 
   override def offsetsForTimes(
     topicPartitionsOnTimestamp: Map[TopicPartition, Long]
-  )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
+  )(implicit trace: Trace): RIO[Any,  Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
 
   override def listTopics(implicit trace: Trace): RIO[Any, Map[Topic, List[core.PartitionInfo]]] = ZIO.succeed(Map.empty)
 
-  override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
-    ZIO.succeed(Map.empty)
+  override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
 }

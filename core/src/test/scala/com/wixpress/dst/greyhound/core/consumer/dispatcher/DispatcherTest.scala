@@ -13,14 +13,14 @@ import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import org.specs2.specification.Scope
 import zio.test.TestClock
-import zio.{durationInt, Chunk, Clock, DurationSyntax => _, Promise, Queue, Ref, URIO, ZIO}
+import zio.{Chunk, Clock, Promise, Queue, Ref, URIO, ZIO, durationInt, DurationSyntax => _}
 
 class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
   sequential
 
   override def env =
     for {
-      clock       <- testClock
+      clock         <- testClock
       testMetrics <- TestMetrics.makeManagedEnv
     } yield testMetrics ++ clock
 

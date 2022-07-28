@@ -4,6 +4,7 @@ import com.wixpress.dst.greyhound.core.{Topic, TopicConfig}
 import com.wixpress.dst.greyhound.core.admin.{AdminClient => AdminClientCore, AdminClientConfig, TopicPropertiesResult}
 import zio.ZIO
 
+
 import scala.concurrent.Future
 
 trait AdminClient {

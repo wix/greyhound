@@ -44,16 +44,15 @@ class ProducerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield result === RecordMetadata(topic, partition = 1, offset = 0L)
   }
 
-  "map to failure" in
-    ZIO.scoped {
-      for {
-        _ <- Producer.makeR[Any](failFastInvalidBrokersConfig).flatMap { producer =>
-               for {
-                 failure <- producer.produce(record("no_such_topic"), StringSerde, IntSerde).flip
-               } yield failure.getClass.getSimpleName === "TimeoutError"
-             }
-      } yield ok
-    }
+  "map to failure" in ZIO.scoped {
+    for {
+      _ <- Producer.makeR[Any](failFastInvalidBrokersConfig).flatMap { producer =>
+             for {
+               failure <- producer.produce(record("no_such_topic"), StringSerde, IntSerde).flip
+             } yield failure.getClass.getSimpleName === "TimeoutError"
+           }
+    } yield ok
+  }
 
   private def failFastInvalidBrokersConfig =
     ProducerConfig("localhost:27461", ProducerRetryPolicy(0, 0.millis), Map("max.block.ms" -> "0"))

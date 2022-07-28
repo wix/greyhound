@@ -29,7 +29,7 @@ object RetryRecordHandler {
     awaitShutdown: TopicPartition => UIO[AwaitShutdown] = _ => ZIO.succeed(AwaitShutdown.never)(zio.Trace.empty)
   )(
     implicit evK: K <:< Chunk[Byte],
-    evV: V <:< Chunk[Byte]
+    evV: V <:< Chunk[Byte],
   ): RecordHandler[R with R2 with GreyhoundMetrics, Nothing, K, V] = {
 
     val nonBlockingHandler            =
@@ -38,7 +38,7 @@ object RetryRecordHandler {
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
     new RecordHandler[R with R2 with GreyhoundMetrics, Nothing, K, V] {
-      override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[R with R2 with GreyhoundMetrics, Nothing, Any] =
+      override def handle(record: ConsumerRecord[K, V]) (implicit trace: Trace): ZIO[R with R2 with GreyhoundMetrics, Nothing, Any] =
         header(record, RetryHeader.OriginalTopic)
           .flatMap { originalTopic =>
             retryConfig.retryType(originalTopic.getOrElse(record.topic)) match {
@@ -51,15 +51,15 @@ object RetryRecordHandler {
     }
   }
 
-  private def header[V, K, E, R, R2](record: ConsumerRecord[Any, Any], key: String)(implicit trace: Trace) =
+  private def header[V, K, E, R, R2](record: ConsumerRecord[Any, Any], key: String) (implicit trace: Trace) =
     record.headers.get[String](key, StringSerde).catchAll(_ => ZIO.none)
 }
 
 object ZIOHelper {
-  def foreachWhile[R, E, A](as: Iterable[A])(f: A => ZIO[R, E, LastHandleResult])(implicit trace: Trace): ZIO[R, E, LastHandleResult] =
+  def foreachWhile[R, E, A](as: Iterable[A])(f: A => ZIO[R, E, LastHandleResult]) (implicit trace: Trace): ZIO[R, E, LastHandleResult] =
     ZIO.succeed(as.iterator).flatMap { i =>
       def loop: ZIO[R, E, LastHandleResult] =
-        if (i.hasNext) f(i.next).flatMap(result => if (result.shouldContinue) loop else ZIO.succeed(result))
+        if (i.hasNext) f(i.next).flatMap(result => if (result.shouldContinue) loop else (ZIO.succeed(result)))
         else ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
 
       loop

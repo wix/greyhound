@@ -10,14 +10,13 @@ import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.testenv.ITEnv
-import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
+import com.wixpress.dst.greyhound.testenv.ITEnv.{testResources, Env, TestResources}
 import org.apache.kafka.common.config.TopicConfig.{DELETE_RETENTION_MS_CONFIG, MAX_MESSAGE_BYTES_CONFIG, RETENTION_MS_CONFIG}
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.specs2.specification.core.Fragments
 import zio.Duration.fromScala
 import zio.{Chunk, Ref, ZIO}
 
-import java.util.concurrent.CompletionException
 import scala.concurrent.duration._
 
 class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
@@ -83,29 +82,27 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
     }
 
-    //todo uncomment this after https://github.com/wix-private/core-server-build-tools/pull/13043 is merged
-//    "reflect errors" in {
-//      val topic1 = aTopicConfig()
-//      val topic2 = aTopicConfig("x" * 250)
-//      for {
-//        r       <- getShared
-//        created <- r.kafka.adminClient.createTopics(Set(topic1, topic2))
-//      } yield {
-//        (created(topic1.name) must beNone) and (created(topic2.name) must beSome(beAnInstanceOf[CompletionException]))
-//      }
-//    }
-//
-//    "ignore errors based on filter" in {
-//      val badTopic = aTopicConfig("x" * 250)
-//      for {
-//        r       <- getShared
-//        created <- r.kafka.adminClient.createTopics(Set(badTopic), ignoreErrors = _.isInstanceOf[CompletionException])
-//      } yield {
-//        created === Map(badTopic.name -> None)
-//      }
-//    }
-    //todo uncomment this after https://github.com/wix-private/core-server-build-tools/pull/13043 is merged
-// =================================================================================================================================
+    "reflect errors" in {
+      val topic1 = aTopicConfig()
+      val topic2 = aTopicConfig("x" * 250)
+      for {
+        r       <- getShared
+        created <- r.kafka.adminClient.createTopics(Set(topic1, topic2))
+      } yield {
+        (created(topic1.name) must beNone) and (created(topic2.name) must beSome(beAnInstanceOf[InvalidTopicException]))
+      }
+    }
+
+    "ignore errors based on filter" in {
+      val badTopic = aTopicConfig("x" * 250)
+      for {
+        r       <- getShared
+        created <- r.kafka.adminClient.createTopics(Set(badTopic), ignoreErrors = _.isInstanceOf[InvalidTopicException])
+      } yield {
+        created === Map(badTopic.name -> None)
+      }
+    }
+
     "ignore TopicExistsException by default" in {
       val topic = aTopicConfig()
       for {
@@ -128,7 +125,7 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
                       .flatMap { _ => r.kafka.adminClient.listGroups() }
                   )
       } yield {
-        groups === Set(group)
+        (groups === Set(group))
       }
     }
 
@@ -155,8 +152,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
                                                groupOffsets    <- groupOffsetsRef.get
                                              } yield (awaitResult, groupOffsets)
       } yield {
-        (awaitResultAndGroupOffsets._1 aka "awaitResult" must not(beNone)) and
-          (awaitResultAndGroupOffsets._2 === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L)))
+        ((awaitResultAndGroupOffsets._1 aka "awaitResult" must not(beNone)) and
+          (awaitResultAndGroupOffsets._2 === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L))))
       })
     }
 
@@ -172,7 +169,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         handler                           = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
                                               {
                                                 ZIO.debug("in record handler....") *>
-                                                  r.kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *> ZIO.debug("yay!....") *>
+                                                r.kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *>
+                                                  ZIO.debug("yay!....") *>
                                                   calledGroupsStateAfterAssignment.countDown
                                               }
                                             }
@@ -183,9 +181,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
               .flatMap { _ =>
                 for {
                   recordPartition  <- ZIO.succeed(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
-                  _                <- r.producer
-                                        .produce(recordPartition)
-                                        .tap(rm => ZIO.debug(s"produced!! offset ${rm.offset}"))
+                  _                <- r.producer.produce(recordPartition)
+                    .tap(rm => ZIO.debug(s"produced!! offset ${rm.offset}"))
                   awaitResult      <- calledGroupsStateAfterAssignment.await.timeout(fromScala(10.seconds))
                   stateWhenStarted <- groupStateRef.get
                 } yield (awaitResult, stateWhenStarted)

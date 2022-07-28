@@ -49,7 +49,7 @@ object Dispatcher {
     consumerAttributes: Map[String, String] = Map.empty,
     workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]],
     startPaused: Boolean = false
-  )(implicit trace: Trace): UIO[Dispatcher[R]] =
+  ) (implicit trace: Trace): UIO[Dispatcher[R]] =
     for {
       p       <- Promise.make[Nothing, Unit]
       state   <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
@@ -148,18 +148,18 @@ object Dispatcher {
               report(RecordHandled(group, clientId, record, duration, consumerAttributes))
           }
 
-      private def shutdownWorkers(workers: Iterable[(TopicPartition, Worker)]) =
-        ZIO
-          .foreachParDiscard(workers) {
-            case (partition, worker) =>
-              report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
-                workersShutdownRef.get.flatMap(_.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
-                worker.shutdown.timed
-                  .map(_._1)
-                  .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
-          }
-          .resurrect
-          .ignore
+      private def shutdownWorkers(workers: Iterable[(TopicPartition, Worker)]) = {
+        ZIO.debug(s"shutdown workers ${workers.size} ${workers.map(_._1)}") *>
+        ZIO.foreachParDiscard(workers) {
+          case (partition, worker) =>
+            report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
+              workersShutdownRef.get.flatMap(_.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
+              worker.shutdown.timed
+                .map(_._1)
+                .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
+        }.resurrect.ignore *>
+          ZIO.debug(s"shutdown workers done ${workers.size} ${workers.map(_._1)}")
+      }
     }
 
   sealed trait DispatcherState
@@ -198,7 +198,7 @@ object Dispatcher {
       partition: TopicPartition,
       drainTimeout: Duration,
       consumerAttributes: Map[String, String]
-    )(implicit trace: Trace): URIO[R with Env, Worker] = for {
+    ) (implicit trace: Trace): URIO[R with Env, Worker] = for {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber         <-
@@ -255,7 +255,7 @@ object Dispatcher {
       clientId: ClientId,
       partition: TopicPartition,
       consumerAttributes: Map[String, String]
-    )(implicit trace: Trace): URIO[R with Env, Boolean] =
+    ) (implicit trace: Trace): URIO[R with Env, Boolean] =
       internalState.update(s => s.cleared).commit *>
         state.get.flatMap {
           case DispatcherState.Running        =>
@@ -266,14 +266,14 @@ object Dispatcher {
               case None         => isActive(internalState).delay(5.millis)
             }
           case DispatcherState.Paused(resume) =>
-            report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes)) *> resume.await.timeout(30.seconds) *>
-              isActive(internalState)
+            (report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes)) *> resume.await.timeout(30.seconds) *>
+              isActive(internalState))
           case DispatcherState.ShuttingDown   =>
             ZIO.succeed(false)
         }
   }
 
-  private def isActive[R](internalState: TRef[WorkerInternalState])(implicit trace: Trace) =
+  private def isActive[R](internalState: TRef[WorkerInternalState]) (implicit trace: Trace) =
     internalState.get.map(_.shuttingDown).commit.negate
 }
 

@@ -7,6 +7,7 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio._
 
+
 object BlockingStateResolver {
   def apply(blockingStateRef: Ref[Map[BlockingTarget, BlockingState]]): BlockingStateResolver = {
     new BlockingStateResolver {
@@ -44,7 +45,7 @@ object BlockingStateResolver {
         } yield shouldBlock
       }
 
-      override def setBlockingState[R1](command: BlockingStateCommand)(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+      override def setBlockingState[R1](command: BlockingStateCommand) (implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
         def handleIgnoreOnceRequest(topicPartition: TopicPartition) = {
           blockingStateRef
             .modify(prevState => {
@@ -93,9 +94,9 @@ object BlockingStateResolver {
 }
 
 trait BlockingStateResolver {
-  def resolve[K, V](record: ConsumerRecord[K, V])(implicit trace: Trace): URIO[GreyhoundMetrics, Boolean]
+  def resolve[K, V](record: ConsumerRecord[K, V]) (implicit trace: Trace): URIO[GreyhoundMetrics, Boolean]
 
-  def setBlockingState[R1](command: BlockingStateCommand)(implicit trace: Trace): RIO[GreyhoundMetrics, Unit]
+  def setBlockingState[R1](command: BlockingStateCommand) (implicit trace: Trace): RIO[GreyhoundMetrics, Unit]
 }
 
 sealed trait BlockingStateCommand

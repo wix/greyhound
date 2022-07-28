@@ -119,7 +119,7 @@ object Producer {
                                         )
                                       )
                                         .catchAll(e => produceCompletePromise.complete(ProducerError(e)))
-          } yield produceCompletePromise.await
+          } yield (produceCompletePromise.await)
 
         override def attributes: Map[String, String] = attrs
 
@@ -141,7 +141,7 @@ object ProducerR {
   implicit class Ops[R <: Any](producer: ProducerR[R]) {
     // R1 is a work around to an apparent bug in Has.union ¯\_(ツ)_/¯
     // https://github.com/zio/zio/issues/3558#issuecomment-776051184
-    def provide(env: ZEnvironment[R])                                             = new ProducerR[Any] {
+    def provide(env: ZEnvironment[R])                                            = new ProducerR[Any] {
       override def produceAsync(
         record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
       )(implicit trace: Trace): ZIO[Any, ProducerError, IO[ProducerError, RecordMetadata]] =
