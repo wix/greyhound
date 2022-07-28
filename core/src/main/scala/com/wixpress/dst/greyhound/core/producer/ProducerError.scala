@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.producer
 
 import org.apache.kafka.common.KafkaException
 import org.apache.kafka.common.errors._
-import zio.{IO, ZIO}
+import zio.{IO,ZIO}
 
 sealed abstract class ProducerError(cause: Throwable) extends RuntimeException(s"${cause.getClass.getName}: ${cause.getMessage}", cause)
 

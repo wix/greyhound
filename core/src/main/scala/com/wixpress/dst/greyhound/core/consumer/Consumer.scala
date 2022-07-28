@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.ClosedConsumer
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Decryptor, NoOpDecryptor, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
-import org.apache.kafka.clients.consumer.{ConsumerConfig => KafkaConsumerConfig, ConsumerRebalanceListener, KafkaConsumer, OffsetAndMetadata => KafkaOffsetAndMetadata}
+import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio.ZIO.attemptBlocking
@@ -80,7 +80,7 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(cfg: ConsumerConfig)(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, Consumer] = for {
+  def make(cfg: ConsumerConfig): RIO[GreyhoundMetrics with Scope, Consumer] = for {
     semaphore          <- Semaphore.make(1)
     consumer           <- makeConsumer(cfg, semaphore)
     metrics            <- ZIO.environment[GreyhoundMetrics]
@@ -98,15 +98,11 @@ object Consumer {
                             )
   } yield {
     new Consumer {
-      override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(
-        implicit trace: Trace
-      ): RIO[GreyhoundMetrics with R1, Unit] =
+      override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
         listener(this, offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumer(_.subscribe(topicStartsWith, lis)))
 
-      override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1])(
-        implicit trace: Trace
-      ): RIO[GreyhoundMetrics with R1, Unit] =
+      override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
         listener(this, offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
@@ -140,16 +136,16 @@ object Consumer {
 
       override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.committed(kafkaPartitions(partitions)))
-          .map(_.asScala.collect { case (tp: KafkaTopicPartition, o: KafkaOffsetAndMetadata) => (TopicPartition(tp), o.offset) }.toMap)
+          .map(_.asScala.collect { case (tp: KafkaTopicPartition, o: OffsetAndMetadata) => (TopicPartition(tp), o.offset) }.toMap)
 
       override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
-        withConsumerBlocking(_.commitSync(kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString))))
+        withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
       }
 
       override def commitOnRebalance(
         offsets: Map[TopicPartition, Offset]
       )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
-        val kOffsets = kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString))
+        val kOffsets = kafkaOffsets(offsets)
         // we can't actually call commit here, as it needs to be called from the same
         // thread, that triggered poll(), so we return the commit action as thunk
         ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
@@ -217,9 +213,9 @@ object Consumer {
         withConsumer(_.listTopics()).map { topics => topics.asScala.mapValues(_.asScala.toList.map(PartitionInfo.apply)).toMap }
 
       override def shutdown(timeout: Duration)(implicit trace: Trace): Task[Unit] =
-        withConsumer(_.close(java.time.Duration.ofMillis(timeout.toMillis)))
-          .reporting(ClosedConsumer(config.groupId, config.clientId, _))
-          .provideEnvironment(metrics)
+          withConsumer(_.close(timeout.toMillis, TimeUnit.MILLISECONDS))
+            .reporting(ClosedConsumer(config.groupId, config.clientId, _))
+            .provideEnvironment(metrics)
     }
   }
 
@@ -260,8 +256,8 @@ object Consumer {
   private def makeConsumer(
     config: ConsumerConfig,
     semaphore: Semaphore
-  )(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
-    val acquire                              = ZIO.attemptBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
+  ): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
+    val acquire                              = attemptBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     def close(consumer: KafkaConsumer[_, _]) =
       attemptBlocking(consumer.close())
         .reporting(ClosedConsumer(config.groupId, config.clientId, _))
@@ -281,8 +277,7 @@ case class ConsumerConfig(
   additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
   initialSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
   consumerAttributes: Map[String, String] = Map.empty,
-  decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA
+  decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = Map(

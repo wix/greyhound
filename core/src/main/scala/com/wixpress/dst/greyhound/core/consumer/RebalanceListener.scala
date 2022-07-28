@@ -1,16 +1,14 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.TopicPartition
-import zio.{Tag, Trace, UIO, URIO, ZEnvironment, ZIO, ZLayer}
+import zio.{Tag, Trace, UIO, URIO, ZIO, ZLayer}
 
 trait RebalanceListener[-R] { self =>
   def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R, DelayedRebalanceEffect]
   def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R, Any]
 
   def *>[R1](other: RebalanceListener[R1]) = new RebalanceListener[R with R1] {
-    override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
-      implicit trace: Trace
-    ): URIO[R with R1, DelayedRebalanceEffect] =
+    override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R with R1, DelayedRebalanceEffect] =
       for {
         ef1 <- self.onPartitionsRevoked(consumer, partitions)
         ef2 <- other.onPartitionsRevoked(consumer, partitions)
@@ -20,22 +18,11 @@ trait RebalanceListener[-R] { self =>
       self.onPartitionsAssigned(consumer, partitions) *> other.onPartitionsAssigned(consumer, partitions)
   }
 
-  def provide[R1 <: R: Tag](r: R1)(implicit trace: Trace) = new RebalanceListener[Any] {
-    override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
-      implicit trace: Trace
-    ): URIO[Any, DelayedRebalanceEffect] =
+  def provide[R1 <: R : Tag](r: R1)(implicit trace: Trace) = new RebalanceListener[Any] {
+    override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, DelayedRebalanceEffect] =
       self.onPartitionsRevoked(consumer, partitions).provide(ZLayer.succeed(r))
-    override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, Any] =
+    override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, Any]                   =
       self.onPartitionsAssigned(consumer, partitions).provide(ZLayer.succeed(r))
-  }
-
-  def provideEnvironment[R1 <: R](r: ZEnvironment[R1])(implicit trace: Trace) = new RebalanceListener[Any] {
-    override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
-      implicit trace: Trace
-    ): URIO[Any, DelayedRebalanceEffect] =
-      self.onPartitionsRevoked(consumer, partitions).provideEnvironment(r)
-    override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, Any] =
-      self.onPartitionsAssigned(consumer, partitions).provideEnvironment(r)
   }
 }
 
@@ -50,8 +37,8 @@ sealed trait DelayedRebalanceEffect { self =>
       that.run()
     }
   }
-  def lift(implicit trace: Trace)      = ZIO.succeed(this)
-  def toZIO(implicit trace: Trace)     = ZIO.attempt(run())
+  def lift (implicit trace: Trace)                             = ZIO.succeed(this)
+  def toZIO (implicit trace: Trace)                            = ZIO.attempt(run())
   def tapError(f: Throwable => Unit)   = new DelayedRebalanceEffect {
     override private[greyhound] def run(): Unit = try {
       self.run()
@@ -72,7 +59,7 @@ sealed trait DelayedRebalanceEffect { self =>
 
 object DelayedRebalanceEffect {
   def unit                                                              = DelayedRebalanceEffect(())
-  def zioUnit(implicit trace: Trace)                                    = unit.lift
+  def zioUnit        (implicit trace: Trace)                                                   = unit.lift
   private[greyhound] def apply(effect: => Unit): DelayedRebalanceEffect = new DelayedRebalanceEffect {
     override private[greyhound] def run(): Unit = effect
   }
@@ -85,11 +72,9 @@ object RebalanceListener {
     onRevoked: (Consumer, Set[TopicPartition]) => URIO[R, Any] = (c: Consumer, tps: Set[TopicPartition]) => ZIO.unit
   ): RebalanceListener[R] =
     new RebalanceListener[R] {
-      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
-        implicit trace: Trace
-      ): URIO[R, DelayedRebalanceEffect] =
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R, DelayedRebalanceEffect] =
         onRevoked(consumer, partitions).as(DelayedRebalanceEffect.unit)
-      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R, Any] =
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R, Any]                   =
         onAssigned(consumer, partitions)
     }
 
@@ -98,12 +83,8 @@ object RebalanceListener {
     onRevoked: Set[TopicPartition] => UIO[Any] = _ => ZIO.unit
   ): RebalanceListener[Any] =
     new RebalanceListener[Any] {
-      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
-        implicit trace: Trace
-      ): UIO[DelayedRebalanceEffect] =
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[DelayedRebalanceEffect] =
         onRevoked(partitions).as(DelayedRebalanceEffect.unit)
-      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] = onAssigned(
-        partitions
-      )
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any]                   = onAssigned(partitions)
     }
 }

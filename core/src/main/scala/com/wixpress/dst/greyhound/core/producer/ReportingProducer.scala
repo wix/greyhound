@@ -11,7 +11,8 @@ import GreyhoundMetrics._
 import scala.concurrent.duration.FiniteDuration
 import zio.Clock.currentTime
 
-case class ReportingProducer[-R](internal: ProducerR[R], extraAttributes: Map[String, String]) extends ProducerR[GreyhoundMetrics with R] {
+case class ReportingProducer[-R](internal: ProducerR[R], extraAttributes: Map[String, String])
+    extends ProducerR[GreyhoundMetrics with R] {
 
   override def produceAsync(
     record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
@@ -41,14 +42,12 @@ object ReportingProducer {
   )(
     record: ProducerRecord[Chunk[Byte], Chunk[Byte]],
     attributes: Map[String, String] = Map.empty
-  )(implicit trace: Trace): ZIO[GreyhoundMetrics with R, ProducerError, IO[ProducerError, RecordMetadata]] = {
+  ) (implicit trace: Trace): ZIO[GreyhoundMetrics with R, ProducerError, IO[ProducerError, RecordMetadata]] = {
     for {
       started   <- currentTime(TimeUnit.MILLISECONDS)
       env       <- ZIO.environment[GreyhoundMetrics]
       _         <- GreyhoundMetrics.report(ProducingRecord(record, attributes))
-      onError   <- ZIO.memoize((error: ProducerError) =>
-                     GreyhoundMetrics.report(ProduceFailed(error, record.topic, attributes)).provideEnvironment(env)
-                   )
+      onError   <- ZIO.memoize((error: ProducerError) => GreyhoundMetrics.report(ProduceFailed(error, record.topic, attributes)).provideEnvironment(env))
       onSuccess <-
         ZIO.memoize((metadata: RecordMetadata) =>
           currentTime(TimeUnit.MILLISECONDS)
