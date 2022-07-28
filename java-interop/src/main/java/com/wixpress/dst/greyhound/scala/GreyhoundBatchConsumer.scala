@@ -52,7 +52,7 @@ case class GreyhoundBatchConsumer[K >: AnyRef, V](
     runtime: zio.Runtime[GreyhoundRuntime.Env]
   ): CoreBatchRecordHandler[Any with BatchConsumer.Env, Any, Chunk[Byte], Chunk[Byte]] = {
     val baseHandler: CoreBatchRecordHandler[Any, Throwable, K, V] = CoreBatchRecordHandler { records: CoreConsumerRecordBatch[K, V] =>
-      ZIO.effectAsync[Any, HandleError[Throwable], Unit] { cb =>
+      ZIO.async[Any, HandleError[Throwable], Unit] { cb =>
         handler
           .handle(records, executor)
           .handle[Unit] { (_, error) =>
