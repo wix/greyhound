@@ -7,8 +7,8 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.topi
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.RetryWith
 import com.wixpress.dst.greyhound.core.testkit.BaseTest
 import com.wixpress.dst.greyhound.core.testkit.Maker.abytesRecord
-
-import zio.test.TestEnvironment
+import zio.duration._
+import zio.test.environment.TestEnvironment
 import zio._
 
 class NonBlockingRetryHelperTest extends BaseTest[TestEnvironment] {
@@ -53,8 +53,8 @@ class NonBlockingRetryHelperTest extends BaseTest[TestEnvironment] {
     }
   }
 
-  override def env  = testEnvironment
+  override def env: UManaged[TestEnvironment] = test.environment.testEnvironment.build
 
   def makeString(value: Chunk[Byte]) =
-    ZIO.succeed(new String(value.toArray, StandardCharsets.US_ASCII))
+    IO(new String(value.toArray, StandardCharsets.US_ASCII))
 }
