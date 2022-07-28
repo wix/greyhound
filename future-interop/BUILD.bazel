@@ -14,7 +14,7 @@ scala_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
-        "@dev_zio_zio2_2_12",
+        "@dev_zio_zio_2_12",
     ],
 )
 
