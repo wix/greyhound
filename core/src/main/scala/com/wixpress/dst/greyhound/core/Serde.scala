@@ -4,7 +4,7 @@ import java.time.Instant
 
 import org.apache.kafka.common.serialization.Serdes.{IntegerSerde, LongSerde, StringSerde}
 import org.apache.kafka.common.serialization.{Serde => KafkaSerde}
-import zio.Duration
+import zio.duration.Duration
 import zio.{Chunk, Task}
 
 trait Serde[A] extends Serializer[A] with Deserializer[A] {
