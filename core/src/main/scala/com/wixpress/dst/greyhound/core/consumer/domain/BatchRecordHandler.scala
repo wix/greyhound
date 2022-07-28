@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer.domain
 
 import com.wixpress.dst.greyhound.core.{Deserializer, Partition}
-import zio.{Cause, Chunk, Task, ZIO}
+import zio.{Cause, Chunk, Task, Trace, ZIO}
 
 case class ConsumerRecordBatch[K, V](topic: String, partition: Partition, records: Seq[ConsumerRecord[K, V]]) {
   def size: Int         = records.size
@@ -15,32 +15,32 @@ trait BatchRecordHandler[-R, +E, K, V] { self =>
   /**
    * Invoke another action after this handler finishes.
    */
-  def andThen[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any]): BatchRecordHandler[R1, E1, K, V] =
+  def andThen[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any])(implicit trace: Trace): BatchRecordHandler[R1, E1, K, V] =
     (records: ConsumerRecordBatch[K, V]) => self.handle(records) *> f(records)
 
   /**
    * Invoke another action before this handler
    */
-  def <*[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any]): BatchRecordHandler[R1, E1, K, V] = {
+  def <*[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any])(implicit trace: Trace): BatchRecordHandler[R1, E1, K, V] = {
     (records: ConsumerRecordBatch[K, V]) => f(records) *> self.handle(records)
   }
 
   /**
    * returns a handler for which errors will be passed to the given function (for logging and such)
    */
-  def tapError[R1 <: R](f: (HandleError[E], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any]): BatchRecordHandler[R1, E, K, V] =
+  def tapError[R1 <: R](f: (HandleError[E], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any])(implicit trace: Trace): BatchRecordHandler[R1, E, K, V] =
     (records: ConsumerRecordBatch[K, V]) => self.handle(records).tapError(e => f(e, records))
 
   /**
    * returns a handler for which errors/defects will be passed to the given function (for logging and such)
    */
-  def tapCause[R1 <: R](f: (Cause[HandleError[E]], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any]): BatchRecordHandler[R1, E, K, V] =
-    (records: ConsumerRecordBatch[K, V]) => self.handle(records).tapCause(e => f(e, records))
+  def tapCause[R1 <: R](f: (Cause[HandleError[E]], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any])(implicit trace: Trace): BatchRecordHandler[R1, E, K, V] =
+    (records: ConsumerRecordBatch[K, V]) => self.handle(records).tapErrorCause(e => f(e, records))
 
   /**
    * Return a handler which transforms the error type.
    */
-  def mapError[E2](f: E => E2): BatchRecordHandler[R, E2, K, V] =
+  def mapError[E2](f: E => E2)(implicit trace: Trace): BatchRecordHandler[R, E2, K, V] =
     (records: ConsumerRecordBatch[K, V]) => self.handle(records).mapError(e => e.mapError(f))
 
   /**
@@ -48,7 +48,7 @@ trait BatchRecordHandler[-R, +E, K, V] { self =>
    */
   def contramapM[R1 <: R, E1 >: E, K2, V2](
     f: Seq[ConsumerRecord[K2, V2]] => ZIO[R1, HandleError[E1], Seq[ConsumerRecord[K, V]]]
-  ): BatchRecordHandler[R1, E1, K2, V2] =
+  )(implicit trace: Trace): BatchRecordHandler[R1, E1, K2, V2] =
     (records: ConsumerRecordBatch[K2, V2]) =>
       f(records.records).flatMap(rs => self.handle(ConsumerRecordBatch(records.topic, records.partition, rs)))
 
@@ -58,19 +58,19 @@ trait BatchRecordHandler[-R, +E, K, V] { self =>
   def withDeserializers(
     keyDeserializer: Deserializer[K],
     valueDeserializer: Deserializer[V]
-  ): BatchRecordHandler[R, Either[SerializationError, E], Chunk[Byte], Chunk[Byte]] =
+  )(implicit trace: Trace): BatchRecordHandler[R, Either[SerializationError, E], Chunk[Byte], Chunk[Byte]] =
     mapError(Right(_)).contramapM { records =>
       ZIO
         .foreach(records) { record =>
           record.bimapM(
             key => keyDeserializer.deserialize(record.topic, record.headers, key),
-            value => Option(value).fold(Task[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
+            value => Option(value).fold(ZIO.attempt[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
           )
         }
         .mapError(e => HandleError(Left(SerializationError(e))))
     }
 
-  def withDecryptor[E1 >: E, R1 <: R](dec: Decryptor[R1, E1, K, V]) = {
+  def withDecryptor[E1 >: E, R1 <: R](dec: Decryptor[R1, E1, K, V])(implicit trace: Trace) = {
     new BatchRecordHandler[R1, E1, K, V] {
       override def handle(records: ConsumerRecordBatch[K, V]) =
         ZIO

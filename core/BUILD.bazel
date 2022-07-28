@@ -22,7 +22,7 @@ scala_library(
     visibility = ["//:__subpackages__"],
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
-        "@dev_zio_zio_2_12",
+        "@dev_zio_zio2_2_12",
         "@org_apache_kafka_kafka_clients",
         "@org_slf4j_slf4j_api",
     ],
@@ -77,7 +77,7 @@ scala_library(
     visibility = ["//:__subpackages__"],
     deps = [
         "//core:greyhound-core",
-        "@dev_zio_zio_2_12",
+        "@dev_zio_zio2_2_12",
         "@org_apache_curator_curator_test",
         "@org_apache_kafka_kafka_2_12",
         "@org_apache_kafka_kafka_clients",
