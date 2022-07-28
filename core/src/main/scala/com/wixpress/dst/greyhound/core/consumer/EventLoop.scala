@@ -5,21 +5,21 @@ import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopState.{Paused, Running, ShuttingDown}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{report, trace}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import zio._
-import zio.Clock
+import zio.blocking.Blocking
+import zio.clock.Clock
+import zio.duration._
 
 trait EventLoop[-R] extends Resource[R] {
   self =>
   def state: UIO[EventLoopExposedState]
 
-  def waitForCurrentRecordsCompletion: URIO[Any, Unit]
+  def waitForCurrentRecordsCompletion: URIO[Clock, Unit]
 
   def rebalanceListener: RebalanceListener[Any]
-
-  def stop: URIO[GreyhoundMetrics, Any]
 }
 
 object EventLoop {
@@ -34,7 +34,7 @@ object EventLoop {
     config: EventLoopConfig = EventLoopConfig.Default,
     consumerAttributes: Map[String, String] = Map.empty,
     workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]]
-  )(implicit trace: Trace, tag: Tag[Env]): RIO[R with Env, EventLoop[GreyhoundMetrics]] = {
+  ): RManaged[R with Env, EventLoop[GreyhoundMetrics with Blocking]] = {
     val start = for {
       _                   <- report(StartingEventLoop(clientId, group, consumerAttributes))
       offsets             <- Offsets.make
@@ -62,24 +62,30 @@ object EventLoop {
                                .repeatWhile(_ == true)
                                .forkDaemon
       _                   <- partitionsAssigned.await
-      env                 <- ZIO.environment[Env]
-    } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provide(env.get))
+      env                 <- ZIO.environment[R with Env]
+    } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provide(env))
 
     start
+      .toManaged {
+        case (dispatcher, fiber, offsets, _, running, _) =>
+          for {
+            _       <- report(StoppingEventLoop(clientId, group, consumerAttributes))
+            _       <- running.set(ShuttingDown)
+            drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
+            _       <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
+            _       <- commitOffsets(consumer, offsets)
+          } yield ()
+      }
       .map {
-        case (dispatcher, fiber, offsets, positionsRef, running, listener) =>
-          new EventLoop[GreyhoundMetrics] {
+        case (dispatcher, fiber, _, positionsRef, running, listener) =>
+          new EventLoop[GreyhoundMetrics with Blocking] {
+            override def pause: URIO[GreyhoundMetrics with Blocking, Unit] =
+              report(PausingEventLoop(clientId, group, consumerAttributes)) *> running.set(Paused) *> dispatcher.pause
 
-            override def stop: URIO[GreyhoundMetrics, Any] =
-              stopLoop(group, consumer, clientId, consumerAttributes, config, running, fiber, offsets, dispatcher)
+            override def resume: URIO[GreyhoundMetrics with Blocking, Unit] =
+              report(ResumingEventLoop(clientId, group, consumerAttributes)) *> running.set(Running) *> dispatcher.resume
 
-            override def pause(implicit trace: Trace): URIO[GreyhoundMetrics, Unit] =
-              (report(PausingEventLoop(clientId, group, consumerAttributes)) *> running.set(Paused) *> dispatcher.pause).unit
-
-            override def resume(implicit trace: Trace): URIO[GreyhoundMetrics, Unit] =
-              (report(ResumingEventLoop(clientId, group, consumerAttributes)) *> running.set(Running) *> dispatcher.resume).unit
-
-            override def isAlive(implicit trace: Trace): UIO[Boolean] = fiber.poll.map {
+            override def isAlive: UIO[Boolean] = fiber.poll.map {
               case Some(Exit.Failure(_)) => false
               case _                     => true
             }
@@ -89,40 +95,21 @@ object EventLoop {
                 case (positions, dispatcherState) =>
                   EventLoopExposedState(positions, dispatcherState)
               }
+              .provideLayer(Clock.live)
 
             override def rebalanceListener: RebalanceListener[Any] = listener
 
-            override def waitForCurrentRecordsCompletion: URIO[Any, Unit] = dispatcher.waitForCurrentRecordsCompletion
+            override def waitForCurrentRecordsCompletion: URIO[Clock, Unit] = dispatcher.waitForCurrentRecordsCompletion
           }
       }
   }
-
-  private def stopLoop[R](
-    group: Group,
-    consumer: Consumer,
-    clientId: ClientId,
-    consumerAttributes: Map[String, String],
-    config: EventLoopConfig,
-    running: Ref[EventLoopState],
-    fiber: Fiber.Runtime[Nothing, Boolean],
-    offsets: Offsets,
-    dispatcher: Dispatcher[R]
-  ) =
-    for {
-      _ <- ZIO.debug("stopping event loop !@#")
-      _       <- report(StoppingEventLoop(clientId, group, consumerAttributes))
-      _       <- running.set(ShuttingDown)
-      drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
-      _       <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
-      _       <- commitOffsets(consumer, offsets)
-    } yield ()
 
   private def updatePositions(
     records: Consumer.Records,
     positionsRef: Ref[Map[TopicPartition, Offset]],
     consumer: Consumer,
     clientId: ClientId
-  )(implicit trace: Trace) =
+  ) =
     ZIO
       .foreach(records.map(_.topicPartition))(tp => consumer.position(tp).flatMap(offset => positionsRef.update(_ + (tp -> offset))))
       .catchAll(t => report(FailedToUpdatePositions(t, clientId, consumer.config.consumerAttributes)))
@@ -145,10 +132,9 @@ object EventLoop {
           records <- pollAndHandle(consumer, dispatcher, paused, config)
           _       <- updatePositions(records, positionsRef, consumer, clientId)
           _       <- commitOffsets(consumer, offsets)
-          _       <- ZIO.when(records.isEmpty)(ZIO.sleep(50.millis))
         } yield true
 
-      case ShuttingDown => ZIO.succeed(false)
+      case ShuttingDown => UIO(false)
       case Paused       => ZIO.sleep(100.millis).as(true)
     }
 
@@ -163,11 +149,11 @@ object EventLoop {
     offsets: Offsets
   ) = {
     config.rebalanceListener *>
-      new RebalanceListener[GreyhoundMetrics] {
+      new RebalanceListener[ZEnv with GreyhoundMetrics] {
         override def onPartitionsRevoked(
           consumer: Consumer,
           partitions: Set[TopicPartition]
-        )(implicit trace: Trace): URIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
+        ): URIO[ZEnv with GreyhoundMetrics, DelayedRebalanceEffect] = {
           pausedPartitionsRef.set(Set.empty) *>
             dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
               ZIO.when(drained.isEmpty)(
@@ -176,7 +162,7 @@ object EventLoop {
             } *> commitOffsetsOnRebalance(consumer0, offsets)
         }
 
-        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
+        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): UIO[Any] =
           partitionsAssigned.succeed(())
       }
   }
@@ -196,7 +182,7 @@ object EventLoop {
                             )
       _                  <- consumer
                               .resume(partitionsToResume)
-                              .tapError(e => ZIO.succeed(e.printStackTrace()))
+                              .tapError(e => UIO(e.printStackTrace()))
                               .ignore
       _                  <- pausedRef.update(_ -- partitionsToResume)
     } yield ()
@@ -208,7 +194,7 @@ object EventLoop {
     config: EventLoopConfig
   ) =
     for {
-      records      <- consumer.poll(config.pollTimeout).catchAll(_ => ZIO.succeed(Nil))
+      records      <- consumer.poll(config.pollTimeout).catchAll(_ => UIO(Nil))
       paused       <- pausedRef.get
       pausedTopics <- ZIO.foldLeft(records)(paused) { (acc, record) =>
                         val partition = record.topicPartition
@@ -225,26 +211,18 @@ object EventLoop {
       _            <- pausedRef.update(_ => pausedTopics)
     } yield records
 
-  private def commitOffsets(consumer: Consumer, offsets: Offsets): URIO[GreyhoundMetrics, Unit] =
+  private def commitOffsets(consumer: Consumer, offsets: Offsets): URIO[Blocking with GreyhoundMetrics, Unit] =
     offsets.committable.flatMap { committable => consumer.commit(committable).catchAll { _ => offsets.update(committable) } }
 
   private def commitOffsetsOnRebalance(
     consumer: Consumer,
     offsets: Offsets
-  ): URIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
+  ): URIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] = {
     for {
       committable <- offsets.committable
       tle         <- consumer.commitOnRebalance(committable).catchAll { _ => offsets.update(committable) *> DelayedRebalanceEffect.zioUnit }
       runtime     <- ZIO.runtime[Any]
-    } yield tle.catchAll { _ =>
-      zio.Unsafe.unsafe { implicit s =>
-        runtime.unsafe
-          .run(
-            offsets.update(committable)
-          )
-          .getOrThrowFiberFailure()
-      }
-    }
+    } yield tle.catchAll { _ => runtime.unsafeRunTask(offsets.update(committable)) }
   }
 
 }
