@@ -14,8 +14,8 @@ scala_library(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/retry",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
-        "@dev_zio2_izumi_reflect_2_12",
-        "@dev_zio_zio2_2_12",
+        "@dev_zio_izumi_reflect_2_12",
+        "@dev_zio_zio_2_12",
         "@org_apache_kafka_kafka_clients",
     ],
 )
