@@ -15,8 +15,8 @@ specs2_unit_test(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/zioutils",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
-        "@dev_zio_izumi_reflect_2_12",
-        "@dev_zio_zio_2_12",
-        "@dev_zio_zio_test_2_12",
+        "@dev_zio2_izumi_reflect_2_12",
+        "@dev_zio_zio2_2_12",
+        "@dev_zio_zio2_test_2_12",
     ],
 )
