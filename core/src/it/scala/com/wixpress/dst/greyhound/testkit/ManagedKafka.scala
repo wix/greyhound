@@ -1,65 +1,61 @@
 package com.wixpress.dst.greyhound.testkit
 
+import java.util.Properties
 import com.wixpress.dst.greyhound.core.TopicConfig
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{MetricResult, _}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.MetricResult
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
 import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
-import zio.ZIO.attemptBlocking
-import zio.{RIO, Scope, Trace, UIO, ZIO}
+import zio.blocking.{effectBlocking, Blocking}
+import zio.{RIO, RManaged, Task, ZIO}
 
-import java.util.Properties
 import scala.reflect.io.Directory
 import scala.util.Random
 
 trait ManagedKafka {
-  def shutdown: RIO[Any, Unit]
-
   def bootstrapServers: String
 
-  def createTopic(config: TopicConfig)(implicit trace: Trace): RIO[Any, Unit]
+  def createTopic(config: TopicConfig): RIO[Blocking, Unit]
 
-  def createTopics(configs: TopicConfig*)(implicit trace: Trace): RIO[Any, Unit]
+  def createTopics(configs: TopicConfig*): RIO[Blocking, Unit]
 
   def adminClient: AdminClient
 }
 
 object ManagedKafka {
 
-  def make(config: ManagedKafkaConfig): RIO[GreyhoundMetrics with Scope, ManagedKafka] = for {
+  def make(config: ManagedKafkaConfig): RManaged[Blocking with GreyhoundMetrics, ManagedKafka] = for {
     _       <- embeddedZooKeeper(config.zooKeeperPort)
-    metrics <- ZIO.environment[GreyhoundMetrics]
+    metrics <- ZIO.environment[GreyhoundMetrics].toManaged_
     logDir  <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
-    kafka       <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
+    _       <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
     admin   <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
 
     override val bootstrapServers: String = s"localhost:${config.kafkaPort}"
 
-    override def createTopic(config: TopicConfig)(implicit trace: Trace): RIO[Any, Unit] =
-      adminClient.createTopics(Set(config)).unit.provideEnvironment(metrics)
+    override def createTopic(config: TopicConfig): RIO[Blocking, Unit] =
+      adminClient.createTopics(Set(config)).unit.provideSome(metrics ++ _)
 
-    override def createTopics(configs: TopicConfig*)(implicit trace: Trace): RIO[Any, Unit] =
-      adminClient.createTopics(configs.toSet).unit.provideEnvironment(metrics)
+    override def createTopics(configs: TopicConfig*): RIO[Blocking, Unit] =
+      adminClient.createTopics(configs.toSet).unit.provideSome(metrics ++ _)
 
     override def adminClient: AdminClient = admin
-
-    override def shutdown: RIO[Any, Unit] =
-      ZIO.attempt(kafka.shutdown()) zipPar admin.shutdown
   }
 
   private def tempDirectory(path: String) = {
-    val acquire = GreyhoundMetrics.report(CreatingTempDirectory(path)) *> attemptBlocking(Directory(path))
-    ZIO.acquireRelease(acquire){ dir => GreyhoundMetrics.report(DeletingTempDirectory(path)) *> attemptBlocking(dir.deleteRecursively()).ignore }
+    val acquire = GreyhoundMetrics.report(CreatingTempDirectory(path)) *> effectBlocking(Directory(path))
+    acquire.toManaged { dir => GreyhoundMetrics.report(DeletingTempDirectory(path)) *> effectBlocking(dir.deleteRecursively()).ignore }
   }
 
   private def embeddedZooKeeper(port: Int) = {
-    val acquire = GreyhoundMetrics.report(StartingZooKeeper(port)) *> attemptBlocking(new TestingServer(port))
-    ZIO.acquireRelease(acquire) { server =>
+    val acquire = GreyhoundMetrics.report(StartingZooKeeper(port)) *> effectBlocking(new TestingServer(port))
+    acquire.toManaged { server =>
       GreyhoundMetrics.report(StoppingZooKeeper(port)) *>
-        attemptBlocking(server.stop())
+        effectBlocking(server.stop())
           .reporting(StoppedZooKeeper(port, _))
           .ignore
     }
@@ -67,14 +63,14 @@ object ManagedKafka {
 
   private def embeddedKafka(config: KafkaServerConfig) = {
     val acquire = for {
-      _      <- ZIO.attempt(Directory(config.logDir).deleteRecursively())
+      _      <- Task(Directory(config.logDir).deleteRecursively())
       _      <- GreyhoundMetrics.report(StartingKafka(config.port))
-      server <- attemptBlocking(new KafkaServer(config.toKafkaConfig))
-      _      <- attemptBlocking(server.startup())
+      server <- effectBlocking(new KafkaServer(config.toKafkaConfig))
+      _      <- effectBlocking(server.startup())
     } yield server
-    ZIO.acquireRelease(acquire) { server =>
+    acquire.toManaged { server =>
       GreyhoundMetrics.report(StoppingKafka(config.port)) *>
-        attemptBlocking(server.shutdown())
+        effectBlocking(server.shutdown())
           .reporting(StoppedKafka(config.port, _))
           .ignore
     }
