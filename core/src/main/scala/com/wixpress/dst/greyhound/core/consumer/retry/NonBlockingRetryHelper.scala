@@ -15,6 +15,7 @@ import zio.Clock
 import zio.Duration
 import zio.{Chunk, UIO, URIO, _}
 
+
 import scala.util.Try
 
 trait NonBlockingRetryHelper {
@@ -41,18 +42,16 @@ object NonBlockingRetryHelper {
     override def retryTopicsFor(topic: Topic): Set[Topic] =
       policy(topic).intervals.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt")
 
-    override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
-      implicit trace: Trace
-    ): UIO[Option[RetryAttempt]] = {
+    override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription) (implicit trace: Trace): UIO[Option[RetryAttempt]] = {
       (for {
         submitted     <- headers.get(RetryHeader.Submitted, instantDeserializer)
         backoff       <- headers.get(RetryHeader.Backoff, durationDeserializer)
         originalTopic <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
       } yield for {
-        ta                                  <- topicAttempt(subscription, topic, originalTopic)
+        ta <- topicAttempt(subscription, topic, originalTopic)
         TopicAttempt(originalTopic, attempt) = ta
-        s                                   <- submitted
-        b                                   <- backoff
+        s                                    <- submitted
+        b                                    <- backoff
       } yield RetryAttempt(originalTopic, attempt, s, b))
         .catchAll(_ => ZIO.none)
     }
@@ -156,7 +155,7 @@ object RetryHeader {
 
 case class RetryAttempt(originalTopic: Topic, attempt: RetryAttemptNumber, submittedAt: Instant, backoff: Duration) {
 
-  def sleep(implicit trace: Trace): URIO[Any, Unit] =
+  def sleep (implicit trace: Trace): URIO[Any, Unit] =
     RetryUtil.sleep(submittedAt, backoff)
 }
 
@@ -174,6 +173,7 @@ private case class TopicAttempt(originalTopic: Topic, attempt: Int)
 
 object RetryAttempt {
   type RetryAttemptNumber = Int
+  private implicit val trace = zio.Trace.empty
   val currentTime = Clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
 }
 

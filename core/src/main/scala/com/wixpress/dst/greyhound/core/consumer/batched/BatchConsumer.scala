@@ -1,11 +1,13 @@
 package com.wixpress.dst.greyhound.core.consumer.batched
 
 import java.time.Duration
+
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.{AssignedPartitions, Env}
 import com.wixpress.dst.greyhound.core.consumer.{EventLoopExposedState => _, _}
 import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, ConsumerRecordBatch, ConsumerSubscription, Decryptor, NoOpDecryptor}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Metadata, Offset, OffsetAndMetadata, TopicPartition}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
+
 import zio.{Chunk, Promise, RIO, Ref, UIO, URIO}
 
 import scala.reflect.ClassTag
@@ -15,7 +17,7 @@ import zio._
 case class EffectiveConfig(consumerConfig: ConsumerConfig, batchConsumerConfig: BatchConsumerConfig)
 
 trait BatchConsumer[-R] extends Resource[R] with RecordConsumerProperties[BatchConsumerExposedState] {
-  def shutdown(timeout: Duration)(implicit trace: Trace): Task[Unit]
+  def shutdown(timeout: Duration) (implicit trace: Trace): Task[Unit]
 
   def resubscribe[R1](
     subscription: ConsumerSubscription,
@@ -24,9 +26,7 @@ trait BatchConsumer[-R] extends Resource[R] with RecordConsumerProperties[BatchC
 
   def seek[R1](toOffsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[Env with R1, Unit]
 
-  def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long])(
-    implicit trace: Trace
-  ): RIO[Env with R1, Map[TopicPartition, Offset]]
+  def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long])(implicit trace: Trace): RIO[Env with R1, Map[TopicPartition, Offset]]
 
   def effectiveConfig(implicit trace: Trace): EffectiveConfig
 
@@ -71,8 +71,7 @@ object BatchConsumer {
         BatchConsumerExposedState(evs, clientId, partitions)
     }
 
-    override def topology(implicit trace: Trace): UIO[RecordConsumerTopology] =
-      consumerSubscriptionRef.get.map(RecordConsumerTopology(group, _))
+    override def topology(implicit trace: Trace): UIO[RecordConsumerTopology] = consumerSubscriptionRef.get.map(RecordConsumerTopology(group, _))
 
     override def resubscribe[R1](
       subscription: ConsumerSubscription,
@@ -81,7 +80,7 @@ object BatchConsumer {
       for {
         assigned          <- Ref.make[AssignedPartitions](Set.empty)
         promise           <- Promise.make[Nothing, AssignedPartitions]
-        rebalanceListener  = eventLoop.rebalanceListener *> listener *>
+        rebalanceListener = eventLoop.rebalanceListener *> listener *>
                                new RebalanceListener[R1] {
                                  override def onPartitionsRevoked(
                                    consumer: Consumer,
@@ -89,9 +88,7 @@ object BatchConsumer {
                                  )(implicit trace: Trace): URIO[R1, DelayedRebalanceEffect] =
                                    DelayedRebalanceEffect.zioUnit
 
-                                 override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
-                                   implicit trace: Trace
-                                 ): URIO[R1, Any] =
+                                 override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R1, Any] =
                                    for {
                                      allAssigned <- assigned.updateAndGet(_ => partitions)
                                      _           <- consumerSubscriptionRef.set(subscription)
@@ -116,9 +113,7 @@ object BatchConsumer {
     override def seek[R1](toOffsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[Env with R1, Unit] =
       eventLoop.requestSeek(toOffsets)
 
-    override def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long])(
-      implicit trace: Trace
-    ): RIO[Env with R1, Map[TopicPartition, Offset]] =
+    override def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long])(implicit trace: Trace): RIO[Env with R1, Map[TopicPartition, Offset]] =
       consumer.offsetsForTimes(topicPartitionsOnTimestamp)
 
     override def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Env, Map[TopicPartition, Offset]] =
@@ -144,16 +139,13 @@ object BatchConsumer {
       assignmentsListener *> config.userProvidedListener,
       config.initialOffsetsSeek,
       config.consumerAttributes,
-      config.decryptor,
-      config.commitMetadataString
+      config.decryptor
     )
   }
 
   private def trackAssignments(assignments: Ref[Set[TopicPartition]]) = {
     new RebalanceListener[Any] {
-      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
-        implicit trace: Trace
-      ): URIO[Any, DelayedRebalanceEffect] =
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, DelayedRebalanceEffect] =
         assignments.update(_ -- partitions).as(DelayedRebalanceEffect.unit)
 
       override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, Any] =
@@ -179,8 +171,7 @@ case class BatchConsumerConfig(
   resubscribeTimeout: Duration = 30.seconds,
   initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
   consumerAttributes: Map[String, String] = Map.empty,
-  decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA
+  decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor
 )
 
 object BatchConsumerConfig {

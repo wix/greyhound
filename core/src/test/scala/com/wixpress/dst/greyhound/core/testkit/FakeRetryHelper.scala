@@ -21,9 +21,7 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
   override def retryTopicsFor(originalTopic: Topic): Set[Topic] =
     Set(s"$originalTopic-retry")
 
-  override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
-    implicit trace: Trace
-  ): UIO[Option[RetryAttempt]] =
+  override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription) (implicit trace: Trace): UIO[Option[RetryAttempt]] =
     (for {
       attempt     <- headers.get(Header.Attempt, IntSerde)
       submittedAt <- headers.get(Header.SubmittedAt, InstantSerde)
@@ -53,9 +51,7 @@ trait FakeNonBlockingRetryHelper extends NonBlockingRetryHelper {
       b <- backoff
     } yield RetryAttempt(topic, a, s, b)
 
-  private def recordFrom(now: Instant, retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]])(
-    implicit trace: Trace
-  ) = {
+  private def recordFrom(now: Instant, retryAttempt: Option[RetryAttempt], record: ConsumerRecord[Chunk[Byte], Chunk[Byte]])(implicit trace: Trace) = {
     val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
     for {
       retryAttempt <- IntSerde.serialize(topic, nextRetryAttempt)

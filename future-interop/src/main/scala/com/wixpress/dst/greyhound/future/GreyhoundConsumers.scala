@@ -32,8 +32,7 @@ case class GreyhoundConsumersBuilder(
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
-      consumers <- ZIO
-                     .foreach(handlers.toSeq) {
+      consumers <- ZIO.foreach(handlers.toSeq) {
                        case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
                          RecordConsumer.make(
                            handler = handler,
@@ -47,8 +46,7 @@ case class GreyhoundConsumersBuilder(
                              )
                            )
                          )
-                     }
-                     .provideSomeEnvironment[GreyhoundMetrics](_.add(zio.Scope.global))
+                     }.provideSomeEnvironment[GreyhoundMetrics](_.add(zio.Scope.global))
     } yield new GreyhoundConsumers {
       override def pause: Future[Unit] =
         config.runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.pause).unit)

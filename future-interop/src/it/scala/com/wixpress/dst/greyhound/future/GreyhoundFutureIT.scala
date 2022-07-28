@@ -17,7 +17,7 @@ import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import org.specs2.concurrent.ExecutionEnv
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.{AfterAll, BeforeAll, Scope}
-import zio.{Promise => ZPromise, Task, Trace, UIO, URIO, ZIO}
+import zio.{Task, Trace, UIO, URIO, ZIO, Promise => ZPromise}
 
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -189,7 +189,7 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
         .withMetricsReporter(new GreyhoundMetrics {
           override def report(metric: GreyhoundMetric)(implicit trace: Trace): UIO[Unit] =
             ZIO.succeed(metrics += metric)
-        })
+        } )
         .build
       val config  = GreyhoundConfig(environment.kafka.bootstrapServers, runtime)
       val builder = GreyhoundConsumersBuilder(config)
@@ -361,15 +361,14 @@ trait Environment {
 object Environment {
   def make: URIO[GreyhoundRuntime.Env, Environment] = for {
     closeSignal <- ZPromise.make[Nothing, Unit]
-    started     <- ZPromise.make[Nothing, ManagedKafka]
-    fiber       <- ManagedKafka
-                     .make(ManagedKafkaConfig.Default)
-                     .disconnect
-                     .timeoutFail(new TimeoutException)(zio.Duration(15, TimeUnit.SECONDS))
-                     .tap { kafka => started.succeed(kafka) *> closeSignal.await }
-                     .provideSomeEnvironment[GreyhoundRuntime.Env](_.add(zio.Scope.global))
-                     .forkDaemon
-    kafka1      <- started.await
+    started <- ZPromise.make[Nothing, ManagedKafka]
+    fiber <- ManagedKafka.make(ManagedKafkaConfig.Default)
+      .disconnect
+      .timeoutFail(new TimeoutException)(zio.Duration(15, TimeUnit.SECONDS))
+      .tap { kafka => started.succeed(kafka) *> closeSignal.await }
+      .provideSomeEnvironment[GreyhoundRuntime.Env] (_.add(zio.Scope.global))
+      .forkDaemon
+    kafka1 <- started.await
   } yield new Environment {
     override def kafka: ManagedKafka = kafka1
 

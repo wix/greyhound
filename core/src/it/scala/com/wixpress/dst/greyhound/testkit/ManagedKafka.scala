@@ -32,7 +32,7 @@ object ManagedKafka {
     _       <- embeddedZooKeeper(config.zooKeeperPort)
     metrics <- ZIO.environment[GreyhoundMetrics]
     logDir  <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
-    kafka   <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
+    kafka       <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
     admin   <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
 
@@ -52,9 +52,7 @@ object ManagedKafka {
 
   private def tempDirectory(path: String) = {
     val acquire = GreyhoundMetrics.report(CreatingTempDirectory(path)) *> attemptBlocking(Directory(path))
-    ZIO.acquireRelease(acquire) { dir =>
-      GreyhoundMetrics.report(DeletingTempDirectory(path)) *> attemptBlocking(dir.deleteRecursively()).ignore
-    }
+    ZIO.acquireRelease(acquire){ dir => GreyhoundMetrics.report(DeletingTempDirectory(path)) *> attemptBlocking(dir.deleteRecursively()).ignore }
   }
 
   private def embeddedZooKeeper(port: Int) = {
@@ -110,7 +108,7 @@ case class KafkaServerConfig(port: Int, zooKeeperPort: Int, brokerId: Int, logDi
     // force `listeners` to localhost, otherwise  Kaka will try and discover the hostname of the machine
     // running the tests and tell clients to use this to connect, which in some cases may not work.
     props.setProperty("listeners", s"PLAINTEXT://localhost:$port")
-    props.setProperty("authorizer.class.name", "kafka.security.authorizer.AclAuthorizer")
+    props.setProperty("authorizer.class.name", "kafka.security.auth.SimpleAclAuthorizer")
     props.setProperty("super.users", "User:testadmin;")
     props.setProperty("allow.everyone.if.no.acl.found", "true")
     props.setProperty("offsets.topic.replication.factor", "1")

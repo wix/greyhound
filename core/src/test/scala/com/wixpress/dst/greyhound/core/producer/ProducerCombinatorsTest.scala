@@ -10,7 +10,7 @@ import zio.{Chunk, IO, RIO, Ref, Trace, UIO, ZEnvironment, ZIO}
 
 class ProducerCombinatorsTest extends JUnitRunnableSpec {
   private implicit val trace = Trace.empty
-  def spec                   = suite("ProducerCombinatorsTest")(
+  def spec = suite("ProducerCombinatorsTest")(
     test("provide combinator") {
       for {
         log        <- Ref.make(List.empty[String])
@@ -22,11 +22,11 @@ class ProducerCombinatorsTest extends JUnitRunnableSpec {
                             log.update(_ :+ s"produce:${env.get.env}:${record.topic}").as(RecordMetadata(record.topic, 0, 0))
                           }
 
-                        override def shutdown(implicit trace: Trace): UIO[Unit] = log.update(_ :+ "shutdown")
+                        override def shutdown (implicit trace: Trace): UIO[Unit] = log.update(_ :+ "shutdown")
 
                         override def attributes: Map[String, String] = Map("atr1" -> "val1")
 
-                        override def partitionsFor(topic: Topic)(implicit trace: Trace): RIO[Any, Seq[PartitionInfo]] =
+                        override def partitionsFor(topic: Topic) (implicit trace: Trace): RIO[Any, Seq[PartitionInfo]] =
                           ZIO.succeed((1 to 3) map (p => PartitionInfo(topic, p, 1)))
                       }
         producer    = producerR.provide(ZEnvironment(SomeEnv("the-env")))

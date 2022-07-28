@@ -4,9 +4,10 @@ import com.wixpress.dst.greyhound.core.Headers
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import zio.ZIO
 import zio.Random
-import zio.Random.{nextBytes, nextIntBounded}
+import zio.Random.{ nextBytes, nextIntBounded }
 
 object Maker {
+  private implicit val trace = zio.Trace.empty
   val bytes = nextIntBounded(9).flatMap(size => nextBytes(size + 1))
 
   def randomAlphaChar = {
