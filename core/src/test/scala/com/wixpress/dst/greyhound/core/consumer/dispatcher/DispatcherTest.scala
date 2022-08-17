@@ -1,30 +1,28 @@
 package com.wixpress.dst.greyhound.core.consumer.dispatcher
 
-import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric.RecordHandled
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
-import com.wixpress.dst.greyhound.core.consumer.{Dispatcher, SubmitResult}
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult.Rejected
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
+import com.wixpress.dst.greyhound.core.consumer.{Dispatcher, SubmitResult}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit._
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
+import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import org.specs2.specification.Scope
-import zio.clock.Clock
-import zio.duration._
-import zio.test.environment.TestClock
-import zio.{test, Ref, _}
+import zio.test.TestClock
+import zio.{Chunk, Clock, Promise, Queue, Ref, URIO, ZIO, durationInt, DurationSyntax => _}
 
-class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
+class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
   sequential
 
-  override def env: UManaged[Env with TestClock with TestMetrics] =
+  override def env =
     for {
-      env         <- test.environment.testEnvironment.build
-      testMetrics <- TestMetrics.make
-    } yield env ++ testMetrics
+      clock         <- testClock
+      testMetrics <- TestMetrics.makeManagedEnv
+    } yield testMetrics ++ clock
 
   "handle submitted records" in
     new ctx() {
@@ -43,10 +41,10 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
 
       run(for {
         latch      <- CountDownLatch.make(partitions)
-        slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => clock.sleep(1.second) *> latch.countDown }
+        slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => Clock.sleep(1.second) *> latch.countDown }
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
         dispatcher <- Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark, workersShutdownRef = ref)
-        _          <- ZIO.foreach_(0 until partitions) { partition => submit(dispatcher, record.copy(partition = partition)) }
+        _          <- ZIO.foreachDiscard(0 until partitions) { partition => submit(dispatcher, record.copy(partition = partition)) }
         _          <- TestClock.adjust(1.second)
         _          <- latch.await
       } yield ok) // If execution is not parallel, the latch will not be released
@@ -56,7 +54,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     new ctx() {
       run(for {
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        dispatcher <- Dispatcher.make[Clock]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref)
+        dispatcher <- Dispatcher.make[Any]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref)
         _          <- submit(dispatcher, record.copy(offset = 0L)) // Will be polled
         _          <- submit(dispatcher, record.copy(offset = 1L))
         _          <- submit(dispatcher, record.copy(offset = 2L))
@@ -73,15 +71,15 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
         for {
           queue      <- Queue.bounded[Record](1)
           ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-          dispatcher <- Dispatcher.make[Clock](
+          dispatcher <- Dispatcher.make[Any](
                           "group",
                           "clientId",
-                          record => queue.offer(record).flatMap(result => UIO(println(s"queue.offer result: ${result}"))),
+                          record => queue.offer(record).flatMap(result => ZIO.succeed(println(s"queue.offer result: ${result}"))),
                           lowWatermark,
                           highWatermark,
                           workersShutdownRef = ref
                         )
-          _          <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
+          _          <- ZIO.foreachDiscard(0 to (highWatermark + 1)) { offset =>
                           submit(
                             dispatcher,
                             ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
@@ -92,7 +90,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
                           ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
                         ) // Will be dropped
           _          <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
-          _          <- ZIO.foreach_(1 to 4)(_ => queue.take)
+          _          <- ZIO.foreachDiscard(1 to 4)(_ => queue.take)
           _          <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
         } yield ok
       )
@@ -110,13 +108,13 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
                                                        record =>
                                                          queue
                                                            .offer(record)
-                                                           .flatMap(result => UIO(println(s"block resume paused partitions -queue.offer result: ${result}"))),
+                                                           .flatMap(result => ZIO.succeed(println(s"block resume paused partitions -queue.offer result: ${result}"))),
                                                        lowWatermark,
                                                        highWatermark,
                                                        delayResumeOfPausedPartition = 6500,
                                                        workersShutdownRef = ref
                                                      )
-          _                                       <- ZIO.foreach_(0 to (highWatermark + 1)) { offset =>
+          _                                       <- ZIO.foreachDiscard(0 to (highWatermark + 1)) { offset =>
                                                        submit(
                                                          dispatcher,
                                                          ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
@@ -128,12 +126,12 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
               ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
             ) // Will be dropped
           resumeablePartitionsWhenInHighWatermark <- dispatcher.resumeablePartitions(Set(topicPartition))
-          _                                       <- ZIO.foreach_(1 to 4)(_ => queue.take)
+          _                                       <- ZIO.foreachDiscard(1 to 4)(_ => queue.take)
           _                                       <- TestClock.adjust(1.second)
           resumablePartitionDuringBlockPeriod     <- dispatcher.resumeablePartitions(Set(topicPartition))
           _                                       <- TestClock.adjust(6.second)
           resumablePartitionAfterBlockPeriod      <- dispatcher.resumeablePartitions(Set(topicPartition))
-          _                                       <- ZIO.foreach_(0 to 3) { offset =>
+          _                                       <- ZIO.foreachDiscard(0 to 3) { offset =>
                                                        submit(
                                                          dispatcher,
                                                          ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
@@ -144,7 +142,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
               dispatcher,
               ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 16L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
             ) // Will be dropped
-          _                                       <- ZIO.foreach_(1 to 4)(_ => queue.take)
+          _                                       <- ZIO.foreachDiscard(1 to 4)(_ => queue.take)
           _                                       <- TestClock.adjust(1.second)
           // test clearPausedPartitionDuration
           resumablePartitionDuringBlockPeriod2    <- dispatcher.resumeablePartitions(Set(topicPartition))
@@ -159,9 +157,8 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
       private def submit(
         dispatcher: Dispatcher[TestClock],
         record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]
-      ): URIO[TestClock with Env, SubmitResult] = {
+      ) =
         dispatcher.submit(record).tap(_ => TestClock.adjust(10.millis))
-      }
     }
 
   "pause handling" in
@@ -171,7 +168,7 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
         workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
         dispatcher         <-
           Dispatcher
-            .make[Clock]("group", "clientId", _ => ref.update(_ + 1), lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
+            .make[Any]("group", "clientId", _ => ref.update(_ + 1), lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
         _                  <- pause(dispatcher)
         _                  <- submit(dispatcher, record) // Will be queued
         invocations        <- ref.get
@@ -184,9 +181,9 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
         ref                <- Ref.make(0)
         workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
         promise            <- Promise.make[Nothing, Unit]
-        handler             = { _: Record => clock.sleep(1.second) *> ref.update(_ + 1) *> promise.succeed(()) }
+        handler             = { _: Record => Clock.sleep(1.second) *> ref.update(_ + 1) *> promise.succeed(()) }
         dispatcher         <- Dispatcher
-                                .make[Clock]("group", "clientId", handler, lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
+                                .make[Any]("group", "clientId", handler, lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
         _                  <- submit(dispatcher, record) // Will be handled
         _                  <- TestMetrics.reported.flatMap(waitUntilRecordHandled(3.seconds))
         _                  <- pause(dispatcher)
@@ -214,16 +211,16 @@ class DispatcherTest extends BaseTest[Env with TestClock with TestMetrics] {
     }
 
   private def submit(
-    dispatcher: Dispatcher[Clock],
+    dispatcher: Dispatcher[Any],
     record: ConsumerRecord[Chunk[Byte], Chunk[Byte]]
-  ): URIO[TestClock with Env, SubmitResult] = {
+  ): URIO[Env, SubmitResult] = {
     dispatcher.submit(record).tap(_ => TestClock.adjust(10.millis))
   }
 
-  private def waitUntilRecordHandled(timeout: Duration)(metrics: Seq[GreyhoundMetric]) =
+  private def waitUntilRecordHandled(timeout: zio.Duration)(metrics: Seq[GreyhoundMetric]) =
     ZIO
       .when(metrics.collect { case r: RecordHandled[_, _] => r }.nonEmpty)(ZIO.fail(TimeoutWaitingForHandledMetric))
-      .retry(Schedule.duration(timeout))
+      .retry(zio.Schedule.duration(timeout))
 
   private def resume(dispatcher: Dispatcher[Nothing]) = {
     dispatcher.resume *> TestClock.adjust(10.millis)
