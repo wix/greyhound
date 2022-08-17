@@ -22,7 +22,6 @@ scala_library(
         "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
         "@dev_zio_zio_2_12",
-        "@dev_zio_zio_streams_2_12",
         "@org_apache_kafka_kafka_clients",
     ],
 )
