@@ -1,14 +1,15 @@
 package com.wixpress.dst.greyhound.core.zioutils
 
 import org.apache.kafka.common.KafkaFuture
-import zio.{Task, Trace, ZIO}
+import zio.blocking.Blocking
+import zio.{blocking, RIO, ZIO}
 
 object KafkaFutures {
   implicit class KafkaFutureOps[A](val future: KafkaFuture[A]) {
-    def asZio (implicit trace: Trace): Task[A] = {
-      ZIO.asyncInterrupt[Any, Throwable, A] { cb =>
+    def asZio: RIO[Blocking, A] = {
+      RIO.effectAsyncInterrupt[Blocking, A] { cb =>
         future.whenComplete { (a, e) => cb(if (e == null) ZIO.succeed(a) else ZIO.fail(e)) }
-        Left(ZIO.attemptBlocking(future.cancel(true)).ignore)
+        Left(blocking.effectBlocking(future.cancel(true)).ignore)
       }
     }
   }
