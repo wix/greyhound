@@ -11,19 +11,25 @@ import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic, TopicPartition}
 import zio._
+import zio.blocking.Blocking
+import zio.clock.Clock
+import zio.duration._
 
 import java.util.regex.Pattern
-import zio.managed._
 
-class EventLoopTest extends BaseTest[TestMetrics] {
-  override def env: UManaged[ZEnvironment[TestMetrics]] =
-    TestMetrics.makeManagedEnv
+class EventLoopTest extends BaseTest[Blocking with ZEnv with TestMetrics] {
+
+  override def env: UManaged[ZEnv with TestMetrics] =
+    for {
+      env         <- test.environment.liveEnvironment.build
+      testMetrics <- TestMetrics.make
+    } yield env ++ testMetrics
 
   "recover from consumer failing to poll" in {
     for {
       invocations <- Ref.make(0)
       consumer     = new EmptyConsumer {
-                       override def poll(timeout: Duration) (implicit trace: Trace): Task[Records] =
+                       override def poll(timeout: Duration): Task[Records] =
                          invocations.updateAndGet(_ + 1).flatMap {
                            case 1 => ZIO.fail(exception)
                            case 2 => ZIO.succeed(recordsFrom(record))
@@ -34,9 +40,9 @@ class EventLoopTest extends BaseTest[TestMetrics] {
       handler      = RecordHandler(promise.succeed)
       ref         <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
       handled     <-
-        ZIO.scoped(EventLoop
+        EventLoop
           .make("group", Topics(Set(topic)), ReportingConsumer(clientId, group, consumer), handler, "clientId", workersShutdownRef = ref)
-          .flatMap(_ => promise.await))
+          .use_(promise.await)
       metrics     <- TestMetrics.reported
     } yield (handled.topic, handled.offset) === (topic, offset) and (metrics must contain(PollingFailed(clientId, group, exception)))
   }
@@ -47,20 +53,20 @@ class EventLoopTest extends BaseTest[TestMetrics] {
       commitInvocations <- Ref.make(0)
       promise           <- Promise.make[Nothing, Map[TopicPartition, Offset]]
       consumer           = new EmptyConsumer {
-                             override def poll(timeout: Duration) (implicit trace: Trace): Task[Records] =
+                             override def poll(timeout: Duration): Task[Records] =
                                pollInvocations.updateAndGet(_ + 1).flatMap {
                                  case 1 => ZIO.succeed(recordsFrom(record))
                                  case _ => ZIO.succeed(Iterable.empty)
                                }
 
-                             override def commit(offsets: Map[TopicPartition, Offset]) (implicit trace: Trace) =
+                             override def commit(offsets: Map[TopicPartition, Offset]) =
                                commitInvocations.updateAndGet(_ + 1).flatMap {
                                  case 1 => ZIO.fail(exception)
                                  case _ => promise.succeed(offsets).unit
                                }
                            }
       ref               <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-      committed         <- ZIO.scoped(EventLoop
+      committed         <- EventLoop
                              .make(
                                "group",
                                Topics(Set(topic)),
@@ -69,29 +75,27 @@ class EventLoopTest extends BaseTest[TestMetrics] {
                                "clientId",
                                workersShutdownRef = ref
                              )
-                             .flatMap(_ => promise.await))
+                             .use_(promise.await)
       metrics           <- TestMetrics.reported
-      _ <- ZIO.debug(s"metrics===$metrics")
-
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
       (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic, record.partition) -> (offset + 1)))))
   }
 
-//  "expose event loop health" in {
-//    for {
-//      _           <- ZIO.unit
-//      sickConsumer = new EmptyConsumer {
-//                       override def poll(timeout: Duration) (implicit trace: Trace): Task[Records] =
-//                         ZIO.fail(new Exception("cough :("))
-//                     }
-//      ref         <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-//      died        <- ZIO.scoped(EventLoop
-//                       .make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId", workersShutdownRef = ref)
-//                       .flatMap { eventLoop => eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil[Boolean](alive => !alive)).unit }
-//                       .catchAllCause(_ => ZIO.unit)
-//                       .timeout(5.second))
-//    } yield died must beSome
-//  }
+  "expose event loop health" in {
+    for {
+      _           <- ZIO.unit
+      sickConsumer = new EmptyConsumer {
+                       override def poll(timeout: Duration): Task[Records] =
+                         ZIO.dieMessage("cough :(")
+                     }
+      ref         <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+      died        <- EventLoop
+                       .make("group", Topics(Set(topic)), sickConsumer, RecordHandler.empty, "clientId", workersShutdownRef = ref)
+                       .use { eventLoop => eventLoop.isAlive.repeat(Schedule.spaced(10.millis) && Schedule.recurUntil(alive => !alive)).unit }
+                       .catchAllCause(_ => ZIO.unit)
+                       .timeout(5.second)
+    } yield died must beSome
+  }
 
 }
 
@@ -111,45 +115,46 @@ object EventLoopTest {
 }
 
 trait EmptyConsumer extends Consumer {
-  override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
+
+  override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[R1, Unit] =
     rebalanceListener.onPartitionsAssigned(this, Set(TopicPartition("", 0))).unit
 
-  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
+  override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[R1, Unit] =
     rebalanceListener.onPartitionsAssigned(this, topics.map(TopicPartition(_, 0))).unit
 
-  override def poll(timeout: Duration)(implicit trace: Trace): Task[Records] =
+  override def poll(timeout: Duration): Task[Records] =
     ZIO.succeed(Iterable.empty)
 
-  override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): Task[Unit] =
+  override def commit(offsets: Map[TopicPartition, Offset]): Task[Unit] =
     ZIO.unit
 
-  override def commitOnRebalance(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
+  override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] =
     DelayedRebalanceEffect.zioUnit
 
-  override def pause(partitions: Set[TopicPartition]) (implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+  override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def resume(partitions: Set[TopicPartition]) (implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+  override def resume(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def seek(partition: TopicPartition, offset: Offset) (implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+  override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
     ZIO.unit
 
-  override def assignment (implicit trace: Trace): Task[Set[TopicPartition]] = ZIO.succeed(Set.empty)
+  override def assignment: Task[Set[TopicPartition]] = UIO(Set.empty)
 
-  override def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
+  override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
-  override def beginningOffsets(partitions: Set[TopicPartition]) (implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
+  override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
-  override def position(topicPartition: TopicPartition) (implicit trace: Trace): Task[Offset] = ZIO.attempt(-1L)
+  override def position(topicPartition: TopicPartition): Task[Offset] = Task(-1L)
 
-  override def config(implicit trace: Trace): ConsumerConfig = ConsumerConfig("", "")
+  override def config: ConsumerConfig = ConsumerConfig("", "")
 
   override def offsetsForTimes(
     topicPartitionsOnTimestamp: Map[TopicPartition, Long]
-  )(implicit trace: Trace): RIO[Any,  Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
+  ): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = ZIO(Map.empty)
 
-  override def listTopics(implicit trace: Trace): RIO[Any, Map[Topic, List[core.PartitionInfo]]] = ZIO.succeed(Map.empty)
+  override def listTopics: RIO[Blocking, Map[Topic, List[core.PartitionInfo]]] = UIO(Map.empty)
 
-  override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = ZIO.succeed(Map.empty)
+  override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] = UIO(Map.empty)
 }
