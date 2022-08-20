@@ -2,18 +2,16 @@ package com.wixpress.dst.greyhound.core.testkit
 
 import com.wixpress.dst.greyhound.core.Headers
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
-import zio.ZIO
-import zio.Random
-import zio.Random.{ nextBytes, nextIntBounded }
+import zio.random.{nextBytes, nextIntBounded}
+import zio.{random, ZIO}
 
 object Maker {
-  private implicit val trace = zio.Trace.empty
   val bytes = nextIntBounded(9).flatMap(size => nextBytes(size + 1))
 
   def randomAlphaChar = {
     val low  = 'A'.toInt
     val high = 'z'.toInt + 1
-    Random.nextIntBetween(low, high).map(_.toChar)
+    random.nextIntBetween(low, high).map(_.toChar)
   }
 
   def randomStr = ZIO.collectAll(List.fill(6)(randomAlphaChar)).map(_.mkString)
