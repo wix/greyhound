@@ -3,17 +3,19 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import java.util.concurrent.TimeUnit
 import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, Blocking => InternalBlocking, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, DoneBlockingBeforeRetry, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{report, trace}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import zio._
-import zio.Clock.currentTime
+import zio.blocking.Blocking
+import zio.clock.{currentTime, Clock}
+import zio.duration._
 
 trait BlockingRetryRecordHandler[V, K, R] {
-  def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[GreyhoundMetrics with R, Nothing, LastHandleResult]
+  def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R with Blocking, Nothing, LastHandleResult]
 }
 
 private[retry] object BlockingRetryRecordHandler {
@@ -28,18 +30,18 @@ private[retry] object BlockingRetryRecordHandler {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
 
-    override def handle(record: ConsumerRecord[K, V]) (implicit trace: Trace): ZIO[GreyhoundMetrics with R, Nothing, LastHandleResult] = {
+    override def handle(record: ConsumerRecord[K, V]): ZIO[Clock with GreyhoundMetrics with R with Blocking, Nothing, LastHandleResult] = {
       val topicPartition = TopicPartition(record.topic, record.partition)
 
-      def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[GreyhoundMetrics, PollResult] = {
+      def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[Clock with GreyhoundMetrics with Blocking, PollResult] = {
         for {
           shouldBlock     <- blockingStateResolver.resolve(record)
           shouldPollAgain <-
             if (shouldBlock) {
-              ZIO.sleep(100.milliseconds) *>
+              clock.sleep(100.milliseconds) *>
                 currentTime(TimeUnit.MILLISECONDS).map(end => PollResult(pollAgain = end - start < interval.toMillis, blockHandling = true))
             } else
-              ZIO.succeed(PollResult(pollAgain = false, blockHandling = false))
+              UIO(PollResult(pollAgain = false, blockHandling = false))
         } yield shouldPollAgain
       }
 
@@ -56,7 +58,7 @@ private[retry] object BlockingRetryRecordHandler {
             } else {
               for {
                 shouldBlock <- blockingStateResolver.resolve(record)
-                _           <- ZIO.when(shouldBlock)(ZIO.sleep(interval))
+                _           <- ZIO.when(shouldBlock)(clock.sleep(interval))
               } yield shouldBlock
             }
         } yield LastHandleResult(lastHandleSucceeded = false, shouldContinue = continueBlocking)
@@ -64,7 +66,7 @@ private[retry] object BlockingRetryRecordHandler {
 
       def handleAndMaybeBlockOnErrorFor(
         interval: Option[Duration]
-      ): ZIO[R with GreyhoundMetrics, Nothing, LastHandleResult] = {
+      ): ZIO[Clock with R with GreyhoundMetrics with Blocking, Nothing, LastHandleResult] = {
         handler.handle(record).map(_ => LastHandleResult(lastHandleSucceeded = true, shouldContinue = false)).catchAll {
           case NonRetriableException(cause)        =>
             handleNonRetriable(record, topicPartition, cause)
@@ -75,7 +77,7 @@ private[retry] object BlockingRetryRecordHandler {
               .map { interval =>
                 report(BlockingRetryHandlerInvocationFailed(topicPartition, record.offset, error.toString)) *> blockOnErrorFor(interval)
               }
-              .getOrElse(ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false)))
+              .getOrElse(UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false)))
         }
       }
 
@@ -92,7 +94,7 @@ private[retry] object BlockingRetryRecordHandler {
         )
 
       if (nonBlockingHandler.isHandlingRetryTopicMessage(group, record)) {
-        ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
+        UIO(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       } else {
         val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs(record.topic)().map(Some(_)) :+ None
         for {
