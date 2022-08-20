@@ -6,9 +6,8 @@ import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
 class BatchEventLoopStateTest extends JUnitRunnableSpec {
-  private implicit val  trace = zio.Trace.empty
   def spec = suite("BatchEventLoopState")(
-    test("pause, resume, shutdown") {
+    testM("pause, resume, shutdown") {
       for {
         state              <- BatchEventLoopState.make
         initialIsRunning   <- state.isRunning
@@ -24,7 +23,7 @@ class BatchEventLoopStateTest extends JUnitRunnableSpec {
         assert(initialNotShutdown)(isTrue) && assert(notShutDownAfter)(isFalse)
       }
     },
-    test("pause and resume partitions") {
+    testM("pause and resume partitions") {
       val records1, records2 = TestSupport.records(topicCount = 1, partitions = 1)
       val (tp1, tp2)         = (records1.head.topicPartition, records2.head.topicPartition)
       for {
@@ -46,7 +45,7 @@ class BatchEventLoopStateTest extends JUnitRunnableSpec {
         assert(exposed2.pausedPartitions)(equalTo(Set(tp2)).label("elState2.pausedPartitions"))
       }
     },
-    test("revoke partition") {
+    testM("revoke partition") {
       val records1, records2, records3 = TestSupport.records(topicCount = 1, partitions = 1)
       val (tp1, tp2, tp3)              = (records1.head.topicPartition, records2.head.topicPartition, records3.head.topicPartition)
       for {
