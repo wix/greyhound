@@ -6,17 +6,15 @@ import org.apache.kafka.common.header.Header
 import org.apache.kafka.common.header.internals.RecordHeader
 import org.apache.kafka.common.serialization.ByteArraySerializer
 import zio._
+import zio.blocking.{effectBlocking, Blocking}
+import zio.duration._
 
 import scala.collection.JavaConverters._
-import zio.ZIO.attemptBlocking
-import zio.managed._
 
 trait ProducerR[-R] { self =>
-  def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]])(
-    implicit trace: Trace
-  ): ZIO[R, ProducerError, IO[ProducerError, RecordMetadata]]
+  def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]]
 
-  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]])(implicit trace: Trace): ZIO[R, ProducerError, RecordMetadata] =
+  def produce(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]): ZIO[R with Blocking, ProducerError, RecordMetadata] =
     for {
       promise <- produceAsync(record)
       res     <- promise // promise is ZIO itself (the result of from Promise.await)
@@ -27,7 +25,7 @@ trait ProducerR[-R] { self =>
     keySerializer: Serializer[K],
     valueSerializer: Serializer[V],
     encryptor: Encryptor = NoOpEncryptor
-  )(implicit trace: Trace): ZIO[R, ProducerError, RecordMetadata] =
+  ): ZIO[R with Blocking, ProducerError, RecordMetadata] =
     serialized(record, keySerializer, valueSerializer, encryptor)
       .mapError(SerializationError)
       .flatMap(produce)
@@ -37,14 +35,14 @@ trait ProducerR[-R] { self =>
     keySerializer: Serializer[K],
     valueSerializer: Serializer[V],
     encryptor: Encryptor = NoOpEncryptor
-  )(implicit trace: Trace): ZIO[R, ProducerError, IO[ProducerError, RecordMetadata]] =
+  ): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
     serialized(record, keySerializer, valueSerializer, encryptor)
       .mapError(SerializationError)
       .flatMap(produceAsync)
 
-  def partitionsFor(topic: Topic)(implicit trace: Trace): RIO[R, Seq[PartitionInfo]]
+  def partitionsFor(topic: Topic): RIO[R with Blocking, Seq[PartitionInfo]]
 
-  def shutdown(implicit trace: Trace): UIO[Unit] = ZIO.unit
+  def shutdown: UIO[Unit] = UIO.unit
 
   def attributes: Map[String, String] = Map.empty
 
@@ -53,7 +51,7 @@ trait ProducerR[-R] { self =>
     keySerializer: Serializer[K],
     valueSerializer: Serializer[V],
     encryptor: Encryptor
-  )(implicit trace: Trace) = {
+  ) = {
     for {
       keyBytes        <- keySerializer.serializeOpt(record.topic, record.key)
       valueBytes      <- valueSerializer.serializeOpt(record.topic, record.value)
@@ -73,12 +71,12 @@ object Producer {
   private val serializer = new ByteArraySerializer
   type Producer = ProducerR[Any]
 
-  def make(config: ProducerConfig, attrs: Map[String, String] = Map.empty)(implicit trace: Trace): RIO[Scope, Producer] =
+  def make(config: ProducerConfig, attrs: Map[String, String] = Map.empty): RManaged[Blocking, Producer] =
     makeR[Any](config, attrs)
 
-  def makeR[R](config: ProducerConfig, attrs: Map[String, String] = Map.empty)(implicit trace: Trace): RIO[Scope, ProducerR[R]] = {
-    val acquire = ZIO.attemptBlocking(new KafkaProducer(config.properties, serializer, serializer))
-    ZIO.acquireRelease(acquire)(producer => attemptBlocking(producer.close()).ignore).map { producer =>
+  def makeR[R](config: ProducerConfig, attrs: Map[String, String] = Map.empty): RManaged[Blocking, ProducerR[R]] = {
+    val acquire = effectBlocking(new KafkaProducer(config.properties, serializer, serializer))
+    ZManaged.make(acquire)(producer => effectBlocking(producer.close()).ignore).map { producer =>
       new ProducerR[R] {
         private def recordFrom(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) =
           new KafkaProducerRecord(
@@ -97,24 +95,19 @@ object Producer {
 
         override def produceAsync(
           record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-        )(implicit trace: Trace): ZIO[R, ProducerError, IO[ProducerError, RecordMetadata]] =
+        ): ZIO[Blocking with R, ProducerError, IO[ProducerError, RecordMetadata]] =
           for {
             produceCompletePromise <- Promise.make[ProducerError, RecordMetadata]
             runtime                <- ZIO.runtime[Any]
-            _                      <- attemptBlocking(
+            _                      <- effectBlocking(
                                         producer.send(
                                           recordFrom(record),
                                           new Callback {
-                                            override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit = {
-                                              zio.Unsafe.unsafe { implicit s =>
-                                                runtime.unsafe
-                                                  .run(
-                                                    (if (exception != null) produceCompletePromise.complete(ProducerError(exception))
-                                                     else produceCompletePromise.succeed(RecordMetadata(metadata))) *> config.onProduceListener(record)
-                                                  )
-                                                  .getOrThrowFiberFailure()
+                                            override def onCompletion(metadata: KafkaRecordMetadata, exception: Exception): Unit =
+                                              runtime.unsafeRun {
+                                                (if (exception != null) produceCompletePromise.complete(ProducerError(exception))
+                                                 else produceCompletePromise.succeed(RecordMetadata(metadata))) *> config.onProduceListener(record)
                                               }
-                                            }
                                           }
                                         )
                                       )
@@ -123,8 +116,8 @@ object Producer {
 
         override def attributes: Map[String, String] = attrs
 
-        override def partitionsFor(topic: Topic)(implicit trace: Trace): RIO[Any, Seq[PartitionInfo]] = {
-          attemptBlocking(
+        override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] = {
+          effectBlocking(
             producer
               .partitionsFor(topic)
               .asScala
@@ -138,65 +131,66 @@ object Producer {
 }
 
 object ProducerR {
-  implicit class Ops[R <: Any](producer: ProducerR[R]) {
+  implicit class Ops[R <: Has[_]](producer: ProducerR[R]) {
     // R1 is a work around to an apparent bug in Has.union ¯\_(ツ)_/¯
     // https://github.com/zio/zio/issues/3558#issuecomment-776051184
-    def provide(env: ZEnvironment[R])                                            = new ProducerR[Any] {
+    def provide[R1 <: R: Tag](env: R1)                     = new ProducerR[Any] {
       override def produceAsync(
         record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-      )(implicit trace: Trace): ZIO[Any, ProducerError, IO[ProducerError, RecordMetadata]] =
-        producer.produceAsync(record).provideEnvironment(env)
+      ): ZIO[Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
+        producer.produceAsync(record).provideSome[Blocking](_.union[R1](env))
 
       override def attributes: Map[String, String] = producer.attributes
 
-      override def shutdown(implicit trace: Trace): UIO[Unit] = producer.shutdown
+      override def shutdown: UIO[Unit] = producer.shutdown
 
-      override def partitionsFor(topic: Topic)(implicit trace: Trace): RIO[Any, Seq[PartitionInfo]] =
-        producer.partitionsFor(topic).provideEnvironment(env)
+      override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] =
+        producer.partitionsFor(topic).provideSome[Blocking](_.union[R1](env))
     }
-    def onShutdown(onShutdown: => UIO[Unit])(implicit trace: Trace): ProducerR[R] = new ProducerR[R] {
+    def onShutdown(onShutdown: => UIO[Unit]): ProducerR[R] = new ProducerR[R] {
       override def produceAsync(
         record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-      )(implicit trace: Trace): ZIO[R, ProducerError, IO[ProducerError, RecordMetadata]] =
+      ): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
         producer.produceAsync(record)
 
-      override def shutdown(implicit trace: Trace): UIO[Unit] = onShutdown *> producer.shutdown
+      override def shutdown: UIO[Unit] = onShutdown *> producer.shutdown
 
       override def attributes: Map[String, String] = producer.attributes
 
-      override def partitionsFor(topic: Topic)(implicit trace: Trace) = producer.partitionsFor(topic)
+      override def partitionsFor(topic: Topic) = producer.partitionsFor(topic)
     }
 
     def tapBoth(onError: (Topic, Cause[ProducerError]) => URIO[R, Unit], onSuccess: RecordMetadata => URIO[R, Unit]) = new ProducerR[R] {
       override def produceAsync(
         record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-      )(implicit trace: Trace): ZIO[R, ProducerError, IO[ProducerError, RecordMetadata]] = {
+      ): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
         for {
           called <- Ref.make(false)
-          once    = ZIO.whenZIO(called.getAndUpdate(_ => true).negate)(_: URIO[R, Unit])
+          once    = ZIO.whenM(called.getAndUpdate(_ => true).negate)(_: URIO[R, Unit])
           env    <- ZIO.environment[R]
           res    <- producer.produceAsync(record)
         } yield res
-          .tapErrorCause(e => once(onError(record.topic, e)).provideEnvironment(env))
-          .tap(r => once(onSuccess(r)).provideEnvironment(env))
+          .tapCause(e => once(onError(record.topic, e)).provide(env))
+          .tap(r => once(onSuccess(r)).provide(env))
       }
 
-      override def shutdown(implicit trace: Trace): UIO[Unit] = producer.shutdown
+      override def shutdown: UIO[Unit] = producer.shutdown
 
       override def attributes: Map[String, String] = producer.attributes
 
-      override def partitionsFor(topic: Topic)(implicit trace: Trace) = producer.partitionsFor(topic)
+      override def partitionsFor(topic: Topic) = producer.partitionsFor(topic)
     }
 
     def map(f: ProducerRecord[Chunk[Byte], Chunk[Byte]] => ProducerRecord[Chunk[Byte], Chunk[Byte]]) = new ProducerR[R] {
       override def produceAsync(
         record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-      )(implicit trace: Trace): ZIO[R, ProducerError, IO[ProducerError, RecordMetadata]] =
+      ): ZIO[R with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] = {
         producer.produceAsync(f(record))
+      }
 
-      override def partitionsFor(topic: Topic)(implicit trace: Trace): RIO[R, Seq[PartitionInfo]] = producer.partitionsFor(topic)
+      override def partitionsFor(topic: Topic): RIO[R with Blocking, Seq[PartitionInfo]] = producer.partitionsFor(topic)
 
-      override def shutdown(implicit trace: Trace): UIO[Unit] = producer.shutdown
+      override def shutdown: UIO[Unit] = producer.shutdown
 
       override def attributes: Map[String, String] = producer.attributes
     }
