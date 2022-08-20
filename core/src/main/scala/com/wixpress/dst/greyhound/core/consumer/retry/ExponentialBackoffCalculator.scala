@@ -4,11 +4,12 @@ import java.lang.Math.{pow => power}
 import java.util.concurrent.TimeUnit
 
 import com.wixpress.dst.greyhound.core.Offset
-import zio.duration.{Duration => ZDuration}
+import zio.{Duration => ZDuration}
 
 import scala.math.{abs, log10, max}
 import scala.util.Try
-import zio.duration._
+
+import zio._
 
 object ExponentialBackoffCalculator {
   def exponentialBackoffs(
