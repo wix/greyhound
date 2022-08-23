@@ -14,15 +14,15 @@ import com.wixpress.dst.greyhound.testenv.ITEnv.{testResources, Env, TestResourc
 import org.apache.kafka.common.config.TopicConfig.{DELETE_RETENTION_MS_CONFIG, MAX_MESSAGE_BYTES_CONFIG, RETENTION_MS_CONFIG}
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.specs2.specification.core.Fragments
-import zio.Duration.fromScala
-import zio.{Chunk, Ref, ZIO}
+import zio.duration.Duration.fromScala
+import zio.{Chunk, Ref, UIO, UManaged}
 
 import scala.concurrent.duration._
 
 class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
 
-  override def env = ITEnv.ManagedEnv
+  override def env: UManaged[ITEnv.Env] = ITEnv.ManagedEnv
 
   override def sharedEnv = ITEnv.testResources()
 
@@ -30,12 +30,11 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   "createTopics" should {
     "create topics" in {
-
       val topic1, topic2 = aTopicConfig()
       for {
-        testResources <- getShared
-        created       <- testResources.kafka.adminClient.createTopics(Set(topic1, topic2))
-        topicsAfter   <- testResources.kafka.adminClient.listTopics()
+        TestResources(kafka, _) <- getShared
+        created                 <- kafka.adminClient.createTopics(Set(topic1, topic2))
+        topicsAfter             <- kafka.adminClient.listTopics()
       } yield {
         (created === Map(topic1.name -> None, topic2.name -> None)) and (topicsAfter.toSeq must contain(topic1.name, topic2.name))
       }
@@ -45,10 +44,10 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       val topic1 = aTopicConfig()
 
       for {
-        r      <- getShared
-        before <- r.kafka.adminClient.topicExists(topic1.name)
-        _      <- r.kafka.adminClient.createTopics(Set(topic1))
-        after  <- r.kafka.adminClient.topicExists(topic1.name)
+        TestResources(kafka, _) <- getShared
+        before                  <- kafka.adminClient.topicExists(topic1.name)
+        _                       <- kafka.adminClient.createTopics(Set(topic1))
+        after                   <- kafka.adminClient.topicExists(topic1.name)
       } yield {
         after === true and before === false
       }
@@ -61,11 +60,11 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       val topics = Set[String](topic1.name, topic2.name, topic3.name)
 
       for {
-        r            <- getShared
-        before       <- r.kafka.adminClient.topicExists(topic1.name)
-        _            <- r.kafka.adminClient.createTopics(Set(topic1))
-        _            <- r.kafka.adminClient.createTopics(Set(topic2))
-        topicsExists <- r.kafka.adminClient.topicsExist(topics)
+        TestResources(kafka, _) <- getShared
+        before                  <- kafka.adminClient.topicExists(topic1.name)
+        _                       <- kafka.adminClient.createTopics(Set(topic1))
+        _                       <- kafka.adminClient.createTopics(Set(topic2))
+        topicsExists            <- kafka.adminClient.topicsExist(topics)
       } yield {
         (topicsExists(topic1.name) must beTrue and (before must beFalse)) and
           (topicsExists(topic2.name) must beTrue) and
@@ -75,8 +74,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
     "topic does not exist" in {
       for {
-        r      <- getShared
-        result <- r.kafka.adminClient.topicExists("missing topic")
+        TestResources(kafka, _) <- getShared
+        result                  <- kafka.adminClient.topicExists("missing topic")
       } yield {
         result === false
       }
@@ -86,8 +85,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       val topic1 = aTopicConfig()
       val topic2 = aTopicConfig("x" * 250)
       for {
-        r       <- getShared
-        created <- r.kafka.adminClient.createTopics(Set(topic1, topic2))
+        TestResources(kafka, _) <- getShared
+        created                 <- kafka.adminClient.createTopics(Set(topic1, topic2))
       } yield {
         (created(topic1.name) must beNone) and (created(topic2.name) must beSome(beAnInstanceOf[InvalidTopicException]))
       }
@@ -96,8 +95,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
     "ignore errors based on filter" in {
       val badTopic = aTopicConfig("x" * 250)
       for {
-        r       <- getShared
-        created <- r.kafka.adminClient.createTopics(Set(badTopic), ignoreErrors = _.isInstanceOf[InvalidTopicException])
+        TestResources(kafka, _) <- getShared
+        created                 <- kafka.adminClient.createTopics(Set(badTopic), ignoreErrors = _.isInstanceOf[InvalidTopicException])
       } yield {
         created === Map(badTopic.name -> None)
       }
@@ -106,9 +105,9 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
     "ignore TopicExistsException by default" in {
       val topic = aTopicConfig()
       for {
-        r        <- getShared
-        created1 <- r.kafka.adminClient.createTopics(Set(topic))
-        created2 <- r.kafka.adminClient.createTopics(Set(topic))
+        TestResources(kafka, _) <- getShared
+        created1                <- kafka.adminClient.createTopics(Set(topic))
+        created2                <- kafka.adminClient.createTopics(Set(topic))
       } yield {
         (created1 === Map(topic.name -> None)) and (created2 === Map(topic.name -> None))
       }
@@ -117,13 +116,11 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
     "list groups" in {
       val topic = aTopicConfig()
       for {
-        r      <- getShared
-        group   = "group1"
-        groups <- ZIO.scoped(
-                    RecordConsumer
-                      .make(RecordConsumerConfig(r.kafka.bootstrapServers, group, Topics(Set(topic.name))), RecordHandler.empty)
-                      .flatMap { _ => r.kafka.adminClient.listGroups() }
-                  )
+        TestResources(kafka, _) <- getShared
+        group                    = "group1"
+        groups                  <- RecordConsumer
+                                     .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), RecordHandler.empty)
+                                     .use { _ => kafka.adminClient.listGroups() }
       } yield {
         (groups === Set(group))
       }
@@ -131,68 +128,63 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
     "fetch group offsets" in {
       val topic = aTopicConfig()
-      ZIO.scoped(for {
-        r                                 <- getShared
-        _                                 <- r.kafka.adminClient.createTopics(Set(topic))
+      for {
+        TestResources(kafka, producer)    <- getShared
+        _                                 <- kafka.adminClient.createTopics(Set(topic))
         groupOffsetsRef                   <- Ref.make[Map[GroupTopicPartition, PartitionOffset]](Map.empty)
         calledGroupsTopicsAfterAssignment <- CountDownLatch.make(1)
         group                              = s"group1-${System.currentTimeMillis}"
         handler                            = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
                                                {
-                                                 r.kafka.adminClient.groupOffsets(Set(group)).flatMap(r => groupOffsetsRef.set(r)) *>
+                                                 kafka.adminClient.groupOffsets(Set(group)).flatMap(r => groupOffsetsRef.set(r)) *>
                                                    calledGroupsTopicsAfterAssignment.countDown
                                                }
                                              }
-        _                                 <- RecordConsumer
-                                               .make(RecordConsumerConfig(r.kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
-        awaitResultAndGroupOffsets        <- for {
-                                               recordPartition <- ZIO.succeed(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
-                                               _               <- r.producer.produce(recordPartition)
-                                               awaitResult     <- calledGroupsTopicsAfterAssignment.await.timeout(fromScala(20.seconds))
-                                               groupOffsets    <- groupOffsetsRef.get
-                                             } yield (awaitResult, groupOffsets)
+        (awaitResult, groupOffsets)       <- RecordConsumer
+                                               .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
+                                               .use { _ =>
+                                                 for {
+                                                   recordPartition <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
+                                                   _               <- producer.produce(recordPartition)
+                                                   awaitResult     <- calledGroupsTopicsAfterAssignment.await.timeout(fromScala(10.seconds))
+                                                   groupOffsets    <- groupOffsetsRef.get
+                                                 } yield (awaitResult, groupOffsets)
+                                               }
       } yield {
-        ((awaitResultAndGroupOffsets._1 aka "awaitResult" must not(beNone)) and
-          (awaitResultAndGroupOffsets._2 === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L))))
-      })
+        (awaitResult aka "awaitResult" must not(beNone)) and
+          (groupOffsets === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L)))
+      }
     }
 
     "fetch group state when consumer started and when consumer is shut down" in {
       val partitionsCount = 2
       val topic           = aTopicConfig(partitions = partitionsCount)
       for {
-        r                                <- getShared
-        _                                <- r.kafka.adminClient.createTopics(Set(topic))
+        TestResources(kafka, producer)   <- getShared
+        _                                <- kafka.adminClient.createTopics(Set(topic))
         groupStateRef                    <- Ref.make[Option[GroupState]](None)
         calledGroupsStateAfterAssignment <- CountDownLatch.make(1)
         group                             = "group1"
         handler                           = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
                                               {
-                                                ZIO.debug("in record handler....") *>
-                                                r.kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *>
-                                                  ZIO.debug("yay!....") *>
+                                                kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *>
                                                   calledGroupsStateAfterAssignment.countDown
                                               }
                                             }
-        awaitResultAndStateWhenStarted   <-
-          ZIO.scoped(
-            RecordConsumer
-              .make(RecordConsumerConfig(r.kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
-              .flatMap { _ =>
-                for {
-                  recordPartition  <- ZIO.succeed(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
-                  _                <- r.producer.produce(recordPartition)
-                    .tap(rm => ZIO.debug(s"produced!! offset ${rm.offset}"))
-                  awaitResult      <- calledGroupsStateAfterAssignment.await.timeout(fromScala(10.seconds))
-                  stateWhenStarted <- groupStateRef.get
-                } yield (awaitResult, stateWhenStarted)
-              }
-          )
-
-        stateAfterShutdown <- r.kafka.adminClient.groupState(Set(group)).map(_.get(group))
+        (awaitResult, stateWhenStarted)  <- RecordConsumer
+                                              .make(RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic.name))), handler)
+                                              .use { _ =>
+                                                for {
+                                                  recordPartition  <- UIO(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
+                                                  _                <- producer.produce(recordPartition)
+                                                  awaitResult      <- calledGroupsStateAfterAssignment.await.timeout(fromScala(10.seconds))
+                                                  stateWhenStarted <- groupStateRef.get
+                                                } yield (awaitResult, stateWhenStarted)
+                                              }
+        stateAfterShutdown               <- kafka.adminClient.groupState(Set(group)).map(_.get(group))
       } yield {
-        (awaitResultAndStateWhenStarted._1 aka "awaitResult" must not(beNone)) and
-          (awaitResultAndStateWhenStarted._2 === Some(GroupState(Set(TopicPartition(topic.name, 0), TopicPartition(topic.name, 1))))) and
+        (awaitResult aka "awaitResult" must not(beNone)) and
+          (stateWhenStarted === Some(GroupState(Set(TopicPartition(topic.name, 0), TopicPartition(topic.name, 1))))) and
           (stateAfterShutdown === Some(GroupState(Set.empty)))
       }
     }
@@ -201,9 +193,9 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       val topics           = (1 to 3).map(i => aTopicConfig(partitions = i, props = Map(RETENTION_MS_CONFIG -> (i * 100000).toString)))
       val nonExistentTopic = "non-existent-topic"
       for {
-        r          <- getShared
-        _          <- r.kafka.adminClient.createTopics(topics.toSet)
-        topicProps <- r.kafka.adminClient.propertiesFor(topics.map(_.name).toSet + nonExistentTopic)
+        TestResources(kafka, _) <- getShared
+        _                       <- kafka.adminClient.createTopics(topics.toSet)
+        topicProps              <- kafka.adminClient.propertiesFor(topics.map(_.name).toSet + nonExistentTopic)
       } yield {
         topics.foldLeft(ok) {
           case (acc, tc) =>
@@ -223,10 +215,10 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
     "increase partitions" in {
       val topic = aTopicConfig()
       for {
-        r     <- getShared
-        _     <- r.kafka.adminClient.createTopics(Set(topic))
-        _     <- r.kafka.adminClient.increasePartitions(topic.name, topic.partitions + 1)
-        props <- r.kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
+        TestResources(kafka, _) <- getShared
+        _                       <- kafka.adminClient.createTopics(Set(topic))
+        _                       <- kafka.adminClient.increasePartitions(topic.name, topic.partitions + 1)
+        props                   <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
       } yield props.partitions === 2
     }
 
@@ -234,19 +226,19 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       s"set topic properties [nonIncremental: $nonIncremental]" in {
         val topic = aTopicConfig(props = Map(MAX_MESSAGE_BYTES_CONFIG -> "1000000", DELETE_RETENTION_MS_CONFIG -> "123456841"))
         for {
-          r             <- getShared
-          _             <- r.kafka.adminClient.createTopics(Set(topic))
-          _             <- r.kafka.adminClient.updateTopicConfigProperties(
-                             topic.name,
-                             Map(
-                               MAX_MESSAGE_BYTES_CONFIG   -> ConfigPropOp.Set("2000000"),
-                               RETENTION_MS_CONFIG        -> ConfigPropOp.Set("3000000"),
-                               DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
-                             ),
-                             nonIncremental
-                           )
-          props         <- r.kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
-          updatedEvents <- TestMetrics.reportedOf[TopicConfigUpdated]()
+          TestResources(kafka, _) <- getShared
+          _                       <- kafka.adminClient.createTopics(Set(topic))
+          _                       <- kafka.adminClient.updateTopicConfigProperties(
+                                       topic.name,
+                                       Map(
+                                         MAX_MESSAGE_BYTES_CONFIG   -> ConfigPropOp.Set("2000000"),
+                                         RETENTION_MS_CONFIG        -> ConfigPropOp.Set("3000000"),
+                                         DELETE_RETENTION_MS_CONFIG -> ConfigPropOp.Delete
+                                       ),
+                                       nonIncremental
+                                     )
+          props                   <- kafka.adminClient.propertiesFor(Set(topic.name)).flatMap(_.values.head.getOrFail)
+          updatedEvents           <- TestMetrics.reportedOf[TopicConfigUpdated]()
         } yield (props.properties.toSeq must
           contain(
             MAX_MESSAGE_BYTES_CONFIG -> "2000000",
