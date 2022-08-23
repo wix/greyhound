@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
+import zio.Has
 
 package object metrics {
-  type GreyhoundMetrics = GreyhoundMetrics.Service
+  type GreyhoundMetrics = Has[GreyhoundMetrics.Service]
 }
