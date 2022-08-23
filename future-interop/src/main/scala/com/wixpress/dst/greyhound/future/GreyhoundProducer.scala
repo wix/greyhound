@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.future
 import com.wixpress.dst.greyhound.core.Serializer
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Exit, ZIO}
+import zio.{ZIO, ZLayer}
 
 import scala.concurrent.Future
 
@@ -19,19 +19,17 @@ case class GreyhoundProducerBuilder(config: GreyhoundConfig, mutateProducer: Pro
     for {
       runtime       <- ZIO.runtime[Env]
       producerConfig = mutateProducer(ProducerConfig(config.bootstrapServers))
-      makeProducer   = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
-      reservation   <- makeProducer.reserve
-      producer      <- reservation.acquire
+      producer   <- Producer.makeR[Any](producerConfig).map(ReportingProducer(_)).provideLayer(ZLayer.succeed(zio.Scope.global))
     } yield new GreyhoundProducer {
       override def produce[K, V](
         record: ProducerRecord[K, V],
         keySerializer: Serializer[K],
         valueSerializer: Serializer[V]
       ): Future[RecordMetadata] =
-        runtime.unsafeRunToFuture(producer.produce(record, keySerializer, valueSerializer))
+        config.runtime.unsafeRunToFuture(producer.produce(record, keySerializer, valueSerializer))
 
       override def shutdown: Future[Unit] =
-        runtime.unsafeRunToFuture(reservation.release(Exit.Success(())).unit)
+        config.runtime.unsafeRunToFuture(producer.shutdown.unit)
     }
   }
 }
@@ -48,21 +46,19 @@ case class GreyhoundContextAwareProducerBuilder[C](config: GreyhoundConfig, enco
     for {
       runtime       <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers)
-      makeProducer   = Producer.makeR[Any](producerConfig).map(ReportingProducer(_))
-      reservation   <- makeProducer.reserve
-      producer      <- reservation.acquire
+      producer   <- Producer.makeR[Any](producerConfig).map(ReportingProducer(_)).provideLayer(ZLayer.succeed(zio.Scope.global))
     } yield new GreyhoundContextAwareProducer[C] {
       override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V])(
         implicit context: C
       ): Future[RecordMetadata] =
-        runtime.unsafeRunToFuture {
+        config.runtime.unsafeRunToFuture {
           encoder.encode(record, context).flatMap { recordWithContext =>
             producer.produce(recordWithContext, keySerializer, valueSerializer)
           }
         }
 
       override def shutdown: Future[Unit] =
-        runtime.unsafeRunToFuture(reservation.release(Exit.Success(())).unit)
+        config.runtime.unsafeRunToFuture(producer.shutdown.unit)
     }
   }
 }
