@@ -13,21 +13,24 @@ import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv._
 import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import org.specs2.specification.core.Fragments
-import zio._
-import zio.duration._
+import zio.{Clock, _}
+import zio.managed._
+
+import scala.concurrent.TimeoutException
 
 class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
 
-  override def env: UManaged[Env] = ITEnv.ManagedEnv
+  override def env = ITEnv.ManagedEnv
 
   override def sharedEnv: ZManaged[Env, Throwable, TestResources] = testResources()
 
   "don't reprocess messages after rebalance" in {
     for {
-      TestResources(kafka, producer) <- getShared
-      topic                          <- kafka.createRandomTopic(prefix = "rebalance-dont-reprocess")
-      group                          <- randomGroup
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      topic                         <- kafka.createRandomTopic(prefix = "rebalance-dont-reprocess")
+      group                         <- randomGroup
 
       allMessages  = 400
       someMessages = 100
@@ -42,15 +45,15 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
       consumer     = RecordConsumer.make(configFor(topic, group, kafka).copy(offsetReset = OffsetReset.Earliest), handler)
 
       startProducing1 <- Promise.make[Nothing, Unit]
-      consumer1       <- consumer.use_(startProducing1.succeed(()) *> handledAll.await).fork
+      consumer1       <- ZIO.scoped(consumer.tap(_ => startProducing1.succeed(()) *> handledAll.await)).fork
       _               <- startProducing1.await *> ZIO.foreachPar(0 until someMessages: Seq[Int])(_ => produce)
 
       _               <- handledSome.await
       startProducing2 <- Promise.make[Nothing, Unit]
-      consumer2       <- consumer.use_(startProducing2.succeed(()) *> handledAll.await).fork
+      consumer2       <- ZIO.scoped(consumer.tap(_ => startProducing2.succeed(()) *> handledAll.await)).fork
       _               <- startProducing2.await *> ZIO.foreachPar(someMessages until allMessages: Seq[Int])(_ => produce)
 
-      _              <- ZIO.foreach_(Seq(consumer1, consumer2))(_.join.timeoutFail(TimeoutJoiningConsumer())(30.seconds))
+      _              <- ZIO.foreachDiscard(Seq(consumer1, consumer2))(_.join.timeoutFail(TimeoutJoiningConsumer())(30.seconds))
       allInvocations <- invocations.get
     } yield {
       allInvocations must equalTo(allMessages)
@@ -60,18 +63,19 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
   Fragments.foreach(Seq(Blocking, NonBlocking)) { retryType =>
     s"interrrupt $retryType retries on revoked partitions" in {
       for {
-        TestResources(kafka, producer) <- getShared
-        topic                          <- kafka.createRandomTopic(prefix = "rebalance-dont-reprocess")
-        group                          <- randomGroup
+        r                             <- getShared
+        TestResources(kafka, producer) = r
+        topic                         <- kafka.createRandomTopic(prefix = "rebalance-dont-reprocess")
+        group                         <- randomGroup
 
         metricsQueue     <- TestMetrics.queue
         retryInterrupted <- Promise.make[Nothing, Unit]
 
         _ <- metricsQueue.take
                .flatMap {
-                 case m: PartitionsRevoked                         => UIO(println(s">>>===>>> [${m.clientId}] $m"))
+                 case m: PartitionsRevoked                         => ZIO.succeed(println(s">>>===>>> [${m.clientId}] $m"))
                  case d: InterruptibleRetryMetric if d.interrupted =>
-                   UIO(println(s">>>===>>> [interrupted: ${d.interrupted}] $d")) *> retryInterrupted.succeed()
+                   ZIO.succeed(println(s">>>===>>> [interrupted: ${d.interrupted}] $d")) *> retryInterrupted.succeed()
                  case _                                            => ZIO.unit
                }
                .repeat(Schedule.forever)
@@ -81,7 +85,7 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
         keepConsumersAlive <- Promise.make[Nothing, Unit]
         handler             = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-                                UIO(println(s">>>===>>> boom!")) *> ZIO.fail(new RuntimeException("boom!"))
+                                ZIO.succeed(println(s">>>===>>> boom!")) *> ZIO.fail(new RuntimeException("boom!"))
                               }
         consumer            = RecordConsumer.make(
                                 configFor(topic, group, kafka).copy(
@@ -95,10 +99,10 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
                               )
 
         startProducing <- Promise.make[Nothing, Unit]
-        _              <- consumer.use_(startProducing.succeed(()) *> keepConsumersAlive.await).fork
+        _              <- ZIO.scoped(consumer.tap(_ => startProducing.succeed(()) *> keepConsumersAlive.await)).fork
         _              <- startProducing.await *> ZIO.foreachPar(0 until 100: Seq[Int])(_ => produce)
 
-        _ <- consumer.use_(keepConsumersAlive.await).fork
+        _ <- ZIO.scoped(consumer.tap(_ => keepConsumersAlive.await)).fork
 
         _ <- retryInterrupted.await.timeoutFail(TimeoutInterruptingRetryHandler)(30.seconds)
       } yield {
@@ -109,23 +113,24 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   "should successfully commit on revoke" in {
     for {
-      TestResources(kafka, producer) <- getShared
-      topic                          <- kafka.createRandomTopic(partitions = 6, prefix = "revoke")
-      dummy                          <- kafka.createRandomTopic(prefix = "dummy")
-      produce                         = producer.produceAsync(ProducerRecord(topic, Chunk.empty))
-      group                          <- randomGroup
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      topic                         <- kafka.createRandomTopic(partitions = 6, prefix = "revoke")
+      dummy                         <- kafka.createRandomTopic(prefix = "dummy")
+      produce                        = producer.produceAsync(ProducerRecord(topic, Chunk.empty))
+      group                         <- randomGroup
 
       _ <- produce.repeat(Schedule.recurs(30)).repeat(Schedule.spaced(2.seconds).jittered).fork
 
       _ <- ConsumerEx
              .createAndRun(2, dummy, group, kafka) {
                case Seq(c1, c2) =>
-                 c1.resubscribe(Some(topic)) *> clock.sleep(3000.millis) *>
+                 c1.resubscribe(Some(topic)) *> Clock.sleep(3000.millis) *>
                    (for {
                      _ <- c2.resubscribe(Some(topic))
-                     _ <- clock.sleep(2000.millis)
+                     _ <- Clock.sleep(2000.millis)
                      _ <- c2.resubscribe(None)
-                   } yield ()).repeat(Schedule.forever)
+                   } yield ()).repeat(Schedule.forever).unit
              }
              .fork
 
@@ -136,17 +141,18 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
       _            <- metricsQueue.take
                         .flatMap {
                           case m: CommittedOffsets if m.calledOnRebalance =>
-                            UIO(
+                            ZIO.succeed(
                               println(s">>>===>>>[${m.clientId}] CommittedOffsets{ calledOnRebalance: ${m.calledOnRebalance}, offsets: ${m.offsets} }")
                             ) *> committedInRebalance.complete(ZIO.unit)
-                          case m: CommitFailed                            => UIO(println(s">>>===>>> [${m.clientId}] $m")) *> failedCommits.update(_ :+ m)
-                          case m: PartitionsRevoked                       => UIO(println(s">>>===>>> [${m.clientId}] $m"))
+                          case m: CommitFailed                            => ZIO.succeed(println(s">>>===>>> [${m.clientId}] $m")) *> failedCommits.update(_ :+ m)
+                          case m: PartitionsRevoked                       => ZIO.succeed(println(s">>>===>>> [${m.clientId}] $m"))
                           case _                                          => ZIO.unit
                         }
                         .repeat(Schedule.forever)
                         .fork
 
       _ <- committedInRebalance.await
+             .timeoutFail(new TimeoutException("Rebalance didn't happen in 30 seconds"))(30.seconds)
 
       commitFailures <- failedCommits.get
 
@@ -155,46 +161,11 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  object ConsumerEx {
-    def consumer(clientId: String, dummy: String, group: String, kafka: ManagedKafka, body: => RIO[Env, Unit]) =
-      RecordConsumer.make(
-        configFor(dummy, group, kafka).copy(offsetReset = OffsetReset.Earliest, clientId = clientId),
-        RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => body }
-      )
-
-    def createAndRun(count: Int, dummy: String, group: String, kafka: ManagedKafka)(f: Seq[ConsumerEx] => RIO[Env, Any]) = for {
-      countersWithIndex <- ZIO.foreach(1 to count)(i => Ref.make(0).map(_ -> i))
-      _                 <- ZManaged
-                             .foreach(countersWithIndex) {
-                               case (counter, index) =>
-                                 consumer(s"consumer-$index", dummy, group, kafka, counter.update(_ + 1)).map { c =>
-                                   new ConsumerEx(s"consumer-$index", dummy, counter, c)
-                                 }
-                             }
-                             .use(f)
-    } yield ()
-  }
-
-  class ConsumerEx(val clientId: String, dummy: String, consumedCounter: Ref[Int], consumer: RecordConsumer[_]) {
-    def consumed                           = consumedCounter.get
-    def resubscribe(topic: Option[String]) = {
-      UIO(println(s"+++ $clientId ${topic.fold("unsubscribing")(_ => s"subscribing")}")) *>
-        consumer.resubscribe(topics(topic.toSeq :+ dummy: _*)).flatMap { assigned =>
-          val partitions = topic.toSet.flatMap((t: String) =>
-            assigned.collect {
-              case tp if tp.topic == t => tp.partition
-            }
-          )
-          val msg        = topic.fold("unsubscribed") { _ => s"subscribed, assigned: ${partitions.mkString(", ")}" }
-          UIO(println(s"+++ $clientId $msg"))
-        }
-    }
-  }
-
   "drain queues and finish executing tasks on rebalance" in {
     for {
-      TestResources(kafka, producer) <- getShared
-      group                          <- randomGroup
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      group                         <- randomGroup
 
       partitions           = 2
       messagesPerPartition = 2
@@ -215,33 +186,80 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
                           ),
                           extraProperties = fastConsumerMetadataFetching
                         )
-      consumer1      <- RecordConsumer
-                          .make(config1, handler1)
-                          .use_ {
-                            startProducing.succeed(()) *> latch.await
-                          }
+      consumer1      <- ZIO
+                          .scoped(
+                            RecordConsumer
+                              .make(config1, handler1)
+                              .tap { _ => startProducing.succeed(()) *> latch.await }
+                          )
                           .fork
 
       _ <- startProducing.await
-      _ <- ZIO.foreachPar_(0 until messagesPerPartition) { _ =>
+      _ <- ZIO.foreachParDiscard(0 until messagesPerPartition) { _ =>
              producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(0))) zipPar
                producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(1)))
            }
 
       handler2   = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => latch.countDown }
       config2    = configFor(topic, group, kafka).copy(clientId = "client-2")
-      consumer2 <- RecordConsumer
-                     .make(config2, handler2)
-                     .use_ {
-                       latch.await
-                     }
+      consumer2 <- ZIO
+                     .scoped(
+                       RecordConsumer
+                         .make(config2, handler2)
+                         .tap { _ => latch.await }
+                     )
                      .fork
 
-      _ <- ZIO.foreach_(Seq(consumer1, consumer2))(_.join.timeoutFail(TimeoutJoiningConsumer())(30.seconds))
+      _ <- ZIO.foreachDiscard(Seq(consumer1, consumer2))(_.join.timeoutFail(TimeoutJoiningConsumer())(30.seconds))
 
       handled <- latch.count
     } yield {
       handled must equalTo(0)
+    }
+  }
+
+  object ConsumerEx {
+    def consumer(
+      clientId: String,
+      dummy: String,
+      group: String,
+      kafka: ManagedKafka,
+      body: => RIO[Env, Unit]
+    ): ZIO[Env with RecordConsumer.Env with Scope, Throwable, RecordConsumer[Env with RecordConsumer.Env]] =
+      RecordConsumer.make(
+        configFor(dummy, group, kafka).copy(offsetReset = OffsetReset.Earliest, clientId = clientId),
+        RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => body }
+      )
+
+    def createAndRun(count: Int, dummy: String, group: String, kafka: ManagedKafka)(
+      f: Seq[ConsumerEx] => RIO[Env, Any]
+    ): RIO[Env with RecordConsumer.Env, Any] =
+      ZIO.scoped {
+        for {
+          counters <- ZIO.foreach(Range(0, count).toArray)(_ => Ref.make(0))
+          _        <- ZIO
+                        .foreach(Range(0, count).toList) { index =>
+                          consumer(s"consumer-$index", dummy, group, kafka, counters(index).update(_ + 1))
+                            .map { c => new ConsumerEx(s"consumer-$index", dummy, counters(index), c) }
+                        }
+                        .tap(f)
+        } yield ()
+      }.unit
+  }
+
+  class ConsumerEx(val clientId: String, dummy: String, consumedCounter: Ref[Int], consumer: RecordConsumer[_]) {
+    def consumed                           = consumedCounter.get
+    def resubscribe(topic: Option[String]) = {
+      ZIO.succeed(println(s"+++ $clientId ${topic.fold("unsubscribing")(_ => s"subscribing")}")) *>
+        consumer.resubscribe(topics(topic.toSeq :+ dummy: _*)).flatMap { assigned =>
+          val partitions = topic.toSet.flatMap((t: String) =>
+            assigned.collect {
+              case tp if tp.topic == t => tp.partition
+            }
+          )
+          val msg        = topic.fold("unsubscribed") { _ => s"subscribed, assigned: ${partitions.mkString(", ")}" }
+          ZIO.succeed(println(s"+++ $clientId $msg"))
+        }
     }
   }
 
@@ -256,16 +274,18 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  private def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) = for {
-    TestResources(kafka, producer) <- getShared
-    latch                          <- CountDownLatch.make(partitions)
-    handler                         = RecordHandler((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
-    _                              <- RecordConsumer.make(configFor(topic, group, kafka), handler).use_ {
-                                        ZIO.foreachPar_(0 until partitions) { partition =>
-                                          producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
-                                        } *> latch.await
-                                      }
-  } yield ()
+  private def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) =
+    ZIO.scoped(for {
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      latch                         <- CountDownLatch.make(partitions)
+      handler                        = RecordHandler((_: ConsumerRecord[Chunk[Byte], Chunk[Byte]]) => latch.countDown)
+      _                             <- RecordConsumer.make(configFor(topic, group, kafka), handler).tap { _ =>
+                                         ZIO.foreachParDiscard(0 until partitions) { partition =>
+                                           producer.produce(ProducerRecord(topic, Chunk.empty, partition = Some(partition)))
+                                         } *> latch.await
+                                       }
+    } yield ())
 
   private def configFor(topic: Topic, group: Group, kafka: ManagedKafka) =
     RecordConsumerConfig(kafka.bootstrapServers, group, Topics(Set(topic)), extraProperties = fastConsumerMetadataFetching)
