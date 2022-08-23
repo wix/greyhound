@@ -13,20 +13,18 @@ import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv._
 import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import zio._
-import zio.Clock
-import zio.managed._
 
 class OffsetIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
 
-  override def env = ITEnv.ManagedEnv
+  override def env: UManaged[Env] = ITEnv.ManagedEnv
 
   override def sharedEnv: ZManaged[Env, Throwable, TestResources] = testResources()
 
   "return offset for time" in {
     for {
-      r <- getShared
-      topic                          <- r.kafka.createRandomTopic(prefix = s"aTopic", partitions = 1)
+      TestResources(kafka, producer) <- getShared
+      topic                          <- kafka.createRandomTopic(prefix = s"aTopic", partitions = 1)
       partition                       = 0
       group                          <- randomGroup
 
@@ -38,17 +36,16 @@ class OffsetIT extends BaseTestWithSharedEnv[Env, TestResources] {
                                handledSomeMessages.countDown zipParRight handledAllMessages.countDown
                              }
 
-      test <- ZIO.scoped(RecordConsumer.make(configFor(topic, group, r.kafka).copy(offsetReset = OffsetReset.Earliest), handler).
-        flatMap{ consumer =>
+      test <- RecordConsumer.make(configFor(topic, group, kafka).copy(offsetReset = OffsetReset.Earliest), handler).use { consumer =>
                 val record = ProducerRecord(topic, Chunk.empty)
                 for {
-                  zeroTime         <- Clock.currentTime(TimeUnit.MILLISECONDS)
-                  _                <- ZIO.foreachParDiscard(0 until someMessages)(_ => r.producer.produce(record))
+                  zeroTime         <- clock.currentTime(TimeUnit.MILLISECONDS)
+                  _                <- ZIO.foreachPar_(0 until someMessages)(_ => producer.produce(record))
                   _                <- handledSomeMessages.await
-                  middleTime       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                  middleTime       <- clock.currentTime(TimeUnit.MILLISECONDS)
                   // When we don't produce the additional messages below the test starts failing as Kafka client returns null for
                   // middleTimeOffset - WTF?
-                  _                <- ZIO.foreachParDiscard(someMessages until numberOfMessages)(_ => r.producer.produce(record))
+                  _                <- ZIO.foreachPar_(someMessages until numberOfMessages)(_ => producer.produce(record))
                   _                <- handledAllMessages.await
                   zeroTimeOffset   <- consumer.offsetsForTimes(Map(TopicPartition(topic, partition) -> zeroTime))
                   middleTimeOffset <- consumer.offsetsForTimes(Map(TopicPartition(topic, partition) -> middleTime))
@@ -56,7 +53,7 @@ class OffsetIT extends BaseTestWithSharedEnv[Env, TestResources] {
                   (zeroTimeOffset(TopicPartition(topic, partition)) === 0) and
                     (middleTimeOffset(TopicPartition(topic, partition)) === someMessages)
                 }
-              })
+              }
     } yield test
   }
 
