@@ -18,5 +18,5 @@ trait Serializer[-A] {
 
 object Serializer {
   def apply[A](serializer: KafkaSerializer[A]): Serializer[A] =
-    (topic: String, value: A) => Task(serializer.serialize(topic, value)).map(v => Option(v).map(Chunk.fromArray).orNull)
+    (topic: String, value: A) => ZIO.attempt(serializer.serialize(topic, value)).map(v => Option(v).map(Chunk.fromArray).orNull)
 }
