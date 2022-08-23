@@ -1,38 +1,37 @@
 package com.wixpress.dst.greyhound.core.metrics
 
-import com.wixpress.dst.greyhound.core.metrics
 import org.slf4j.LoggerFactory
-import zio.{CanFail, Cause, Clock, Duration, Exit, Trace, UIO, URIO, ZIO, ZLayer}
+import zio.blocking.Blocking
+import zio.clock.Clock
+import zio.duration.Duration
+import zio.{CanFail, Exit, Has, URIO, ZIO, ZLayer}
 
 import scala.util.{Failure, Success, Try}
 
 object GreyhoundMetrics {
-  implicit val trace = Trace.empty
   trait Service {
     self =>
-    protected def nanoTime = Clock.nanoTime
+    protected def nanoTime = Clock.Service.live.nanoTime
 
-    def report(metric: GreyhoundMetric)(implicit trace: Trace): UIO[Unit]
-    def reporting[R, E, A](zio: ZIO[R, E, A])(metric: MetricResult[E, A] => GreyhoundMetric)(implicit trace: Trace): ZIO[R, E, A] = {
-      zio.exit
+    def report(metric: GreyhoundMetric): URIO[Blocking, Unit]
+    def reporting[R, E, A](zio: ZIO[R, E, A])(metric: MetricResult[E, A] => GreyhoundMetric): ZIO[Blocking with R, E, A] = {
+      zio.run
         .timedWith(nanoTime)
         .tap { case (duration, exit) => report(metric(MetricResult(exit, duration))) }
-        .flatMap(_._2.foldZIO(e => ZIO.failCause(Cause.fail(e)), ZIO.succeed(_)))
+        .flatMap(_._2.foldM(ZIO.halt(_), ZIO.succeed(_)))
     }
 
-    def ++(service: Service): Service = new metrics.GreyhoundMetrics {
-      override def report(metric: GreyhoundMetric)(implicit trace: Trace): UIO[Unit] =
-        self.report(metric) *> service.report(metric)
-    }
+    def ++(service: Service): Service =
+      (metric: GreyhoundMetric) => self.report(metric) *> service.report(metric)
   }
 
-  def report(metric: GreyhoundMetric): URIO[GreyhoundMetrics, Unit] =
-    ZIO.environmentWithZIO(_.get.report(metric))
+  def report(metric: GreyhoundMetric): URIO[GreyhoundMetrics with Blocking, Unit] =
+    ZIO.accessM(_.get.report(metric))
 
   def reporting[R, E, A](zio: ZIO[R, E, A])(
     metric: MetricResult[E, A] => GreyhoundMetric
-  ): ZIO[GreyhoundMetrics with R, E, A] =
-    ZIO.environmentWithZIO[GreyhoundMetrics](_.get.reporting(zio)(metric))
+  ): ZIO[GreyhoundMetrics with Blocking with R, E, A] =
+    ZIO.accessM(_.get.reporting(zio)(metric))
 
   object Service {
     lazy val Live = {
@@ -40,20 +39,17 @@ object GreyhoundMetrics {
       fromReporter(metric => logger.info(metric.toString))
     }
     val noop      = new Service {
-      override def report(metric: GreyhoundMetric) (implicit trace: Trace): UIO[Unit] = ZIO.unit
+      override def report(metric: GreyhoundMetric): URIO[Blocking, Unit] = ZIO.unit
     }
   }
 
   lazy val liveLayer = ZLayer.succeed(Service.Live)
-  lazy val live      = Service.Live
+  lazy val live      = Has(Service.Live)
 
   def fromReporter(report: GreyhoundMetric => Unit): GreyhoundMetrics.Service =
-    new GreyhoundMetrics.Service {
-      override def report(metric: GreyhoundMetric)(implicit trace: Trace): UIO[Unit] =
-        ZIO.succeed(report(metric))
-    }
+    metric => ZIO.effectTotal(report(metric))
 
-  def noop: GreyhoundMetrics = Service.noop
+  def noop: GreyhoundMetrics = Has(Service.noop)
 
   implicit class ZioOps[R, E: CanFail, A](val zio: ZIO[R, E, A]) {
     def reporting(metric: MetricResult[E, A] => GreyhoundMetric) = GreyhoundMetrics.reporting(zio)(metric)
@@ -64,14 +60,14 @@ object GreyhoundMetrics {
   }
 
   case class MetricResult[+E, +A](result: Exit[E, A], duration: Duration) {
-    def map[B](f: A => B)                                 = copy(result = result.mapExit(f))
+    def map[B](f: A => B)                                 = copy(result = result.map(f))
     def mapExit[B, E1 >: E](f: Exit[E, A] => Exit[E1, B]) = copy(result = f(result))
-    def mapError[E1](f: E => E1)                          = copy(result = result.mapErrorExit(f))
+    def mapError[E1](f: E => E1)                          = copy(result = result.mapError(f))
     def toTry(implicit ev: E <:< Throwable): Try[A]       =
-      result.foldExit(c => Failure(c.squashTrace), Success.apply)
-    def value: Option[A]                                  = result.foldExit(_ => None, Some(_))
-    def interrupted: Boolean                              = result.foldExit(_.isInterrupted, _ => false)
-    def succeeded: Boolean                                = result.isSuccess
+      result.fold(c => Failure(c.squashTrace), Success.apply)
+    def value: Option[A]                                  = result.fold(_ => None, Some(_))
+    def interrupted: Boolean                              = result.fold(_.interrupted, _ => false)
+    def succeeded: Boolean                                = result.succeeded
     def failed: Boolean                                   = !succeeded
   }
 }
