@@ -6,12 +6,12 @@ import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{shouldBlock
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import zio._
-
+import zio.blocking.Blocking
 
 object BlockingStateResolver {
   def apply(blockingStateRef: Ref[Map[BlockingTarget, BlockingState]]): BlockingStateResolver = {
     new BlockingStateResolver {
-      override def resolve[K, V](record: ConsumerRecord[K, V])(implicit trace: Trace): URIO[GreyhoundMetrics, Boolean] = {
+      override def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics with Blocking, Boolean] = {
         val topicPartition = TopicPartition(record.topic, record.partition)
 
         for {
@@ -45,7 +45,7 @@ object BlockingStateResolver {
         } yield shouldBlock
       }
 
-      override def setBlockingState[R1](command: BlockingStateCommand) (implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+      override def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics with Blocking, Unit] = {
         def handleIgnoreOnceRequest(topicPartition: TopicPartition) = {
           blockingStateRef
             .modify(prevState => {
@@ -79,7 +79,7 @@ object BlockingStateResolver {
         }
 
         command match {
-          case IgnoreOnceFor(topicPartition: TopicPartition)  => handleIgnoreOnceRequest(topicPartition).unit
+          case IgnoreOnceFor(topicPartition: TopicPartition)  => handleIgnoreOnceRequest(topicPartition)
           case IgnoreAllFor(topicPartition: TopicPartition)   =>
             blockingStateRef.update(_.updated(TopicPartitionTarget(topicPartition), IgnoringAll))
           case BlockErrorsFor(topicPartition: TopicPartition) =>
@@ -94,9 +94,9 @@ object BlockingStateResolver {
 }
 
 trait BlockingStateResolver {
-  def resolve[K, V](record: ConsumerRecord[K, V]) (implicit trace: Trace): URIO[GreyhoundMetrics, Boolean]
+  def resolve[K, V](record: ConsumerRecord[K, V]): URIO[GreyhoundMetrics with Blocking, Boolean]
 
-  def setBlockingState[R1](command: BlockingStateCommand) (implicit trace: Trace): RIO[GreyhoundMetrics, Unit]
+  def setBlockingState[R1](command: BlockingStateCommand): RIO[GreyhoundMetrics with Blocking, Unit]
 }
 
 sealed trait BlockingStateCommand
