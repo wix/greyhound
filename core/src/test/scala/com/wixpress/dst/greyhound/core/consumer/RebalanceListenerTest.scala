@@ -1,27 +1,28 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.TopicPartition
-import zio.{Ref, URIO, ZIO}
+import zio.{Ref, URIO, ZIO, Trace}
 import zio.test.junit.JUnitRunnableSpec
 import zio.test._
 import zio.test.Assertion._
 
 class RebalanceListenerTest extends JUnitRunnableSpec {
+  private implicit val trace = Trace.empty
   def spec = suite("RebalanceListenerTest")(
-    testM("*> operator") {
+    test("*> operator") {
       for {
         loggedRef <- Ref.make(Vector.empty[String])
         log        = (s: String) => loggedRef.update(_ :+ s)
         runtime   <- ZIO.runtime[Any]
-        unsafeLog  = (s: String) => runtime.unsafeRunTask(log(s))
+        unsafeLog  = (s: String) => zio.Unsafe.unsafe { implicit ss => runtime.unsafe.run(log(s)).getOrThrowFiberFailure() }
         listener   = (id: String) =>
                        new RebalanceListener[Any] {
                          override def onPartitionsRevoked(
                            consumer: Consumer,
                            partitions: Set[TopicPartition]
-                         ): URIO[Any, DelayedRebalanceEffect] =
+                         ) (implicit trace: Trace): URIO[Any, DelayedRebalanceEffect] =
                            log(s"$id.revoke $partitions").as(DelayedRebalanceEffect(unsafeLog(s"$id.revoke.tle $partitions")))
-                         override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, Any] =
+                         override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]) (implicit trace: Trace): URIO[Any, Any] =
                            log(s"$id.assigned $partitions")
                        }
         l1l2       = listener("l1") *> listener("l2")
