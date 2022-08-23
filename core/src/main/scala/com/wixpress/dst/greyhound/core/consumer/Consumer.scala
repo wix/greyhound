@@ -1,20 +1,22 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import java.util.regex.Pattern
+import java.{lang, time, util}
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.Consumer._
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.ClosedConsumer
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Decryptor, NoOpDecryptor, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
-import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, OffsetAndMetadata, ConsumerConfig => KafkaConsumerConfig}
+import org.apache.kafka.clients.consumer.OffsetAndMetadata
+import org.apache.kafka.clients.consumer.{ConsumerConfig => KafkaConsumerConfig, ConsumerRebalanceListener, KafkaConsumer}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
-import zio.ZIO.attemptBlocking
 import zio._
+import zio.blocking.{effectBlocking, Blocking}
+import zio.clock.Clock
+import zio.duration._
 
-import java.util.concurrent.TimeUnit
-import java.util.regex.Pattern
-import java.{lang, time, util}
 import scala.collection.JavaConverters._
 import scala.util.{Random, Try}
 
@@ -22,50 +24,48 @@ trait Consumer {
   def subscribe[R1](
     topics: Set[Topic],
     rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty
-  )(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit]
+  ): RIO[Blocking with GreyhoundMetrics with R1, Unit]
 
   def subscribePattern[R1](
     topicStartsWith: Pattern,
     rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty
-  )(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit]
+  ): RIO[Blocking with GreyhoundMetrics with R1, Unit]
 
-  def poll(timeout: Duration)(implicit trace: Trace): RIO[GreyhoundMetrics, Records]
+  def poll(timeout: Duration): RIO[Blocking with GreyhoundMetrics, Records]
 
-  def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit]
+  def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit]
 
-  def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
-  def beginningOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+  def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
-  def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+  def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]]
 
-  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+  def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Clock with Blocking, Map[TopicPartition, Offset]]
 
-  def commitOnRebalance(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect]
+  def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect]
 
-  def pause(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
+  def pause(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
-  def resume(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
+  def resume(partitions: Set[TopicPartition]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
-  def seek(partition: TopicPartition, offset: Offset)(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
+  def seek(partition: TopicPartition, offset: Offset): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit]
 
-  def seek(toOffsets: Map[TopicPartition, Offset])(implicit trace: Trace): ZIO[GreyhoundMetrics, Nothing, Unit] =
+  def seek(toOffsets: Map[TopicPartition, Offset]): ZIO[Blocking with GreyhoundMetrics, Nothing, Unit] =
     ZIO.foreach(toOffsets.toSeq) { case (tp, o) => seek(tp, o).ignore }.unit
 
-  def pause(record: ConsumerRecord[_, _])(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit] = {
+  def pause(record: ConsumerRecord[_, _]): ZIO[Blocking with GreyhoundMetrics, IllegalStateException, Unit] = {
     val partition = RecordTopicPartition(record)
     pause(Set(partition)) *> seek(partition, record.offset)
   }
 
-  def position(topicPartition: TopicPartition)(implicit trace: Trace): Task[Offset]
+  def position(topicPartition: TopicPartition): Task[Offset]
 
-  def assignment(implicit trace: Trace): Task[Set[TopicPartition]]
+  def assignment: Task[Set[TopicPartition]]
 
-  def config(implicit trace: Trace): ConsumerConfig
+  def config: ConsumerConfig
 
-  def listTopics(implicit trace: Trace): RIO[Any, Map[Topic, List[PartitionInfo]]]
-
-  def shutdown(timeout: Duration)(implicit trace: Trace): Task[Unit] = ZIO.succeed(())
+  def listTopics: RIO[Blocking, Map[Topic, List[PartitionInfo]]]
 }
 
 object Consumer {
@@ -80,10 +80,10 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(cfg: ConsumerConfig): RIO[GreyhoundMetrics with Scope, Consumer] = for {
-    semaphore          <- Semaphore.make(1)
+  def make(cfg: ConsumerConfig): RManaged[Blocking with GreyhoundMetrics, Consumer] = for {
+    semaphore          <- Semaphore.make(1).toManaged_
     consumer           <- makeConsumer(cfg, semaphore)
-    metrics            <- ZIO.environment[GreyhoundMetrics]
+    metrics            <- ZIO.environment[GreyhoundMetrics].toManaged_
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
     // we also may want to seek forward to some given initial offsets
@@ -96,20 +96,21 @@ object Consumer {
                               timeoutIfSeek = 10.seconds,
                               initialSeek = cfg.initialSeek
                             )
+                            .toManaged_
   } yield {
     new Consumer {
-      override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
+      override def subscribePattern[R1](pattern: Pattern, rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
         listener(this, offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
-          .flatMap(lis => withConsumer(_.subscribe(topicStartsWith, lis)))
+          .flatMap(lis => withConsumer(_.subscribe(pattern, lis)))
 
-      override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1])(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit] =
+      override def subscribe[R1](topics: Set[Topic], rebalanceListener: RebalanceListener[R1]): RIO[Blocking with R1, Unit] =
         listener(this, offsetsInitializer.initializeOffsets, config.additionalListener *> rebalanceListener)
           .flatMap(lis => withConsumerBlocking(_.subscribe(topics.asJava, lis)))
 
-      override def poll(timeout: Duration)(implicit trace: Trace): RIO[Any, Records] =
+      override def poll(timeout: Duration): RIO[Blocking, Records] =
         withConsumerM { c =>
           rewindPositionsOnError(c) {
-            attemptBlocking(c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_)))
+            effectBlocking(c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_)))
               .flatMap(ZIO.foreach(_)(cfg.decryptor.decrypt))
           }
         }
@@ -118,65 +119,63 @@ object Consumer {
         def rewind(positions: Iterable[(TopicPartition, Offset)]) =
           seekUnsafe(positions)(c).resurrect
             .reporting(ConsumerMetric.RewindOffsetsOnPollError(cfg.clientId, cfg.groupId, positions.toMap, _))
-            .provideEnvironment(metrics)
+            .provideSome[Blocking](_ ++ metrics)
             .ignore
         for {
           positions <- allPositionsUnsafe
-          result    <- op.tapErrorCause(_ => rewind(positions))
+          result    <- op.tapCause(_ => rewind(positions))
         } yield result
       }
 
-      override def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
+      override def endOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.endOffsets(kafkaPartitions(partitions)))
           .map(_.asScala.map { case (tp: KafkaTopicPartition, o: lang.Long) => (TopicPartition(tp), o.toLong) }.toMap)
 
-      override def beginningOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
+      override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.beginningOffsets(kafkaPartitions(partitions)))
           .map(_.asScala.map { case (tp: KafkaTopicPartition, o: lang.Long) => (TopicPartition(tp), o.toLong) }.toMap)
 
-      override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
+      override def committedOffsets(partitions: Set[TopicPartition]): RIO[Blocking, Map[TopicPartition, Offset]] =
         withConsumerBlocking(_.committed(kafkaPartitions(partitions)))
           .map(_.asScala.collect { case (tp: KafkaTopicPartition, o: OffsetAndMetadata) => (TopicPartition(tp), o.offset) }.toMap)
 
-      override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+      override def commit(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsets(offsets)))
       }
 
-      override def commitOnRebalance(
-        offsets: Map[TopicPartition, Offset]
-      )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
+      override def commitOnRebalance(offsets: Map[TopicPartition, Offset]): RIO[Blocking with GreyhoundMetrics, DelayedRebalanceEffect] = {
         val kOffsets = kafkaOffsets(offsets)
         // we can't actually call commit here, as it needs to be called from the same
         // thread, that triggered poll(), so we return the commit action as thunk
-        ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
+        UIO(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
       }
 
-      override def pause(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+      override def pause(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
         withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie { case e: IllegalStateException => e }
 
-      override def resume(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+      override def resume(partitions: Set[TopicPartition]): ZIO[Any, IllegalStateException, Unit] =
         withConsumer(consumer => {
           val onlySubscribed = consumer.assignment().asScala.toSet intersect kafkaPartitions(partitions).asScala.toSet
           consumer.resume(onlySubscribed.asJavaCollection)
         }).refineOrDie { case e: IllegalStateException => e }
 
-      override def seek(partition: TopicPartition, offset: Offset)(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
+      override def seek(partition: TopicPartition, offset: Offset): ZIO[Any, IllegalStateException, Unit] =
         withConsumerM(seekUnsafe(Seq(partition -> offset)))
 
       private def seekUnsafe(positions: Iterable[(TopicPartition, Offset)])(c: KafkaConsumer[Chunk[Byte], Chunk[Byte]]) = {
-        ZIO.attempt(positions.foreach { case (partition, offset) => c.seek(partition.asKafka, offset) }).refineOrDie {
+        Task(positions.foreach { case (partition, offset) => c.seek(partition.asKafka, offset) }).refineOrDie {
           case e: IllegalStateException => e
         }
       }
 
-      override def position(topicPartition: TopicPartition)(implicit trace: Trace): Task[Offset] =
+      override def position(topicPartition: TopicPartition): Task[Offset] =
         withConsumer(_.position(topicPartition.asKafka))
 
-      override def assignment(implicit trace: Trace): Task[Set[TopicPartition]] = {
+      override def assignment: Task[Set[TopicPartition]] = {
         withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
       }
 
-      private def allPositionsUnsafe = attemptBlocking {
+      private def allPositionsUnsafe = effectBlocking {
         consumer
           .assignment()
           .asScala
@@ -185,20 +184,20 @@ object Consumer {
           .toMap
       }
 
-      override def config(implicit trace: Trace): ConsumerConfig = cfg
+      override def config: ConsumerConfig = cfg
 
       private def withConsumer[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): Task[A] =
-        semaphore.withPermit(ZIO.attempt(f(consumer)))
+        semaphore.withPermit(Task(f(consumer)))
 
-      private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Any, A] =
-        semaphore.withPermit(attemptBlocking(f(consumer)))
+      private def withConsumerBlocking[A](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => A): RIO[Blocking, A] =
+        semaphore.withPermit(effectBlocking(f(consumer)))
 
       private def withConsumerM[R, A, E](f: KafkaConsumer[Chunk[Byte], Chunk[Byte]] => ZIO[R, E, A]): ZIO[R, E, A] =
         semaphore.withPermit(f(consumer))
 
       override def offsetsForTimes(
         topicPartitionsOnTimestamp: Map[TopicPartition, Long]
-      )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
+      ): RIO[Clock with Blocking, Map[TopicPartition, Offset]] = {
         val kafkaTopicPartitionsOnTimestamp = topicPartitionsOnTimestamp.map { case (tp, ts) => tp.asKafka -> ts }
         withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.mapValues(l => new lang.Long(l)).toMap.asJava))
           .map(
@@ -209,43 +208,24 @@ object Consumer {
           )
       }
 
-      override def listTopics(implicit trace: Trace): RIO[Any, Map[Topic, List[PartitionInfo]]] =
+      override def listTopics: RIO[Blocking, Map[Topic, List[PartitionInfo]]] =
         withConsumer(_.listTopics()).map { topics => topics.asScala.mapValues(_.asScala.toList.map(PartitionInfo.apply)).toMap }
-
-      override def shutdown(timeout: Duration)(implicit trace: Trace): Task[Unit] =
-          withConsumer(_.close(timeout.toMillis, TimeUnit.MILLISECONDS))
-            .reporting(ClosedConsumer(config.groupId, config.clientId, _))
-            .provideEnvironment(metrics)
     }
   }
 
   private def listener[R1](consumer: Consumer, onAssignFirstDo: Set[TopicPartition] => Unit, rebalanceListener: RebalanceListener[R1]) =
-    ZIO.runtime[R1].map { runtime =>
+    ZIO.runtime[Blocking with R1].map { runtime =>
       new ConsumerRebalanceListener {
         override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit = {
-          zio.Unsafe.unsafe { implicit s =>
-            runtime.unsafe
-              .run(
-                rebalanceListener.onPartitionsRevoked(consumer, partitionsFor(partitions))
-              )
-              .getOrThrowFiberFailure()
-              .run()
-          }
-//          runtime
-//            .unsafeRun()
-//            .run() // this needs to be run in the same thread
+          runtime
+            .unsafeRun(rebalanceListener.onPartitionsRevoked(consumer, partitionsFor(partitions)))
+            .run() // this needs to be run in the same thread
         }
 
         override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit = {
           val assigned = partitionsFor(partitions)
           onAssignFirstDo(assigned)
-          zio.Unsafe.unsafe { implicit s =>
-            runtime.unsafe
-              .run(
-                rebalanceListener.onPartitionsAssigned(consumer, assigned)
-              )
-              .getOrThrowFiberFailure()
-          }
+          runtime.unsafeRun(rebalanceListener.onPartitionsAssigned(consumer, assigned))
         }
 
         private def partitionsFor(partitions: util.Collection[KafkaTopicPartition]) =
@@ -256,14 +236,14 @@ object Consumer {
   private def makeConsumer(
     config: ConsumerConfig,
     semaphore: Semaphore
-  ): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
-    val acquire                              = attemptBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
+  ): RManaged[Blocking with GreyhoundMetrics, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
+    val acquire                              = effectBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     def close(consumer: KafkaConsumer[_, _]) =
-      attemptBlocking(consumer.close())
+      effectBlocking(consumer.close())
         .reporting(ClosedConsumer(config.groupId, config.clientId, _))
         .ignore
 
-    ZIO.acquireRelease(acquire)(consumer => semaphore.withPermit(close(consumer)))
+    ZManaged.make(acquire)(consumer => semaphore.withPermit(close(consumer)))
   }
 
 }
@@ -310,11 +290,11 @@ object OffsetReset {
 }
 
 trait UnsafeOffsetOperations {
-  def committed(partitions: Set[TopicPartition], timeout: zio.Duration): Map[TopicPartition, Offset]
+  def committed(partitions: Set[TopicPartition], timeout: zio.duration.Duration): Map[TopicPartition, Offset]
 
-  def beginningOffsets(partitions: Set[TopicPartition], timeout: zio.Duration): Map[TopicPartition, Offset]
+  def beginningOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration): Map[TopicPartition, Offset]
 
-  def position(partition: TopicPartition, timeout: zio.Duration): Offset
+  def position(partition: TopicPartition, timeout: zio.duration.Duration): Offset
 
   def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
 
