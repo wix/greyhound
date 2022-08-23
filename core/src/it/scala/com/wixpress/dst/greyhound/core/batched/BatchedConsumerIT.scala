@@ -15,35 +15,37 @@ import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import com.wixpress.dst.greyhound.testenv.ITEnv.{clientId, _}
 import org.apache.kafka.clients.consumer.ConsumerConfig.MAX_POLL_RECORDS_CONFIG
-import zio.clock.sleep
-import zio.{console, Chunk, Queue, Ref, UIO, UManaged, ZIO}
-import zio.duration._
+import zio.{Chunk, Queue, Ref, ZIO}
+
+import zio.{Console, _}
+import zio.Clock.sleep
 
 class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
 
-  override def env: UManaged[ITEnv.Env] = ITEnv.ManagedEnv
+  override def env = ITEnv.ManagedEnv
 
   override def sharedEnv = ITEnv.testResources()
 
   val resources = testResources()
 
-  "produce, consume and resubscribe" in {
+  "produce, consume and resubscribe" in ZIO.scoped {
     for {
-      TestResources(kafka, producer) <- getShared
-      topic                          <- kafka.createRandomTopic(prefix = s"topic1-single1")
-      topic2                         <- kafka.createRandomTopic(prefix = "topic2-single1")
-      group                          <- randomGroup
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      topic                         <- kafka.createRandomTopic(prefix = s"topic1-single1")
+      topic2                        <- kafka.createRandomTopic(prefix = "topic2-single1")
+      group                         <- randomGroup
 
       queue    <- Queue.unbounded[ConsumerRecord[String, String]]
       handler   = BatchRecordHandler((cr: ConsumerRecordBatch[String, String]) =>
-                    UIO(println(s"***** Consumed: $cr")) *> ZIO.foreach(cr.records)(queue.offer)
+                    ZIO.succeed(println(s"***** Consumed: $cr")) *> ZIO.foreach(cr.records)(queue.offer)
                   ).withDeserializers(StringSerde, StringSerde)
       cId      <- clientId
       config    = configFor(kafka, group, topic).copy(clientId = cId)
       records1  = producerRecords(topic, "1", partitions, 5)
       records2  = producerRecords(topic, "2", partitions, 5)
-      messages <- BatchConsumer.make(config, handler).use { consumer =>
+      messages <- BatchConsumer.make(config, handler).flatMap { consumer =>
                     val totalExpected = records1.size + records2.size
                     produceBatch(producer, records1) *> sleep(3.seconds) *>
                       consumer.resubscribe(ConsumerSubscription.topics(topic, topic2)) *>
@@ -52,7 +54,7 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                       queue
                         .takeBetween(totalExpected, totalExpected)
                         .timeout(20.seconds)
-                        .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
+                        .tap(o => ZIO.when(o.isEmpty)(Console.printLine("timeout waiting for messages!")))
                   }
       msgs     <- ZIO.fromOption(messages).orElseFail(TimedOutWaitingForMessages)
     } yield {
@@ -63,29 +65,30 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  "be able to resubscribe to same topics" in {
+  "be able to resubscribe to same topics" in ZIO.scoped {
     for {
-      TestResources(kafka, producer) <- getShared
-      partitions                      = 1
-      topic                          <- kafka.createRandomTopic(prefix = s"topic1-single1", partitions = partitions)
-      group                          <- randomGroup
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      partitions                     = 1
+      topic                         <- kafka.createRandomTopic(prefix = s"topic1-single1", partitions = partitions)
+      group                         <- randomGroup
 
       queue    <- Queue.unbounded[ConsumerRecord[String, String]]
       handler   = BatchRecordHandler((cr: ConsumerRecordBatch[String, String]) =>
-                    UIO(println(s"***** Consumed: $cr")) *> ZIO.foreach(cr.records)(queue.offer)
+                    ZIO.succeed(println(s"***** Consumed: $cr")) *> ZIO.foreach(cr.records)(queue.offer)
                   ).withDeserializers(StringSerde, StringSerde)
       cId      <- clientId
       config    = configFor(kafka, group, topic, resubscribeTimeout = 1.second).copy(clientId = cId)
       records1  = producerRecords(topic, "1", partitions, 5)
       records2  = producerRecords(topic, "2", partitions, 5)
-      messages <- BatchConsumer.make(config, handler).use { consumer =>
+      messages <- BatchConsumer.make(config, handler).flatMap { consumer =>
                     val totalExpected = records1.size + records2.size
                     produceBatch(producer, records1) *> sleep(3.seconds) *> consumer.resubscribe(ConsumerSubscription.topics(topic)) *>
                       produceBatch(producer, records2) *> sleep(3.seconds) *>
                       queue
                         .takeBetween(totalExpected, totalExpected)
                         .timeout(20.seconds)
-                        .tap(o => ZIO.when(o.isEmpty)(console.putStrLn("timeout waiting for messages!")))
+                        .tap(o => ZIO.when(o.isEmpty)(Console.printLine("timeout waiting for messages!")))
                   }
       msgs     <- ZIO.fromOption(messages).orElseFail(TimedOutWaitingForMessages)
     } yield {
@@ -96,40 +99,41 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  "handle errors with retry" in {
+  "handle errors with retry" in ZIO.scoped {
     for {
-      TestResources(kafka, producer) <- getShared
-      topic                          <- kafka.createRandomTopic(prefix = "handler-fails")
-      group                          <- randomGroup
-      failsOn                        <- Ref.make[Seq[ConsumerRecord[String, String]] => Boolean](_ => false)
-      handled                        <- AwaitableRef.make(Seq.empty[ConsumerRecord[String, String]])
-      failed                         <- AwaitableRef.make(Seq.empty[ConsumerRecord[String, String]])
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      topic                         <- kafka.createRandomTopic(prefix = "handler-fails")
+      group                         <- randomGroup
+      failsOn                       <- Ref.make[Seq[ConsumerRecord[String, String]] => Boolean](_ => false)
+      handled                       <- AwaitableRef.make(Seq.empty[ConsumerRecord[String, String]])
+      failed                        <- AwaitableRef.make(Seq.empty[ConsumerRecord[String, String]])
 
       handler      = BatchRecordHandler((cr: ConsumerRecordBatch[String, String]) =>
-                       ZIO.whenM(failsOn.get.map(_(cr.records)))(
-                         failed.update(_ ++ cr.records) *> UIO(println(s"failing for records: $cr")) *>
+                       ZIO.whenZIO(failsOn.get.map(_(cr.records)))(
+                         failed.update(_ ++ cr.records) *> ZIO.succeed(println(s"failing for records: $cr")) *>
                            ZIO.fail(HandleError(new RuntimeException))
-                       ) *> UIO(println(s"handled records: $cr")) *> handled.update(_ ++ cr.records)
+                       ) *> ZIO.succeed(println(s"handled records: $cr")) *> handled.update(_ ++ cr.records)
                      ).withDeserializers(StringSerde, StringSerde)
       retryBackoff = 1.second
       config       = configFor(kafka, group, topic).copy(offsetReset = OffsetReset.Earliest, retryConfig = Some(BatchRetryConfig(retryBackoff)))
-      test        <- BatchConsumer.make(config, handler).use { _ =>
+      test        <- BatchConsumer.make(config, handler).flatMap { _ =>
                        val recsPerPartition = 10
                        val records1         = producerRecords(topic, "1", partitions, recsPerPartition)
                        val records2         = producerRecords(topic, "2", partitions, recsPerPartition)
                        val failingPartition = 0
                        for {
                          _                  <- failsOn.set(_.head.partition == failingPartition)
-                         _                  <- UIO(println(s"producing 1st set of ${records1.size} records"))
+                         _                  <- ZIO.succeed(println(s"producing 1st set of ${records1.size} records"))
                          _                  <- produceBatch(producer, records1)
-                         _                  <- UIO(s"produced ${records1.size} records")
+                         _                  <- ZIO.succeed(s"produced ${records1.size} records")
                          failed1            <- failed.await(_.nonEmpty, 5.seconds)
                          handled1           <- handled.await(_.size >= recsPerPartition * (partitions - 1), 10.seconds)
-                         _                  <- UIO(println(s"producing 2nd set of ${records2.size} records"))
+                         _                  <- ZIO.succeed(println(s"producing 2nd set of ${records2.size} records"))
                          _                  <- produceBatch(producer, records2)
-                         _                  <- UIO(println(s"sleeping for ${retryBackoff * 4}"))
+                         _                  <- ZIO.succeed(println(s"sleeping for ${retryBackoff * 4}"))
                          _                  <- sleep(retryBackoff * 4)
-                         _                  <- UIO(println(s"done sleeping for ${retryBackoff * 4}"))
+                         _                  <- ZIO.succeed(println(s"done sleeping for ${retryBackoff * 4}"))
                          failedAfterRetries <- failed.get
                          handled2           <- handled.await(_.size >= (recsPerPartition * (partitions - 1)) * 2, 10.seconds)
                          _                  <- failsOn.set(_ => false)
@@ -144,10 +148,11 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield test
   }
 
-  "pause and resume consumer" in {
+  "pause and resume consumer" in ZIO.scoped {
     for {
-      TestResources(kafka, producer) <- getShared
-      _                              <- console.putStrLn(">>>> starting test: pauseResumeTest")
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      _                             <- Console.printLine(">>>> starting test: pauseResumeTest")
 
       topic <- kafka.createRandomTopic(prefix = "core-pause-resume")
       group <- randomGroup
@@ -159,20 +164,20 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       handledAllMessages  <- CountDownLatch.make(numberOfMessages)
       handleCounter       <- Ref.make[Int](0)
       handler              = BatchRecordHandler { recs: ConsumerRecordBatch[Chunk[Byte], Chunk[Byte]] =>
-                               UIO(println(s"consumed ${recs.size} messages for partition ${recs.records.head.partition}")) *>
+                               ZIO.succeed(println(s"consumed ${recs.size} messages for partition ${recs.records.head.partition}")) *>
                                  handleCounter.update(_ + recs.size) *> handledSomeMessages.countDown(recs.size) zipParRight
                                  handledAllMessages.countDown(recs.size)
                              }
 
       config = configFor(kafka, group, topic).copy(offsetReset = OffsetReset.Earliest)
-      test  <- BatchConsumer.make(config, handler).use { consumer =>
+      test  <- BatchConsumer.make(config, handler).flatMap { consumer =>
                  val record = ProducerRecord(topic, Chunk.empty)
                  for {
-                   _                 <- ZIO.foreachPar_(0 until someMessages)(_ => producer.produceAsync(record))
+                   _                 <- ZIO.foreachParDiscard(0 until someMessages)(_ => producer.produceAsync(record))
                    _                 <- handledSomeMessages.await
                    _                 <- consumer.pause
                    _                 <- sleep(config.eventLoopConfig.pollTimeout + 1.second) // make sure last poll finished
-                   _                 <- ZIO.foreachPar_(0 until restOfMessages)(_ => producer.produceAsync(record))
+                   _                 <- ZIO.foreachParDiscard(0 until restOfMessages)(_ => producer.produceAsync(record))
                    a                 <- handledAllMessages.await.timeout(5.seconds)
                    handledAfterPause <- handleCounter.get
                    _                 <- consumer.resume
@@ -184,11 +189,12 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
     } yield test
   }
 
-  "rebalance between two consumers" in {
+  "rebalance between two consumers" in ZIO.scoped {
     for {
-      TestResources(kafka, producer) <- getShared
-      topic                          <- kafka.createRandomTopic(prefix = "rebalance")
-      group                          <- randomGroup
+      r                             <- getShared
+      TestResources(kafka, producer) = r
+      topic                         <- kafka.createRandomTopic(prefix = "rebalance")
+      group                         <- randomGroup
 
       consumedKeys <- AwaitableRef.make(Seq.empty[String])
       records       = producerRecords(topic, "1", partitions, 50)
@@ -201,21 +207,21 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                 .offer(())
                 // we can't block here, otherwise rebalance won't happen - so we just fail
                 .timeoutFail(new RuntimeException("queue full"))(1.second)
-                .tapError(_ => UIO(println(s"[$id] timed out waiting on barrier")))
+                .tapError(_ => ZIO.succeed(println(s"[$id] timed out waiting on barrier")))
                 .orDie *> consumedKeys.update(_ ++ cr.records.map(_.key.get))
           ).withDeserializers(StringSerde, StringSerde)
       cId1         <- clientId("c1")
       cId2         <- clientId("c2")
-      _            <- UIO(println(s"**** starting consumer $cId1"))
+      _            <- ZIO.succeed(println(s"**** starting consumer $cId1"))
       config        = configFor(kafka, group, topic, extraProperties = Map(MAX_POLL_RECORDS_CONFIG -> "10"), retryWithBackoff = Some(500.millis))
                         .copy(clientId = cId1)
       _            <- BatchConsumer
                         .make(config, handler(cId1))
-                        .use { _ =>
-                          UIO(println(s"*** producing ${records.size} records")) *> produceBatch(producer, records) *>
-                            UIO(println(s"**** awaiting handled batch on each of $partitions partitions")) *> consumedKeys.await(_.size >= 0) *>
-                            UIO(println(s"**** starting second consumer $cId2")) *>
-                            BatchConsumer.make(config.copy(clientId = cId2), handler(cId2)).use { _ => barrier.take.repeatWhile(_ => true) }
+                        .flatMap { _ =>
+                          ZIO.succeed(println(s"*** producing ${records.size} records")) *> produceBatch(producer, records) *>
+                            ZIO.succeed(println(s"**** awaiting handled batch on each of $partitions partitions")) *>
+                            consumedKeys.await(_.size >= 0) *> ZIO.succeed(println(s"**** starting second consumer $cId2")) *>
+                            BatchConsumer.make(config.copy(clientId = cId2), handler(cId2)).flatMap { _ => barrier.take.repeatWhile(_ => true) }
                         }
                         .fork
       msgs         <- consumedKeys.await(_.size >= records.size, 20.seconds)
