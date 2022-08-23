@@ -2,9 +2,10 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.core.Fragment
-import zio.duration._
+
 
 import scala.math.{abs, pow}
+import zio._
 
 class ZRetryConfigTest extends SpecificationWithJUnit {
 
