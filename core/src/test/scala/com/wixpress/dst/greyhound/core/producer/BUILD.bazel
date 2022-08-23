@@ -11,8 +11,6 @@ specs2_unit_test(
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/metrics",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered",
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer/buffered/buffers",
         "//core/src/test/resources",
         "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
         "@ch_qos_logback_logback_classic",
