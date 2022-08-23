@@ -7,48 +7,45 @@ import com.wixpress.dst.greyhound.core.consumer.{EventLoopExposedState => _, _}
 import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, ConsumerRecordBatch, ConsumerSubscription, Decryptor, NoOpDecryptor}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
-
-import zio.{Chunk, Promise, RIO, Ref, UIO, URIO}
+import zio.duration._
+import zio.{duration, Chunk, Has, Promise, RIO, Ref, UIO, URIO, ZEnv, ZManaged}
 
 import scala.reflect.ClassTag
 import scala.util.Random
-import zio._
 
 case class EffectiveConfig(consumerConfig: ConsumerConfig, batchConsumerConfig: BatchConsumerConfig)
 
 trait BatchConsumer[-R] extends Resource[R] with RecordConsumerProperties[BatchConsumerExposedState] {
-  def shutdown(timeout: Duration) (implicit trace: Trace): Task[Unit]
-
   def resubscribe[R1](
     subscription: ConsumerSubscription,
     listener: RebalanceListener[R1] = RebalanceListener.Empty
-  )(implicit trace: Trace, tag: Tag[R1]): RIO[Env with R1, AssignedPartitions]
+  ): RIO[Env with R1, AssignedPartitions]
 
-  def seek[R1](toOffsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[Env with R1, Unit]
+  def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit]
 
-  def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long])(implicit trace: Trace): RIO[Env with R1, Map[TopicPartition, Offset]]
+  def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Env with R1, Map[TopicPartition, Offset]]
 
-  def effectiveConfig(implicit trace: Trace): EffectiveConfig
+  def effectiveConfig: EffectiveConfig
 
-  def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Env, Map[TopicPartition, Offset]]
+  def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
-  def beginningOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Env, Map[TopicPartition, Offset]]
+  def beginningOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
-  def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Env, Map[TopicPartition, Offset]]
+  def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 }
 
 object BatchConsumer {
 
-  type Env                = GreyhoundMetrics
+  type Env                = ZEnv with GreyhoundMetrics
   type AssignedPartitions = Set[TopicPartition]
   type RecordBatch        = ConsumerRecordBatch[Chunk[Byte], Chunk[Byte]]
 
-  def make[R](
+  def make[R <: Has[_]: ClassTag](
     config: BatchConsumerConfig,
     handler: BatchRecordHandler[R, Any, Chunk[Byte], Chunk[Byte]]
-  )(implicit trace: Trace): ZIO[R with Env with Scope, Throwable, BatchConsumer[R]] = for {
-    consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription)
-    assignments             <- Ref.make(Set.empty[TopicPartition])
+  ): ZManaged[R with Env, Throwable, BatchConsumer[R]] = for {
+    consumerSubscriptionRef <- Ref.make[ConsumerSubscription](config.initialSubscription).toManaged_
+    assignments             <- Ref.make(Set.empty[TopicPartition]).toManaged_
     assignmentsListener      = trackAssignments(assignments)
     consumer                <- Consumer.make(consumerConfig(config, assignmentsListener))
     eventLoop               <- BatchEventLoop.make[R](
@@ -61,34 +58,33 @@ object BatchConsumer {
                                  config.eventLoopConfig
                                )
   } yield new BatchConsumer[R] {
+    override def group: Group = config.groupId
 
-    override def group(implicit trace: Trace): Group = config.groupId
+    override def clientId: ClientId = config.clientId
 
-    override def clientId(implicit trace: Trace): ClientId = config.clientId
-
-    override def state(implicit trace: Trace): UIO[BatchConsumerExposedState] = assignments.get.zipWith(eventLoop.state) {
+    override def state: UIO[BatchConsumerExposedState] = assignments.get.zipWith(eventLoop.state) {
       case (partitions, evs) =>
         BatchConsumerExposedState(evs, clientId, partitions)
     }
 
-    override def topology(implicit trace: Trace): UIO[RecordConsumerTopology] = consumerSubscriptionRef.get.map(RecordConsumerTopology(group, _))
+    override def topology: UIO[RecordConsumerTopology] = consumerSubscriptionRef.get.map(RecordConsumerTopology(group, _))
 
     override def resubscribe[R1](
       subscription: ConsumerSubscription,
       listener: RebalanceListener[R1]
-    )(implicit trace: Trace, tag: Tag[R1]): RIO[Env with R1, AssignedPartitions] =
+    ): RIO[Env with R1, AssignedPartitions] =
       for {
         assigned          <- Ref.make[AssignedPartitions](Set.empty)
         promise           <- Promise.make[Nothing, AssignedPartitions]
-        rebalanceListener = eventLoop.rebalanceListener *> listener *>
+        rebalanceListener  = eventLoop.rebalanceListener *> listener *>
                                new RebalanceListener[R1] {
                                  override def onPartitionsRevoked(
                                    consumer: Consumer,
                                    partitions: Set[TopicPartition]
-                                 )(implicit trace: Trace): URIO[R1, DelayedRebalanceEffect] =
+                                 ): URIO[R1, DelayedRebalanceEffect] =
                                    DelayedRebalanceEffect.zioUnit
 
-                                 override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[R1, Any] =
+                                 override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[R1, Any] =
                                    for {
                                      allAssigned <- assigned.updateAndGet(_ => partitions)
                                      _           <- consumerSubscriptionRef.set(subscription)
@@ -99,37 +95,34 @@ object BatchConsumer {
         resubscribeTimeout = config.resubscribeTimeout
         result            <- promise.await.disconnect
                                .timeoutFail(BatchResubscribeTimeout(resubscribeTimeout, subscription))(resubscribeTimeout)
-                               .catchAll(_ => ZIO.succeed(Set.empty[TopicPartition]))
+                               .catchAll(_ => UIO(Set.empty[TopicPartition]))
       } yield result
 
-    override def pause(implicit trace: Trace): URIO[R, Unit] = eventLoop.pause
+    override def pause: URIO[R, Unit] = eventLoop.pause
 
-    override def resume(implicit trace: Trace): URIO[R, Unit] = eventLoop.resume
+    override def resume: URIO[R, Unit] = eventLoop.resume
 
-    override def isAlive(implicit trace: Trace): URIO[R, Boolean] = eventLoop.isAlive
+    override def isAlive: URIO[R, Boolean] = eventLoop.isAlive
 
-    override def effectiveConfig(implicit trace: Trace): EffectiveConfig = EffectiveConfig(consumer.config, config)
+    override def effectiveConfig: EffectiveConfig = EffectiveConfig(consumer.config, config)
 
-    override def seek[R1](toOffsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[Env with R1, Unit] =
+    override def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit] =
       eventLoop.requestSeek(toOffsets)
 
-    override def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long])(implicit trace: Trace): RIO[Env with R1, Map[TopicPartition, Offset]] =
+    override def offsetsForTimes[R1](topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Env with R1, Map[TopicPartition, Offset]] =
       consumer.offsetsForTimes(topicPartitionsOnTimestamp)
 
-    override def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Env, Map[TopicPartition, Offset]] =
+    override def endOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
       consumer.endOffsets(partitions)
 
-    override def beginningOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Env, Map[TopicPartition, Offset]] =
+    override def beginningOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
       consumer.beginningOffsets(partitions)
 
-    override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Env, Map[TopicPartition, Offset]] =
+    override def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
       consumer.committedOffsets(partitions)
-
-    override def shutdown(timeout: Duration)(implicit trace: Trace): Task[Unit] =
-      eventLoop.shutdown *> consumer.shutdown(timeout)
   }
 
-  private def consumerConfig[R <: Any: ClassTag](config: BatchConsumerConfig, assignmentsListener: RebalanceListener[Any]) = {
+  private def consumerConfig[R <: Has[_]: ClassTag](config: BatchConsumerConfig, assignmentsListener: RebalanceListener[Any]) = {
     ConsumerConfig(
       config.bootstrapServers,
       config.groupId,
@@ -145,10 +138,10 @@ object BatchConsumer {
 
   private def trackAssignments(assignments: Ref[Set[TopicPartition]]) = {
     new RebalanceListener[Any] {
-      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, DelayedRebalanceEffect] =
+      override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, DelayedRebalanceEffect] =
         assignments.update(_ -- partitions).as(DelayedRebalanceEffect.unit)
 
-      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, Any] =
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition]): URIO[Any, Any] =
         assignments.update(_ ++ partitions)
     }
   }
@@ -182,9 +175,9 @@ final case class BatchRetryConfig private[greyhound] (backoff: Duration)
 
 object BatchRetryConfig {
   def infiniteBlockingRetry(backoff: scala.concurrent.duration.Duration): BatchRetryConfig =
-    BatchRetryConfig(zio.Duration.fromScala(backoff))
+    BatchRetryConfig(zio.duration.Duration.fromScala(backoff))
 
 }
 
-case class BatchResubscribeTimeout(resubscribeTimeout: zio.Duration, subscription: ConsumerSubscription)
+case class BatchResubscribeTimeout(resubscribeTimeout: duration.Duration, subscription: ConsumerSubscription)
     extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")
