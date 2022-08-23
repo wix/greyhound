@@ -2,15 +2,15 @@ package(default_visibility = ["//visibility:public"])
 
 sources()
 
-specs2_unit_test(
-    name = "serialization",
+scala_library(
+    name = "buffers",
     srcs = [
         ":sources",
     ],
     deps = [
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
-        "//core/src/test/scala/com/wixpress/dst/greyhound/core/testkit",
+        "@com_h2database_h2",
         "@dev_zio_zio_2_12",
-        "@org_apache_kafka_kafka_clients",
+        "@dev_zio_zio_streams_2_12",
     ],
 )
