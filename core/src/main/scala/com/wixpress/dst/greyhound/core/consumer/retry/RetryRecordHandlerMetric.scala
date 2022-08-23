@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.{Offset, Partition, Topic, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
-import zio.duration.Duration
+import zio.Duration
 
 sealed trait RetryRecordHandlerMetric extends GreyhoundMetric
 sealed trait InterruptibleRetryMetric extends GreyhoundMetric {
