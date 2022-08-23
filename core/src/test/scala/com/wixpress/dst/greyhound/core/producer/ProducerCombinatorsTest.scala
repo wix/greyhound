@@ -3,33 +3,33 @@ package com.wixpress.dst.greyhound.core.producer
 import com.wixpress.dst.greyhound.core.{PartitionInfo, Topic}
 import com.wixpress.dst.greyhound.core.producer.ProducerCombinatorsTest.SomeEnv
 import com.wixpress.dst.greyhound.core.testkit.FakeProducer
+import zio.blocking.Blocking
 import zio.test._
 import zio.test.Assertion._
 import zio.test.junit.JUnitRunnableSpec
-import zio.{Chunk, IO, RIO, Ref, Trace, UIO, ZEnvironment, ZIO}
+import zio.{Chunk, Has, IO, RIO, Ref, UIO, ZIO}
 
 class ProducerCombinatorsTest extends JUnitRunnableSpec {
-  private implicit val trace = Trace.empty
   def spec = suite("ProducerCombinatorsTest")(
-    test("provide combinator") {
+    testM("provide combinator") {
       for {
         log        <- Ref.make(List.empty[String])
-        producerR   = new ProducerR[SomeEnv] {
+        producerR   = new ProducerR[Has[SomeEnv]] {
                         override def produceAsync(
                           record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-                        )(implicit trace: Trace): ZIO[SomeEnv, ProducerError, IO[ProducerError, RecordMetadata]] =
-                          ZIO.environment[SomeEnv].map { env =>
+                        ): ZIO[Has[SomeEnv] with Blocking, ProducerError, IO[ProducerError, RecordMetadata]] =
+                          ZIO.environment[Has[SomeEnv]].map { env =>
                             log.update(_ :+ s"produce:${env.get.env}:${record.topic}").as(RecordMetadata(record.topic, 0, 0))
                           }
 
-                        override def shutdown (implicit trace: Trace): UIO[Unit] = log.update(_ :+ "shutdown")
+                        override def shutdown: UIO[Unit] = log.update(_ :+ "shutdown")
 
                         override def attributes: Map[String, String] = Map("atr1" -> "val1")
 
-                        override def partitionsFor(topic: Topic) (implicit trace: Trace): RIO[Any, Seq[PartitionInfo]] =
-                          ZIO.succeed((1 to 3) map (p => PartitionInfo(topic, p, 1)))
+                        override def partitionsFor(topic: Topic): RIO[Blocking, Seq[PartitionInfo]] =
+                          UIO((1 to 3) map (p => PartitionInfo(topic, p, 1)))
                       }
-        producer    = producerR.provide(ZEnvironment(SomeEnv("the-env")))
+        producer    = producerR.provide(Has(SomeEnv("the-env")))
         _          <- producer.produce(ProducerRecord("topic1", Chunk.empty))
         _          <- producer.shutdown
         logged     <- log.get
@@ -46,13 +46,13 @@ class ProducerCombinatorsTest extends JUnitRunnableSpec {
         assert(partitions)(equalTo((1 to 3) map (p => PartitionInfo("some-topic", p, 1))))
       }
     },
-    test("tapBoth combinator") {
+    testM("tapBoth combinator") {
       val error = ProducerError.from(new RuntimeException())
       for {
         log        <- Ref.make(List.empty[String])
         shouldFail <- Ref.make(false)
         original   <- FakeProducer.make(
-                        beforeComplete = ZIO.whenZIO(shouldFail.get)(ZIO.fail(error)).as(_),
+                        beforeComplete = ZIO.whenM(shouldFail.get)(ZIO.fail(error)).as(_),
                         attributes = Map("atr1" -> "val1"),
                         onShutdown = log.update(_ :+ "shutdown")
                       )
@@ -78,7 +78,7 @@ class ProducerCombinatorsTest extends JUnitRunnableSpec {
         assert(success)(equalTo(RecordMetadata("topic1", 0, 0)))
       }
     },
-    test("onShutdown") {
+    testM("onShutdown") {
       for {
         log      <- Ref.make(List.empty[String])
         original <- FakeProducer.make(
