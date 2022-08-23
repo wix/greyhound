@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.admin
 
 import java.util
+import java.util.concurrent.TimeUnit.SECONDS
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
@@ -9,50 +10,48 @@ import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Offset, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.clients.admin.{AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig, AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
-import zio.{IO, RIO, Scope, Trace, ZIO}
+import zio._
+import zio.blocking.{effectBlocking, Blocking}
 import GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreated, TopicPartitionsIncreased}
 import org.apache.kafka.common
 
 import scala.collection.JavaConverters._
-import zio.ZIO.attemptBlocking
 
 trait AdminClient {
-  def shutdown(implicit trace: Trace) : RIO[Any, Unit]
+  def listTopics(): RIO[Blocking, Set[String]]
 
-  def listTopics() (implicit trace: Trace): RIO[Any, Set[String]]
+  def topicExists(topic: String): RIO[Blocking, Boolean]
 
-  def topicExists(topic: String)(implicit trace: Trace): RIO[Any, Boolean]
-
-  def topicsExist(topics: Set[Topic])(implicit trace: Trace): ZIO[Any, Throwable, Map[Topic, Boolean]]
+  def topicsExist(topics: Set[Topic]): ZIO[Blocking, Throwable, Map[Topic, Boolean]]
 
   def createTopics(
     configs: Set[TopicConfig],
     ignoreErrors: Throwable => Boolean = isTopicExistsError
-  )(implicit trace: Trace): RIO[GreyhoundMetrics, Map[String, Option[Throwable]]]
+  ): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]]
 
-  def numberOfBrokers(implicit trace: Trace): RIO[Any, Int]
+  def numberOfBrokers: RIO[Blocking, Int]
 
-  def propertiesFor(topics: Set[Topic])(implicit trace: Trace): RIO[Any, Map[Topic, TopicPropertiesResult]]
+  def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]]
 
-  def listGroups()(implicit trace: Trace): RIO[Any, Set[String]]
+  def listGroups(): RIO[Blocking, Set[String]]
 
-  def groupOffsets(groups: Set[String])(implicit trace: Trace): RIO[Any, Map[GroupTopicPartition, PartitionOffset]]
+  def groupOffsets(groups: Set[String]): RIO[Blocking, Map[GroupTopicPartition, PartitionOffset]]
 
-  def groupState(groups: Set[String])(implicit trace: Trace): RIO[Any, Map[String, GroupState]]
+  def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]]
 
-  def deleteTopic(topic: Topic)(implicit trace: Trace): RIO[Any, Unit]
+  def deleteTopic(topic: Topic): RIO[Blocking, Unit]
 
-  def describeConsumerGroups(groupIds: Set[Group])(implicit trace: Trace): RIO[Any, Map[Group, ConsumerGroupDescription]]
+  def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]]
 
-  def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None)(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+  def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None): RIO[Blocking, Map[TopicPartition, Offset]]
 
-  def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[Any with GreyhoundMetrics, Unit]
+  def increasePartitions(topic: Topic, newCount: Int): RIO[Blocking with GreyhoundMetrics, Unit]
 
   /**
    * @param useNonIncrementalAlter
@@ -63,7 +62,7 @@ trait AdminClient {
     topic: Topic,
     configProperties: Map[String, ConfigPropOp],
     useNonIncrementalAlter: Boolean = false
-  )(implicit trace: Trace): RIO[GreyhoundMetrics, Unit]
+  ): RIO[Blocking with GreyhoundMetrics, Unit]
 
   def attributes: Map[String, String]
 }
@@ -116,16 +115,12 @@ case class PartitionOffset(offset: Long)
 case class GroupState(activeTopicsPartitions: Set[TopicPartition])
 
 object AdminClient {
-  def make(config: AdminClientConfig, clientAttributes: Map[String, String] = Map.empty): RIO[Scope, AdminClient] = {
-    val acquire = attemptBlocking(KafkaAdminClient.create(config.properties))
-    ZIO.acquireRelease(acquire)(client => attemptBlocking(client.close()).ignore).map { client =>
+  def make(config: AdminClientConfig, clientAttributes: Map[String, String] = Map.empty): RManaged[Blocking, AdminClient] = {
+    val acquire = effectBlocking(KafkaAdminClient.create(config.properties))
+    ZManaged.make(acquire)(client => effectBlocking(client.close()).ignore).map { client =>
       new AdminClient {
-
-        override def shutdown (implicit trace: Trace): RIO[Any, Unit] =
-          ZIO.attempt(client.close()).ignore
-
-        override def topicExists(topic: String)(implicit trace: Trace): RIO[Any, Boolean] =
-          attemptBlocking(client.describeTopics(Seq(topic).asJava)).flatMap { result =>
+        override def topicExists(topic: String): RIO[Blocking, Boolean] =
+          effectBlocking(client.describeTopics(Seq(topic).asJava)).flatMap { result =>
             result
               .values()
               .asScala
@@ -133,22 +128,22 @@ object AdminClient {
               .map {
                 case (_, topicResult) =>
                   topicResult.asZio.either.flatMap {
-                    case Right(_)                                  => ZIO.succeed(true)
-                    case Left(_: UnknownTopicOrPartitionException) => ZIO.succeed(false)
+                    case Right(_)                                  => UIO(true)
+                    case Left(_: UnknownTopicOrPartitionException) => UIO(false)
                     case Left(ex)                                  => ZIO.fail(ex)
                   }
               }
-              .getOrElse(ZIO.succeed(false))
+              .getOrElse(UIO(false))
           }
 
-        override def topicsExist(topics: Set[Topic])(implicit trace: Trace): ZIO[Any, Throwable, Map[Topic, Boolean]] =
-          attemptBlocking(client.describeTopics(topics.asJava)).flatMap { result =>
+        override def topicsExist(topics: Set[Topic]): ZIO[Blocking, Throwable, Map[Topic, Boolean]] =
+          effectBlocking(client.describeTopics(topics.asJava)).flatMap { result =>
             ZIO
               .foreach(result.values().asScala.toSeq) {
                 case (topic, topicResult) =>
                   topicResult.asZio.either.flatMap {
-                    case Right(_)                                  => ZIO.succeed(topic -> true)
-                    case Left(_: UnknownTopicOrPartitionException) => ZIO.succeed(topic -> false)
+                    case Right(_)                                  => UIO(topic -> true)
+                    case Left(_: UnknownTopicOrPartitionException) => UIO(topic -> false)
                     case Left(ex)                                  => ZIO.fail(ex)
                   }
               }
@@ -158,9 +153,9 @@ object AdminClient {
         override def createTopics(
           configs: Set[TopicConfig],
           ignoreErrors: Throwable => Boolean = isTopicExistsError
-        )(implicit trace: Trace): RIO[GreyhoundMetrics, Map[String, Option[Throwable]]] = {
+        ): RIO[Blocking with GreyhoundMetrics, Map[String, Option[Throwable]]] = {
           val configsByTopic = configs.map(c => c.name -> c).toMap
-          attemptBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
+          effectBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
             ZIO
               .foreach(result.values.asScala.toSeq) {
                 case (topic, topicResult) =>
@@ -175,11 +170,11 @@ object AdminClient {
           }
         }
 
-        override def numberOfBrokers(implicit trace: Trace): RIO[Any, Int] =
-          attemptBlocking(client.describeCluster())
+        override def numberOfBrokers: RIO[Blocking, Int] =
+          effectBlocking(client.describeCluster())
             .flatMap(_.nodes().asZio.map(_.size))
 
-        override def propertiesFor(topics: Set[Topic])(implicit trace: Trace): RIO[Any, Map[Topic, TopicPropertiesResult]] =
+        override def propertiesFor(topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
           (describeConfigs(client, topics) zipPar describePartitions(client, topics)).map {
             case (configsPerTopic, partitionsAndReplicationPerTopic) =>
               partitionsAndReplicationPerTopic
@@ -191,8 +186,8 @@ object AdminClient {
                 }
           }
 
-        override def listTopics()(implicit trace: Trace): RIO[Any, Set[String]] = for {
-          result <- attemptBlocking(client.listTopics())
+        override def listTopics(): RIO[Blocking, Set[String]] = for {
+          result <- effectBlocking(client.listTopics())
           topics <- result.names().asZio
         } yield topics.asScala.toSet
 
@@ -200,14 +195,14 @@ object AdminClient {
           new NewTopic(config.name, config.partitions, config.replicationFactor.toShort)
             .configs(config.propertiesMap.asJava)
 
-        override def listGroups()(implicit trace: Trace): RIO[Any, Set[String]] = for {
-          result <- attemptBlocking(client.listConsumerGroups())
+        override def listGroups(): RIO[Blocking, Set[String]] = for {
+          result <- effectBlocking(client.listConsumerGroups())
           groups <- result.valid().asZio
         } yield groups.asScala.map(_.groupId()).toSet
 
-        override def groupOffsets(groups: Set[String])(implicit trace: Trace): RIO[Any, Map[GroupTopicPartition, PartitionOffset]] =
+        override def groupOffsets(groups: Set[String]): RIO[Blocking, Map[GroupTopicPartition, PartitionOffset]] =
           for {
-            result           <- ZIO.foreach(groups)(group => attemptBlocking(group -> client.listConsumerGroupOffsets(group)))
+            result           <- ZIO.foreach(groups)(group => effectBlocking(group -> client.listConsumerGroupOffsets(group)))
             // TODO: remove ._1 , ._2
             rawOffsetsEffects = result.toMap.mapValues(_.partitionsToOffsetAndMetadata().asZio)
             offsetsEffects    =
@@ -220,9 +215,9 @@ object AdminClient {
             groupOffsets      = offsetsMapSets.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++ y)
           } yield groupOffsets
 
-        override def groupState(groups: Set[String])(implicit trace: Trace): RIO[Any, Map[String, GroupState]] =
+        override def groupState(groups: Set[String]): RIO[Blocking, Map[String, GroupState]] =
           for {
-            result      <- attemptBlocking(client.describeConsumerGroups(groups.asJava))
+            result      <- effectBlocking(client.describeConsumerGroups(groups.asJava))
             groupEffects = result.describedGroups().asScala.mapValues(_.asZio).toMap
             groupsList  <- ZIO.collectAll(groupEffects.values)
             membersMap   = groupsList.groupBy(_.groupId()).mapValues(_.flatMap(_.members().asScala)).toMap
@@ -234,15 +229,15 @@ object AdminClient {
                              .toMap
           } yield groupState
 
-        override def deleteTopic(topic: Topic)(implicit trace: Trace): RIO[Any, Unit] = {
-          attemptBlocking(client.deleteTopics(Set(topic).asJava).all())
+        override def deleteTopic(topic: Topic): RIO[Blocking, Unit] = {
+          effectBlocking(client.deleteTopics(Set(topic).asJava).all())
             .flatMap(_.asZio)
             .unit
         }
 
-        override def describeConsumerGroups(groupIds: Set[Group])(implicit trace: Trace): RIO[Any, Map[Group, ConsumerGroupDescription]] = {
+        override def describeConsumerGroups(groupIds: Set[Group]): RIO[Blocking, Map[Group, ConsumerGroupDescription]] = {
           for {
-            desc <- attemptBlocking(client.describeConsumerGroups(groupIds.asJava).all())
+            desc <- effectBlocking(client.describeConsumerGroups(groupIds.asJava).all())
             all  <- desc.asZio
           } yield all.asScala.toMap.mapValues(ConsumerGroupDescription.apply).toMap
         }
@@ -250,18 +245,18 @@ object AdminClient {
         override def consumerGroupOffsets(
           groupId: Group,
           onlyPartitions: Option[Set[TopicPartition]] = None
-        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
+        ): RIO[Blocking, Map[TopicPartition, Offset]] = {
           val maybePartitions: util.List[common.TopicPartition] = onlyPartitions.map(_.map(_.asKafka).toList.asJava).orNull
           for {
-            desc <- attemptBlocking(
+            desc <- effectBlocking(
                       client.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions))
                     )
-            res  <- attemptBlocking(desc.partitionsToOffsetAndMetadata().get())
+            res  <- effectBlocking(desc.partitionsToOffsetAndMetadata().get())
           } yield res.asScala.toMap.map { case (tp, o) => (TopicPartition(tp), o.offset()) }
         }
 
-        override def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
-          attemptBlocking(client.createPartitions(Map(topic -> NewPartitions.increaseTo(newCount)).asJava))
+        override def increasePartitions(topic: Topic, newCount: Int): RIO[Blocking with GreyhoundMetrics, Unit] = {
+          effectBlocking(client.createPartitions(Map(topic -> NewPartitions.increaseTo(newCount)).asJava))
             .flatMap(_.all().asZio)
             .unit
             .reporting(TopicPartitionsIncreased(topic, newCount, attributes, _))
@@ -271,7 +266,7 @@ object AdminClient {
           topic: Topic,
           configProperties: Map[String, ConfigPropOp],
           useNonIncrementalAlter: Boolean = false
-        )(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+        ): RIO[Blocking with GreyhoundMetrics, Unit] = {
           if (useNonIncrementalAlter) updateTopicConfigUsingAlter(topic, configProperties)
           else updateTopicConfigIncremental(topic, configProperties)
         }
@@ -290,7 +285,7 @@ object AdminClient {
                                case (acc, (key, ConfigPropOp.Set(value))) => acc + (key -> value)
                              }
               configJava   = new Config(configToSet.map { case (k, v) => new ConfigEntry(k, v) }.toList.asJava)
-              _           <- attemptBlocking(client.alterConfigs(Map(resource -> configJava).asJava))
+              _           <- effectBlocking(client.alterConfigs(Map(resource -> configJava).asJava))
                                .flatMap(_.all().asZio)
             } yield ()
           ).reporting(TopicConfigUpdated(topic, configProperties, incremental = false, attributes, _))
@@ -305,7 +300,7 @@ object AdminClient {
                 case ConfigPropOp.Set(value) => new AlterConfigOp(new ConfigEntry(key, value), OpType.SET)
               }
           }.asJavaCollection
-          attemptBlocking(client.incrementalAlterConfigs(Map(resource -> ops).asJava))
+          effectBlocking(client.incrementalAlterConfigs(Map(resource -> ops).asJava))
             .flatMap(_.all().asZio)
             .unit
             .reporting(TopicConfigUpdated(topic, configProperties, incremental = true, attributes, _))
@@ -314,8 +309,8 @@ object AdminClient {
     }
   }
 
-  private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Any, Map[Topic, TopicPropertiesResult]] =
-    attemptBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)) flatMap { result =>
+  private def describeConfigs(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
+    effectBlocking(client.describeConfigs(topics.map(t => new ConfigResource(TOPIC, t)).asJavaCollection)) flatMap { result =>
       ZIO
         .collectAll(
           result.values.asScala.toMap.map {
@@ -331,15 +326,15 @@ object AdminClient {
                     )
                 }
                 .catchSome {
-                  case _: UnknownTopicOrPartitionException => ZIO.succeed(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
+                  case _: UnknownTopicOrPartitionException => UIO(resource.name -> TopicPropertiesResult.TopicDoesnExist(resource.name))
                 }
           }
         )
         .map(_.toMap)
     }
 
-  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Any, Map[Topic, TopicPropertiesResult]] =
-    attemptBlocking(client.describeTopics(topics.asJavaCollection))
+  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Blocking, Map[Topic, TopicPropertiesResult]] =
+    effectBlocking(client.describeTopics(topics.asJavaCollection))
       .flatMap { result =>
         ZIO
           .collectAll(result.values.asScala.toMap.map {
@@ -355,7 +350,7 @@ object AdminClient {
                       replication
                     )
                 }
-                .catchSome { case _: UnknownTopicOrPartitionException => ZIO.succeed(topic -> TopicPropertiesResult.TopicDoesnExist(topic)) }
+                .catchSome { case _: UnknownTopicOrPartitionException => UIO(topic -> TopicPropertiesResult.TopicDoesnExist(topic)) }
           })
           .map(_.toMap)
       }
