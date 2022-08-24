@@ -2,12 +2,9 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core.TopicPartition
 import com.wixpress.dst.greyhound.core.consumer.OffsetsTest._
-import com.wixpress.dst.greyhound.core.testkit.BaseTest
-import zio.{UManaged, ZManaged}
+import com.wixpress.dst.greyhound.core.testkit.BaseTestNoEnv
 
-class OffsetsTest extends BaseTest[Any] {
-
-  override def env: UManaged[Any] = ZManaged.unit
+class OffsetsTest extends BaseTestNoEnv {
 
   "get current offsets" in {
     for {
