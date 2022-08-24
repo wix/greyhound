@@ -1,29 +1,29 @@
 package com.wixpress.dst.greyhound.future
 
-import java.util.concurrent.atomic.AtomicInteger
-
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.AdminClientConfig
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric.{StartingEventLoop, StoppingEventLoop}
 import com.wixpress.dst.greyhound.core.consumer.OffsetReset
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
+import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
-import com.wixpress.dst.greyhound.future.GreyhoundFutureIT._
 import com.wixpress.dst.greyhound.future.ContextDecoder.aHeaderContextDecoder
 import com.wixpress.dst.greyhound.future.ContextEncoder.aHeaderContextEncoder
 import com.wixpress.dst.greyhound.future.ErrorHandler.anErrorHandler
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer._
+import com.wixpress.dst.greyhound.future.GreyhoundFutureIT._
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import org.specs2.concurrent.ExecutionEnv
 import org.specs2.mutable.SpecificationWithJUnit
 import org.specs2.specification.{AfterAll, BeforeAll, Scope}
-import zio.{Promise => ZPromise, Task, UIO, URIO}
+import zio.{Task, Trace, UIO, URIO, ZIO, Promise => ZPromise}
 
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
-import scala.concurrent.{Await, ExecutionContext, Future, Promise}
+import scala.concurrent._
 import scala.util.{Random, Try}
 
 class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUnit with BeforeAll with AfterAll {
@@ -186,7 +186,10 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
     new Ctx {
       val metrics = ListBuffer.empty[GreyhoundMetric]
       val runtime = GreyhoundRuntimeBuilder()
-        .withMetricsReporter(metric => UIO(metrics += metric))
+        .withMetricsReporter(new GreyhoundMetrics {
+          override def report(metric: GreyhoundMetric)(implicit trace: Trace): UIO[Unit] =
+            ZIO.succeed(metrics += metric)
+        } )
         .build
       val config  = GreyhoundConfig(environment.kafka.bootstrapServers, runtime)
       val builder = GreyhoundConsumersBuilder(config)
@@ -346,7 +349,7 @@ class GreyhoundFutureIT(implicit ee: ExecutionEnv) extends SpecificationWithJUni
 }
 
 object GreyhoundFutureIT {
-  val runtime = GreyhoundRuntime.Live
+  lazy val runtime = GreyhoundRuntime.Live
 }
 
 trait Environment {
@@ -358,14 +361,19 @@ trait Environment {
 object Environment {
   def make: URIO[GreyhoundRuntime.Env, Environment] = for {
     closeSignal <- ZPromise.make[Nothing, Unit]
-    started     <- ZPromise.make[Nothing, ManagedKafka]
-    fiber       <- ManagedKafka.make(ManagedKafkaConfig.Default).use { kafka => started.succeed(kafka) *> closeSignal.await }.forkDaemon
-    kafka1      <- started.await
+    started <- ZPromise.make[Nothing, ManagedKafka]
+    fiber <- ManagedKafka.make(ManagedKafkaConfig.Default)
+      .disconnect
+      .timeoutFail(new TimeoutException)(zio.Duration(15, TimeUnit.SECONDS))
+      .tap { kafka => started.succeed(kafka) *> closeSignal.await }
+      .provideSomeEnvironment[GreyhoundRuntime.Env] (_.add(zio.Scope.global))
+      .forkDaemon
+    kafka1 <- started.await
   } yield new Environment {
     override def kafka: ManagedKafka = kafka1
 
     override def shutdown: Task[Unit] =
-      closeSignal.succeed(()) *> fiber.join
+      closeSignal.succeed(()) *> fiber.join.unit
   }
 }
 
