@@ -5,11 +5,10 @@ import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopState.{Paused, Running, ShuttingDown}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{report, trace}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import zio._
-import zio.Clock
 
 trait EventLoop[-R] extends Resource[R] {
   self =>
