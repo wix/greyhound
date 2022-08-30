@@ -74,7 +74,15 @@ class EventLoopTest extends BaseTest[TestMetrics] {
       _ <- ZIO.debug(s"metrics===$metrics")
 
     } yield (committed must havePair(TopicPartition(topic, partition) -> (offset + 1))) and
-      (metrics must contain(CommitFailed(clientId, group, exception, Map(TopicPartition(record.topic, record.partition) -> (offset + 1)))))
+      (metrics must
+        contain(
+          CommitFailed(
+            clientId,
+            group,
+            exception,
+            Map(TopicPartition(record.topic, record.partition) -> (offset + 1))
+          )
+        ))
   }
 
 //  "expose event loop health" in {
