@@ -173,7 +173,6 @@ private case class TopicAttempt(originalTopic: Topic, attempt: Int)
 
 object RetryAttempt {
   type RetryAttemptNumber = Int
-  private implicit val trace = zio.Trace.empty
   val currentTime = Clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
 }
 
