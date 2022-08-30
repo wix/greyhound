@@ -7,7 +7,7 @@ import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, Ig
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, DoneBlockingBeforeRetry, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{report, trace}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import zio._
 import zio.Clock.currentTime
