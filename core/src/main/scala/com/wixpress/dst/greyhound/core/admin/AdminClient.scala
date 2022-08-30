@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, Offset, Topic, TopicConfig, TopicPartition}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
 import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
@@ -49,8 +49,8 @@ trait AdminClient {
   def deleteTopic(topic: Topic)(implicit trace: Trace): RIO[Any, Unit]
 
   def describeConsumerGroups(groupIds: Set[Group])(implicit trace: Trace): RIO[Any, Map[Group, ConsumerGroupDescription]]
-
-  def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None)(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+  
+  def consumerGroupOffsets(groupId: Group, onlyPartitions: Option[Set[TopicPartition]] = None)(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]]
 
   def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[Any with GreyhoundMetrics, Unit]
 
@@ -250,14 +250,14 @@ object AdminClient {
         override def consumerGroupOffsets(
           groupId: Group,
           onlyPartitions: Option[Set[TopicPartition]] = None
-        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
+        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]] = {
           val maybePartitions: util.List[common.TopicPartition] = onlyPartitions.map(_.map(_.asKafka).toList.asJava).orNull
           for {
             desc <- attemptBlocking(
                       client.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions))
                     )
             res  <- attemptBlocking(desc.partitionsToOffsetAndMetadata().get())
-          } yield res.asScala.toMap.map { case (tp, o) => (TopicPartition(tp), o.offset()) }
+          } yield res.asScala.toMap.map { case (tp, om) => (TopicPartition(tp), OffsetAndMetadata(om)) }
         }
 
         override def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
