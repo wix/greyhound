@@ -12,6 +12,7 @@ package object core {
   type Partition       = Int
   type Offset          = Long
   type ConsumerGroupId = Group
+  type Metadata        = String
 
   type NonEmptySet[A]  = Set[A]
   type NonEmptyList[A] = List[A]
