@@ -7,7 +7,6 @@ import zio.Random
 import zio.Random.{ nextBytes, nextIntBounded }
 
 object Maker {
-  private implicit val trace = zio.Trace.empty
   val bytes = nextIntBounded(9).flatMap(size => nextBytes(size + 1))
 
   def randomAlphaChar = {
