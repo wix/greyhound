@@ -183,7 +183,7 @@ object RecordConsumer {
           override def seek[R1](toOffsets: Map[TopicPartition, Offset]): RIO[Env with R1, Unit] =
             consumer.seek(toOffsets)
         }
-      )(_.shutdown().ignore)
+      )(_.shutdown().catchAllCause(e => ZIO.succeed(e.squashTrace.printStackTrace())))
 
   private def combineAwaitShutdowns(consumerShutdown: ShutdownPromise, workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]])(
     implicit trace: Trace
