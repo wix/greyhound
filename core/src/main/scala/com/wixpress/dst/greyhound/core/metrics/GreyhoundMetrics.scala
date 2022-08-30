@@ -7,7 +7,6 @@ import zio.{CanFail, Cause, Clock, Duration, Exit, Trace, UIO, URIO, ZIO, ZLayer
 import scala.util.{Failure, Success, Try}
 
 object GreyhoundMetrics {
-  implicit val trace = Trace.empty
   trait Service {
     self =>
     protected def nanoTime = Clock.nanoTime
