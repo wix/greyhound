@@ -256,7 +256,7 @@ case class EventLoopConfig(
   rebalanceListener: RebalanceListener[Any],
   delayResumeOfPausedPartition: Long,
   startPaused: Boolean
-) // TODO parametrize?
+)
 
 object EventLoopConfig {
   val Default = EventLoopConfig(
