@@ -11,7 +11,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{Top
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, Decryptor, NoOpDecryptor, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.{patternRetryTopic, retryPattern}
 import com.wixpress.dst.greyhound.core.consumer.retry._
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.{report, trace}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
