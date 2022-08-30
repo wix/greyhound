@@ -80,7 +80,7 @@ object Consumer {
     override def close(): Unit = ()
   }
 
-  def make(cfg: ConsumerConfig): RIO[GreyhoundMetrics with Scope, Consumer] = for {
+  def make(cfg: ConsumerConfig)(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, Consumer] = for {
     semaphore          <- Semaphore.make(1)
     consumer           <- makeConsumer(cfg, semaphore)
     metrics            <- ZIO.environment[GreyhoundMetrics]
@@ -260,8 +260,8 @@ object Consumer {
   private def makeConsumer(
     config: ConsumerConfig,
     semaphore: Semaphore
-  ): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
-    val acquire                              = attemptBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
+  )(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
+    val acquire                              = ZIO.attemptBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     def close(consumer: KafkaConsumer[_, _]) =
       attemptBlocking(consumer.close())
         .reporting(ClosedConsumer(config.groupId, config.clientId, _))
