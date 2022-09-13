@@ -39,7 +39,7 @@ object GreyhoundMetrics {
       fromReporter(metric => logger.info(metric.toString))
     }
     val noop      = new Service {
-      override def report(metric: GreyhoundMetric) (implicit trace: Trace): UIO[Unit] = ZIO.unit
+      override def report(metric: GreyhoundMetric)(implicit trace: Trace): UIO[Unit] = ZIO.unit
     }
   }
 
