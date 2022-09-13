@@ -1,11 +1,13 @@
 package greyhound
 
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
+import greyhound.Register.Register
 import io.grpc.Status
-import zio.{ULayer, ZEnv, ZIO, ZLayer}
+import zio.{Fiber, ULayer, ZEnv, ZIO, ZLayer}
 import zio.console.putStrLn
 
 class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv] {

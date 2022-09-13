@@ -2,13 +2,15 @@
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
-import greyhound.{DebugMetrics, EnvArgs, Ports, SidecarClient, SidecarServerMain}
+import greyhound.{DebugMetrics, EnvArgs, Ports, SidecarClient, SidecarServerMain, SidecarUserServerMain}
 import zio._
 import zio.console.{getStrLn, putStrLn}
 
 object Main extends App {
 
   val initSidecarServer = SidecarServerMain.myAppLogic.forkDaemon
+
+  val initSidecarUserServer = SidecarUserServerMain.myAppLogic.forkDaemon
 
   val initKafka = ManagedKafka.make(ManagedKafkaConfig.Default)
     .provideCustomLayer(DebugMetrics.layer)
@@ -43,10 +45,12 @@ object Main extends App {
   val greyhoundProduceApp = for {
     _ <- initKafka
     _ <- initSidecarServer
+    _ <- initSidecarUserServer
     topic = "test-topic"
     _ <- createTopic(topic)
     _ <- register
     _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
+//    _ <- startConsuming(topic, "test-consumer", RetryStrategy.Blocking(BlockingRetry(1000)))
     _ <- produce(topic)
     _ <- putStrLn("~~~ WAITING FOR USER INPUT")
     _ <- getStrLn
