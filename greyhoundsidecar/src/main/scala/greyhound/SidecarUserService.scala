@@ -17,9 +17,7 @@ class SidecarUserService extends RGreyhoundSidecarUser[ZEnv]{
          |${printRecords(request.records)}
          |~~~ End Message ~~~
          |""".stripMargin
-    ).orDie *>
-//      ZIO.succeed(HandleMessagesResponse())
-      ZIO.fail(new RuntimeException("Failed to consume")).mapError(Status.fromThrowable)
+    ).orDie *> failOrSucceed(request.records)
   }
 
   private def printRecords(records: Seq[Record]) =
@@ -29,5 +27,13 @@ class SidecarUserService extends RGreyhoundSidecarUser[ZEnv]{
          |  headers = ${record.headers}
          |  offset = ${record.offset}
          |""".stripMargin).mkString
+
+  private def failOrSucceed(records: Seq[Record]) =
+    if (records.exists(_.payload.exists(_.contains("fail"))))
+      ZIO.fail(Status.INTERNAL
+        .withDescription("Failed to consume")
+        .withCause(new RuntimeException("Something went wrong in the consumer handler")))
+    else
+      ZIO.succeed(HandleMessagesResponse())
 
 }
