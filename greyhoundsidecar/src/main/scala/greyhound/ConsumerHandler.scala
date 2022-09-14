@@ -18,9 +18,13 @@ object ConsumerHandler {
 
       client
         .handleMessages(request)
-        .tapBoth(fail => ZIO.succeed(println(s"~~~ CONSUME - send message failed: $fail")), _ => ZIO.succeed(println("CONSUME - SENT")))
-        .catchAll(grpcStatus => ZIO.fail(new Throwable(grpcStatus.toString))) // TODO
+        .tapBoth(
+          fail => ZIO.succeed(println(s"~~~ CONSUME - send message failed: $fail")),
+          _ => ZIO.succeed(println("CONSUME - SENT")))
+        .catchAll(grpcStatus => ZIO.fail(ConsumerFailure(grpcStatus)))
     }
 
   type Handler = RecordHandler[Any, Throwable, String, String]
+
+  case class ConsumerFailure(grpcStatus: Status) extends RuntimeException
 }
