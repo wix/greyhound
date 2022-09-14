@@ -26,11 +26,11 @@ object Main extends App {
     client.createTopics(CreateTopicsRequest(Seq(TopicToCreate(topic, Some(1)))))
   }
 
-  def produce(topic: String) = SidecarClient.managed.use { client =>
+  def produce(topic: String, payload: String) = SidecarClient.managed.use { client =>
 
     val produceRequest = ProduceRequest(
       topic = topic,
-      payload = Some("test-payload"),
+      payload = Some(payload),
       target = ProduceRequest.Target.Key("key"))
 
     client.produce(produceRequest)
@@ -51,7 +51,9 @@ object Main extends App {
     _ <- register
     _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
 //    _ <- startConsuming(topic, "test-consumer", RetryStrategy.Blocking(BlockingRetry(1000)))
-    _ <- produce(topic)
+    _ <- putStrLn("~~~ ENTER MESSAGE")
+    payload <- getStrLn
+    _ <- produce(topic, payload)
     _ <- putStrLn("~~~ WAITING FOR USER INPUT")
     _ <- getStrLn
   } yield scala.io.StdIn.readLine()
