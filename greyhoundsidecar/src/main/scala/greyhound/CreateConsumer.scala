@@ -13,18 +13,23 @@ object CreateConsumer {
 
   def apply(topic: String, group: String, retryStrategy: RetryStrategy) =
     for {
-      kafkaAddress <- Register.get.map(_.kafkaAddress)
-      _ <- RecordConsumer.make(
-        config = RecordConsumerConfig(
-          bootstrapServers = kafkaAddress,
-          group = group,
-          offsetReset = OffsetReset.Earliest,
-          initialSubscription = ConsumerSubscription.Topics(Set(topic)),
-          retryConfig = asRetryConfig(retryStrategy)),
-        handler =
-          ConsumerHandler(topic, group)
-            .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
-      ).useForever
+      kafkaAddress  <- Register.get.map(_.kafkaAddress)
+      managedClient <- SidecarUserClient.managed
+      _             <- managedClient
+                         .flatMap(client =>
+                           RecordConsumer.make(
+                             config = RecordConsumerConfig(
+                               bootstrapServers = kafkaAddress,
+                               group = group,
+                               offsetReset = OffsetReset.Earliest,
+                               initialSubscription = ConsumerSubscription.Topics(Set(topic)),
+                               retryConfig = asRetryConfig(retryStrategy)
+                             ),
+                             handler = ConsumerHandler(topic, group, client)
+                               .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
+                           )
+                         )
+                         .useForever
     } yield ()
 
 }
@@ -32,11 +37,11 @@ object CreateConsumer {
 object RetryStrategyMapper {
   def asRetryConfig(retryStrategy: RetryStrategy): Option[RetryConfig] =
     retryStrategy match {
-      case NoRetry(_) => Some(RetryConfig.empty)
-      case Blocking(value) => Some(RetryConfig.infiniteBlockingRetry(value.interval.millis))
+      case NoRetry(_)                                     => Some(RetryConfig.empty)
+      case Blocking(value)                                => Some(RetryConfig.infiniteBlockingRetry(value.interval.millis))
       // If intervals is empty ignore silently with None, not sure if that is correct
       case NonBlocking(value) if value.intervals.nonEmpty =>
         Some(RetryConfig.nonBlockingRetry(value.intervals.head.millis, value.intervals.tail.map(_.millis): _*))
-      case _ => None
+      case _                                              => None
     }
 }
