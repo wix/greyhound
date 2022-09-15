@@ -19,11 +19,17 @@ object Main extends App {
     .whenM(EnvArgs.kafkaAddress.map(_.isEmpty))
 
   def startConsuming(topic: String, group: String, retryStrategy: RetryStrategy = RetryStrategy.NoRetry(NoRetry())) =  SidecarClient.managed.use { client =>
-    client.startConsuming(StartConsumingRequest(Seq(Consumer("id1", group, topic, retryStrategy))))
+    client.startConsuming(StartConsumingRequest(
+      consumers = Seq(Consumer("id1", group, topic, retryStrategy)),
+      batchConsumers = Seq(BatchConsumer("id2", s"$group-batch", s"$topic-batch"))
+    ))
   }
 
-  def createTopic(topic: String) = SidecarClient.managed.use { client =>
-    client.createTopics(CreateTopicsRequest(Seq(TopicToCreate(topic, Some(1)))))
+  def createTopics(topic: String) = SidecarClient.managed.use { client =>
+    client.createTopics(CreateTopicsRequest(Seq(
+      TopicToCreate(topic, Some(1)),
+      TopicToCreate(s"$topic-batch", Some(1))
+    )))
   }
 
   def produce(topic: String, payload: String) = SidecarClient.managed.use { client =>
@@ -47,13 +53,16 @@ object Main extends App {
     _ <- initSidecarServer
     _ <- initSidecarUserServer
     topic = "test-topic"
-    _ <- createTopic(topic)
+    _ <- createTopics(topic)
     _ <- register
     _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
 //    _ <- startConsuming(topic, "test-consumer", RetryStrategy.Blocking(BlockingRetry(1000)))
     _ <- putStrLn("~~~ ENTER MESSAGE")
     payload <- getStrLn
+    _ <- putStrLn(s"~~~ Producing to $topic")
     _ <- produce(topic, payload)
+    _ <- putStrLn(s"~~~ Producing to $topic-batch")
+    _ <- produce(s"$topic-batch", s"$payload-batch")
     _ <- putStrLn("~~~ WAITING FOR USER INPUT")
     _ <- getStrLn
   } yield scala.io.StdIn.readLine()
