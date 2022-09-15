@@ -28,7 +28,8 @@ message RegisterResponse {
 }
 
 message StartConsumingRequest {
-  repeated Consumer consumers = 2;
+  repeated Consumer consumers = 1;
+  repeated BatchConsumer batch_consumers = 2;
 }
 
 message Consumer {
@@ -39,6 +40,16 @@ message Consumer {
     NoRetry no_retry = 4;
     BlockingRetry blocking = 5;
     NonBlockingRetry non_blocking = 6;
+  }
+}
+
+message BatchConsumer {
+  string id = 1;
+  string group = 2;
+  string topic = 3;
+  oneof RetryStrategy {
+    NoRetry no_retry = 4;
+    BlockingRetry blocking = 5;
   }
 }
 

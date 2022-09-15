@@ -57,8 +57,12 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
 
   private def startConsuming0(request: StartConsumingRequest) =
     ZIO.foreach(request.consumers) { consumer =>
-      println(s"~~~ CREATE CONSUMER $request~~~")
+      println(s"~~~ CREATE CONSUMER $consumer~~~")
       CreateConsumer(consumer.topic, consumer.group, consumer.retryStrategy).forkDaemon
-    }
+    } *>
+      ZIO.foreach(request.batchConsumers) { consumer =>
+        println(s"~~~ CREATE BATCH CONSUMER $consumer~~~")
+        CreateBatchConsumer(consumer.topic, consumer.group, consumer.retryStrategy).forkDaemon
+      }
 
 }

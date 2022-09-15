@@ -3,7 +3,6 @@ package greyhound
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.ZioGreyhoundsidecaruser.GreyhoundSidecarUserClient
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser._
-import greyhound.Register.Register
 import io.grpc.Status
 import zio.ZIO
 
