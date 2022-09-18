@@ -123,10 +123,11 @@ object InitialOffsetsSeek {
 
   def setOffset(offsets: Map[TopicPartition, SeekTo]): InitialOffsetsSeek = (_, _, _, _) => offsets
 
-  def pauseAllBut(partition: TopicPartition, seekTo: SeekTo): InitialOffsetsSeek = (assigned, _, _, _) => assigned.collect{
-    case `partition` => partition -> seekTo
-    case tp => tp -> SeekTo.Pause
-  }.toMap
+  def pauseAllBut(partition: TopicPartition, seekTo: SeekTo): InitialOffsetsSeek = (assigned, _, _, _) =>
+    assigned.collect {
+      case `partition` => partition -> seekTo
+      case tp          => tp        -> SeekTo.Pause
+    }.toMap
 
 }
 
@@ -139,7 +140,7 @@ object OffsetsInitializer {
     timeoutIfSeek: zio.Duration,
     initialSeek: InitialOffsetsSeek,
     clock: Clock = Clock.systemUTC
-  ) (implicit trace: Trace): URIO[GreyhoundMetrics, OffsetsInitializer] = for {
+  )(implicit trace: Trace): URIO[GreyhoundMetrics, OffsetsInitializer] = for {
     metrics <- ZIO.environment[GreyhoundMetrics].map(_.get)
     runtime <- ZIO.runtime[Any]
   } yield new OffsetsInitializer(

@@ -65,7 +65,7 @@ trait RecordHandler[-R, +E, K, V] {
    * }}}
    */
   def withErrorHandler[R1 <: R, E2](f: (E, ConsumerRecord[K, V]) => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
-    new RecordHandler[R1,E2,K,V] {
+    new RecordHandler[R1, E2, K, V] {
       override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[R1, E2, Any] =
         self.handle(record).catchAll(e => f(e, record))
     }
@@ -83,7 +83,7 @@ trait RecordHandler[-R, +E, K, V] {
    * }}}
    */
   def withErrorCauseHandler[R1 <: R, E2](f: (Cause[E], ConsumerRecord[K, V]) => ZIO[R1, E2, Any]): RecordHandler[R1, E2, K, V] =
-    new RecordHandler[R1,E2,K,V] {
+    new RecordHandler[R1, E2, K, V] {
       override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[R1, E2, Any] =
         self.handle(record).catchAllCause(e => f(e, record))
     }
@@ -123,7 +123,8 @@ trait RecordHandler[-R, +E, K, V] {
       record
         .bimapM(
           key => keyDeserializer.deserialize(record.topic, record.headers, key),
-          value => Option(value).fold(ZIO.attempt[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
+          value =>
+            Option(value).fold(ZIO.attempt[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
         )
         .mapError(e => Left(SerializationError(e)))
     }
@@ -139,18 +140,18 @@ trait RecordHandler[-R, +E, K, V] {
    * creates a RecordHandler that will run the given function before running this handlers' `handle`
    */
   def <*[R1 <: R](f: ConsumerRecord[K, V] => URIO[R1, Unit]): RecordHandler[R1, E, K, V] =
-    new RecordHandler[R1, E,K,V] {
+    new RecordHandler[R1, E, K, V] {
       override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[R1, E, Any] =
         f(record) *> self.handle(record)
     }
-  }
+}
 
 case class SerializationError(cause: Throwable) extends RuntimeException(cause)
 
 object RecordHandler {
   def apply[R, E, K, V](f: ConsumerRecord[K, V] => ZIO[R, E, Any]): RecordHandler[R, E, K, V] = {
     new RecordHandler[R, E, K, V] {
-      override def handle(record: ConsumerRecord[K, V]) (implicit trace: Trace): ZIO[R, E, Any] = f(record)
+      override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[R, E, Any] = f(record)
     }
   }
 
