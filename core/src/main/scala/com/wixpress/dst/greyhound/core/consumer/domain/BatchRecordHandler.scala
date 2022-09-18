@@ -15,26 +15,32 @@ trait BatchRecordHandler[-R, +E, K, V] { self =>
   /**
    * Invoke another action after this handler finishes.
    */
-  def andThen[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any])(implicit trace: Trace): BatchRecordHandler[R1, E1, K, V] =
+  def andThen[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any])(
+    implicit trace: Trace
+  ): BatchRecordHandler[R1, E1, K, V] =
     (records: ConsumerRecordBatch[K, V]) => self.handle(records) *> f(records)
 
   /**
    * Invoke another action before this handler
    */
-  def <*[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any])(implicit trace: Trace): BatchRecordHandler[R1, E1, K, V] = {
-    (records: ConsumerRecordBatch[K, V]) => f(records) *> self.handle(records)
-  }
+  def <*[R1 <: R, E1 >: E](f: ConsumerRecordBatch[K, V] => ZIO[R1, HandleError[E1], Any])(
+    implicit trace: Trace
+  ): BatchRecordHandler[R1, E1, K, V] = { (records: ConsumerRecordBatch[K, V]) => f(records) *> self.handle(records) }
 
   /**
    * returns a handler for which errors will be passed to the given function (for logging and such)
    */
-  def tapError[R1 <: R](f: (HandleError[E], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any])(implicit trace: Trace): BatchRecordHandler[R1, E, K, V] =
+  def tapError[R1 <: R](f: (HandleError[E], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any])(
+    implicit trace: Trace
+  ): BatchRecordHandler[R1, E, K, V] =
     (records: ConsumerRecordBatch[K, V]) => self.handle(records).tapError(e => f(e, records))
 
   /**
    * returns a handler for which errors/defects will be passed to the given function (for logging and such)
    */
-  def tapCause[R1 <: R](f: (Cause[HandleError[E]], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any])(implicit trace: Trace): BatchRecordHandler[R1, E, K, V] =
+  def tapCause[R1 <: R](f: (Cause[HandleError[E]], ConsumerRecordBatch[K, V]) => ZIO[R1, Nothing, Any])(
+    implicit trace: Trace
+  ): BatchRecordHandler[R1, E, K, V] =
     (records: ConsumerRecordBatch[K, V]) => self.handle(records).tapErrorCause(e => f(e, records))
 
   /**
@@ -64,7 +70,8 @@ trait BatchRecordHandler[-R, +E, K, V] { self =>
         .foreach(records) { record =>
           record.bimapM(
             key => keyDeserializer.deserialize(record.topic, record.headers, key),
-            value => Option(value).fold(ZIO.attempt[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
+            value =>
+              Option(value).fold(ZIO.attempt[V](null.asInstanceOf[V]))(v => valueDeserializer.deserialize(record.topic, record.headers, v))
           )
         }
         .mapError(e => HandleError(Left(SerializationError(e))))
