@@ -6,16 +6,15 @@ import zio.{Console, RIO, Random, System, Unsafe, ZEnvironment}
 import java.util.concurrent.Executors
 import scala.concurrent.{ExecutionContext, Future}
 
-trait GreyhoundRuntime /*extends Runtime[GreyhoundRuntime.Env] */{
+trait GreyhoundRuntime /*extends Runtime[GreyhoundRuntime.Env] */ {
   protected val env: ZEnvironment[GreyhoundRuntime.Env]
   lazy val runtime = zio.Runtime.default.withEnvironment(env)
 
   def unsafeRun[A](zio: RIO[GreyhoundRuntime.Env, A]): A =
-    Unsafe.unsafe{implicit us => runtime.unsafe.run(zio).getOrThrowFiberFailure()}
-
+    Unsafe.unsafe { implicit us => runtime.unsafe.run(zio).getOrThrowFiberFailure() }
 
   def unsafeRunToFuture[A](zio: RIO[GreyhoundRuntime.Env, A]): Future[A] =
-    Unsafe.unsafe{implicit us => runtime.unsafe.runToFuture(zio)}
+    Unsafe.unsafe { implicit us => runtime.unsafe.runToFuture(zio) }
 }
 
 object GreyhoundRuntime {
