@@ -19,7 +19,7 @@ case class GreyhoundProducerBuilder(config: GreyhoundConfig, mutateProducer: Pro
     for {
       runtime       <- ZIO.runtime[Env]
       producerConfig = mutateProducer(ProducerConfig(config.bootstrapServers))
-      producer   <- Producer.makeR[Any](producerConfig).map(ReportingProducer(_)).provideLayer(ZLayer.succeed(zio.Scope.global))
+      producer      <- Producer.makeR[Any](producerConfig).map(ReportingProducer(_)).provideLayer(ZLayer.succeed(zio.Scope.global))
     } yield new GreyhoundProducer {
       override def produce[K, V](
         record: ProducerRecord[K, V],
@@ -46,7 +46,7 @@ case class GreyhoundContextAwareProducerBuilder[C](config: GreyhoundConfig, enco
     for {
       runtime       <- ZIO.runtime[Env]
       producerConfig = ProducerConfig(config.bootstrapServers)
-      producer   <- Producer.makeR[Any](producerConfig).map(ReportingProducer(_)).provideLayer(ZLayer.succeed(zio.Scope.global))
+      producer      <- Producer.makeR[Any](producerConfig).map(ReportingProducer(_)).provideLayer(ZLayer.succeed(zio.Scope.global))
     } yield new GreyhoundContextAwareProducer[C] {
       override def produce[K, V](record: ProducerRecord[K, V], keySerializer: Serializer[K], valueSerializer: Serializer[V])(
         implicit context: C
