@@ -35,7 +35,7 @@ object TestMetrics {
           (reportLive(metric) *> q.offer(metric).unit *> andAlso.report(metric)).unit
         }
 
-        override def queue: Queue[GreyhoundMetric]                                           = q
+        override def queue: Queue[GreyhoundMetric] = q
       }
       ZLayer.succeed(service) ++ ZLayer.succeed(service: GreyhoundMetrics.Service)
     }

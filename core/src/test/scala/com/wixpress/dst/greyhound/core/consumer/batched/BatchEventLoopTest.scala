@@ -111,9 +111,13 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
 
   private def environment: ZEnvironment[TestMetrics with Scope with TestEnvironment] =
     TestMetrics.buildEnv ++
-      zio.Unsafe.unsafe { implicit s => runtime.unsafe.run(
-        ZIO.scoped((zio.test.testEnvironment.>+>(TestClock.default) ++ ZLayer.succeed(Scope.global : Scope)).build)
-      ).getOrThrowFiberFailure() }
+      zio.Unsafe.unsafe { implicit s =>
+        runtime.unsafe
+          .run(
+            ZIO.scoped((zio.test.testEnvironment.>+>(TestClock.default) ++ ZLayer.succeed(Scope.global: Scope)).build)
+          )
+          .getOrThrowFiberFailure()
+      }
 
   private def isRecordsHandledMetric(topics: Seq[Topic], group: String, clientId: String) =
     isSubtype[RecordsHandled[_, _]](
