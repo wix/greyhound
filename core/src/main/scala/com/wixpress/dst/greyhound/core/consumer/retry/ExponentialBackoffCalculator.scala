@@ -45,7 +45,7 @@ object ExponentialBackoffCalculator {
 
     val safeInitialInterval = if (initialInterval.toMillis < 10) ZDuration(10, TimeUnit.MILLISECONDS) else initialInterval
 
-    val maxDuration = safeInitialInterval.toMillis * power((1 + absBackOffMultiplier), safeMaxMultiplications).toLong
+    val maxDuration = safeInitialInterval.toMillis * power(1 + absBackOffMultiplier, safeMaxMultiplications).toLong
 
     val infiniteDurations = Stream.iterate(safeInitialInterval)(prevInterval => {
       val calclatedDuration = prevInterval * (1 + absBackOffMultiplier)

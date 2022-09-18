@@ -25,10 +25,10 @@ class OffsetIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   "return offset for time" in {
     for {
-      r <- getShared
-      topic                          <- r.kafka.createRandomTopic(prefix = s"aTopic", partitions = 1)
-      partition                       = 0
-      group                          <- randomGroup
+      r        <- getShared
+      topic    <- r.kafka.createRandomTopic(prefix = s"aTopic", partitions = 1)
+      partition = 0
+      group    <- randomGroup
 
       numberOfMessages     = 32
       someMessages         = 16
@@ -38,24 +38,24 @@ class OffsetIT extends BaseTestWithSharedEnv[Env, TestResources] {
                                handledSomeMessages.countDown zipParRight handledAllMessages.countDown
                              }
 
-      test <- ZIO.scoped(RecordConsumer.make(configFor(topic, group, r.kafka).copy(offsetReset = OffsetReset.Earliest), handler).
-        flatMap{ consumer =>
-                val record = ProducerRecord(topic, Chunk.empty)
-                for {
-                  zeroTime         <- Clock.currentTime(TimeUnit.MILLISECONDS)
-                  _                <- ZIO.foreachParDiscard(0 until someMessages)(_ => r.producer.produce(record))
-                  _                <- handledSomeMessages.await
-                  middleTime       <- Clock.currentTime(TimeUnit.MILLISECONDS)
-                  // When we don't produce the additional messages below the test starts failing as Kafka client returns null for
-                  // middleTimeOffset - WTF?
-                  _                <- ZIO.foreachParDiscard(someMessages until numberOfMessages)(_ => r.producer.produce(record))
-                  _                <- handledAllMessages.await
-                  zeroTimeOffset   <- consumer.offsetsForTimes(Map(TopicPartition(topic, partition) -> zeroTime))
-                  middleTimeOffset <- consumer.offsetsForTimes(Map(TopicPartition(topic, partition) -> middleTime))
-                } yield {
-                  (zeroTimeOffset(TopicPartition(topic, partition)) === 0) and
-                    (middleTimeOffset(TopicPartition(topic, partition)) === someMessages)
-                }
+      test <- ZIO.scoped(RecordConsumer.make(configFor(topic, group, r.kafka).copy(offsetReset = OffsetReset.Earliest), handler).flatMap {
+                consumer =>
+                  val record = ProducerRecord(topic, Chunk.empty)
+                  for {
+                    zeroTime         <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                    _                <- ZIO.foreachParDiscard(0 until someMessages)(_ => r.producer.produce(record))
+                    _                <- handledSomeMessages.await
+                    middleTime       <- Clock.currentTime(TimeUnit.MILLISECONDS)
+                    // When we don't produce the additional messages below the test starts failing as Kafka client returns null for
+                    // middleTimeOffset - WTF?
+                    _                <- ZIO.foreachParDiscard(someMessages until numberOfMessages)(_ => r.producer.produce(record))
+                    _                <- handledAllMessages.await
+                    zeroTimeOffset   <- consumer.offsetsForTimes(Map(TopicPartition(topic, partition) -> zeroTime))
+                    middleTimeOffset <- consumer.offsetsForTimes(Map(TopicPartition(topic, partition) -> middleTime))
+                  } yield {
+                    (zeroTimeOffset(TopicPartition(topic, partition)) === 0) and
+                      (middleTimeOffset(TopicPartition(topic, partition)) === someMessages)
+                  }
               })
     } yield test
   }

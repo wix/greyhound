@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import java.util.concurrent.TimeUnit
 import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, Blocking => InternalBlocking, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, DoneBlockingBeforeRetry, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.consumer.retry.ZIOHelper.foreachWhile
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
@@ -28,7 +28,7 @@ private[retry] object BlockingRetryRecordHandler {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
 
-    override def handle(record: ConsumerRecord[K, V]) (implicit trace: Trace): ZIO[GreyhoundMetrics with R, Nothing, LastHandleResult] = {
+    override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[GreyhoundMetrics with R, Nothing, LastHandleResult] = {
       val topicPartition = TopicPartition(record.topic, record.partition)
 
       def pollBlockingStateWithSuspensions(interval: Duration, start: Long): URIO[GreyhoundMetrics, PollResult] = {
