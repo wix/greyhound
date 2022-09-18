@@ -15,7 +15,7 @@ private[retry] object BlockingAndNonBlockingRetryRecordHandler {
     blockingHandler: BlockingRetryRecordHandler[V, K, R],
     nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R]
   ): BlockingAndNonBlockingRetryRecordHandler[K, V, R] = new BlockingAndNonBlockingRetryRecordHandler[K, V, R] {
-    override def handle(record: ConsumerRecord[K, V]) (implicit trace: Trace): ZIO[GreyhoundMetrics with R, Nothing, Any] = {
+    override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[GreyhoundMetrics with R, Nothing, Any] = {
       val value = blockingHandler.handle(record)
       value.flatMap(result =>
         ZIO.when(!result.lastHandleSucceeded) {
