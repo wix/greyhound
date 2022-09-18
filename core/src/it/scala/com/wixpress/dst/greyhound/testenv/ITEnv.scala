@@ -6,20 +6,20 @@ import com.wixpress.dst.greyhound.core.testkit.{TestMetrics, TestMetricsEnvironm
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import zio.Random.nextIntBetween
-import zio.{Random, Scope, Trace, ZEnvironment, ZIO, ZLayer, durationInt}
+import zio.{durationInt, Random, Scope, Trace, ZEnvironment, ZIO, ZLayer}
 import zio.managed._
 import zio.test.{Live, TestClock}
 
 object ITEnv {
-    implicit val trace = Trace.empty
+  implicit val trace = Trace.empty
   type Env = TestMetrics
   case class TestResources(kafka: ManagedKafka, producer: ReportingProducer[Any])
 
-  def ManagedEnv: UManaged[ ZEnvironment[TestMetrics with GreyhoundMetrics]] =
+  def ManagedEnv: UManaged[ZEnvironment[TestMetrics with GreyhoundMetrics]] =
     for {
       env         <- ZManaged.fromZIO(GreyhoundMetrics.liveLayer.build.provide(ZLayer.succeed(Scope.global)))
       testMetrics <- ZManaged.succeed(TestMetricsEnvironment)
-      a = env ++ testMetrics
+      a            = env ++ testMetrics
     } yield a
 
   def testResources(): ZManaged[TestMetrics with GreyhoundMetrics, Throwable, TestResources] = {
@@ -27,10 +27,14 @@ object ITEnv {
 
     for {
       kafkaPort <- nextPort.toManaged
-      zkPort <- nextPort .toManaged
-      gM <- ZManaged.fromZIO(ZIO.environment[GreyhoundMetrics])
-      kafka    <- ZManaged.acquireReleaseWith(ManagedKafka.make(ManagedKafkaConfig(kafkaPort, zkPort, Map.empty)).provideEnvironment(gM ++ ZEnvironment(Scope.global)))(_.shutdown.ignore)
-      producer <- ZManaged.acquireReleaseWith(Producer.makeR[Any](ProducerConfig(kafka.bootstrapServers)).provide(ZLayer.succeed(Scope.global)))(_.shutdown)
+      zkPort    <- nextPort.toManaged
+      gM        <- ZManaged.fromZIO(ZIO.environment[GreyhoundMetrics])
+      kafka     <- ZManaged.acquireReleaseWith(
+                     ManagedKafka.make(ManagedKafkaConfig(kafkaPort, zkPort, Map.empty)).provideEnvironment(gM ++ ZEnvironment(Scope.global))
+                   )(_.shutdown.ignore)
+      producer  <- ZManaged.acquireReleaseWith(
+                     Producer.makeR[Any](ProducerConfig(kafka.bootstrapServers)).provide(ZLayer.succeed(Scope.global))
+                   )(_.shutdown)
     } yield TestResources(kafka, ReportingProducer(producer))
   }
 
@@ -56,8 +60,6 @@ object ITEnv {
     } yield topic
   }
 }
-
-
 
 //package com.wixpress.dst.greyhound.testenv
 //
