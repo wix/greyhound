@@ -35,7 +35,7 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
              .tapError(error => report(SubscribeFailed(clientId, group, error, config.consumerAttributes)))
     } yield ()
 
-  private def listener[R1](r: ZEnvironment[R1 with  GreyhoundMetrics], rebalanceListener: RebalanceListener[R1]) = {
+  private def listener[R1](r: ZEnvironment[R1 with GreyhoundMetrics], rebalanceListener: RebalanceListener[R1]) = {
     new RebalanceListener[Any] {
       override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
         implicit trace: Trace
