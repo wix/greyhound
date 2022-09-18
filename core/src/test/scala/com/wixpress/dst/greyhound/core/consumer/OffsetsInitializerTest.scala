@@ -13,8 +13,8 @@ import org.specs2.specification.Scope
 import scala.util.Random
 
 class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
-  private val Seq(p1, p2, p3) = Seq("t1" -> 1, "t2" -> 2, "t3" -> 3).map(tp => TopicPartition(tp._1, tp._2))
-  private val partitions = Set(p1, p2, p3)
+  private val Seq(p1, p2, p3)     = Seq("t1" -> 1, "t2" -> 2, "t3" -> 3).map(tp => TopicPartition(tp._1, tp._2))
+  private val partitions          = Set(p1, p2, p3)
   private val p1Pos, p2Pos, p3Pos = randomInt.toLong
 
   "do nothing if no missing offsets" in
