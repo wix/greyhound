@@ -5,13 +5,13 @@ import com.wixpress.dst.greyhound.core.producer.Producer.Producer
 import com.wixpress.dst.greyhound.core.producer._
 import zio._
 
-
 case class FakeProducer(
   records: Queue[ProducerRecord[Chunk[Byte], Chunk[Byte]]],
   counterRef: Ref[Int],
   offsets: Ref[Map[TopicPartition, Offset]],
   config: ProducerConfig,
-  beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] = ZIO.succeed(_)(Trace.empty),
+  beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] =
+    ZIO.succeed(_)(Trace.empty),
   beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = ZIO.succeed(_)(Trace.empty),
   override val attributes: Map[String, String] = Map.empty,
   onShutDown: UIO[Unit] = ZIO.unit
@@ -21,7 +21,7 @@ case class FakeProducer(
 
   override def produceAsync(
     record: ProducerRecord[Chunk[Byte], Chunk[Byte]]
-  ) (implicit trace: Trace): ZIO[Any, ProducerError, IO[ProducerError, RecordMetadata]] =
+  )(implicit trace: Trace): ZIO[Any, ProducerError, IO[ProducerError, RecordMetadata]] =
     config match {
       case ProducerConfig.Standard =>
         for {
@@ -48,18 +48,19 @@ case class FakeProducer(
         )
     }
 
-  override def shutdown (implicit trace: Trace): UIO[Unit] = onShutDown
+  override def shutdown(implicit trace: Trace): UIO[Unit] = onShutDown
 
-  def producedCount (implicit trace: Trace) = counterRef.get
+  def producedCount(implicit trace: Trace) = counterRef.get
 
   override def partitionsFor(topic: Topic)(implicit trace: Trace): RIO[Any, Seq[PartitionInfo]] =
     ZIO.succeed((1 to 3) map (p => PartitionInfo(topic, p, 1)))
 }
 
 object FakeProducer {
-  def make (implicit trace: Trace): UIO[FakeProducer] = make()
+  def make(implicit trace: Trace): UIO[FakeProducer] = make()
   def make(
-    beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] = ZIO.succeed(_)(Trace.empty),
+    beforeProduce: ProducerRecord[Chunk[Byte], Chunk[Byte]] => IO[ProducerError, ProducerRecord[Chunk[Byte], Chunk[Byte]]] =
+      ZIO.succeed(_)(Trace.empty),
     beforeComplete: RecordMetadata => IO[ProducerError, RecordMetadata] = ZIO.succeed(_)(Trace.empty),
     attributes: Map[String, String] = Map.empty,
     onShutdown: UIO[Unit] = ZIO.unit

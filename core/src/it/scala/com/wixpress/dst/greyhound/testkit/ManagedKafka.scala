@@ -32,7 +32,7 @@ object ManagedKafka {
     _       <- embeddedZooKeeper(config.zooKeeperPort)
     metrics <- ZIO.environment[GreyhoundMetrics]
     logDir  <- tempDirectory(s"target/kafka/logs/${config.kafkaPort}")
-    kafka       <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
+    kafka   <- embeddedKafka(KafkaServerConfig(config.kafkaPort, config.zooKeeperPort, config.brokerId, logDir, config.saslAttributes))
     admin   <- AdminClient.make(AdminClientConfig(s"localhost:${config.kafkaPort}"))
   } yield new ManagedKafka {
 
@@ -52,7 +52,9 @@ object ManagedKafka {
 
   private def tempDirectory(path: String) = {
     val acquire = GreyhoundMetrics.report(CreatingTempDirectory(path)) *> attemptBlocking(Directory(path))
-    ZIO.acquireRelease(acquire){ dir => GreyhoundMetrics.report(DeletingTempDirectory(path)) *> attemptBlocking(dir.deleteRecursively()).ignore }
+    ZIO.acquireRelease(acquire) { dir =>
+      GreyhoundMetrics.report(DeletingTempDirectory(path)) *> attemptBlocking(dir.deleteRecursively()).ignore
+    }
   }
 
   private def embeddedZooKeeper(port: Int) = {

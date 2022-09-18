@@ -10,7 +10,7 @@ object TestClockUtils {
     log(s"moved clock ${tickDuration.toMillis}") *> TestClock.adjust(tickDuration) *> waitALittle
   }
 
-  private def waitALittle (implicit trace: Trace) = {
+  private def waitALittle(implicit trace: Trace) = {
     sleep(200.millis)
   }
 
