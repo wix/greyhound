@@ -25,7 +25,7 @@ trait BatchEventLoop[R] extends Resource[R] {
 
   def requestSeek(toOffsets: Map[TopicPartition, Offset])(implicit trace: Trace): UIO[Unit]
 
-  def shutdown() (implicit trace: Trace): UIO[Unit]
+  def shutdown()(implicit trace: Trace): UIO[Unit]
 }
 
 private[greyhound] class BatchEventLoopImpl[R](
@@ -48,7 +48,7 @@ private[greyhound] class BatchEventLoopImpl[R](
 
   private def report(metric: GreyhoundMetric)(implicit trace: Trace) = GreyhoundMetrics.report(metric).provide(ZLayer.succeed(capturedR))
 
-  override def pause(implicit trace: Trace) : URIO[R, Unit] =
+  override def pause(implicit trace: Trace): URIO[R, Unit] =
     report(PausingEventLoop(clientId, group, consumerAttributes)) *> elState.pause()
 
   override def resume(implicit trace: Trace): URIO[R, Unit] =
@@ -74,16 +74,19 @@ private[greyhound] class BatchEventLoopImpl[R](
   } yield ()
 
   private def pollOnce(implicit trace: Trace): URIO[R with GreyhoundMetrics, Unit] =
-    elState.awaitRunning().timed
-      .provideEnvironment(ZEnvironment(capturedR)).flatMap {
-      case (waited, _) =>
-        for {
-          _ <- ZIO.when(waited > 1.second)(report(EventloopWaitedForResume(group, clientId, waited, consumerAttributes)))
-          _ <- pollAndHandle()
-          _ <- seekIfRequested()
-          _ <- commitOffsets()
-        } yield ()
-    }
+    elState
+      .awaitRunning()
+      .timed
+      .provideEnvironment(ZEnvironment(capturedR))
+      .flatMap {
+        case (waited, _) =>
+          for {
+            _ <- ZIO.when(waited > 1.second)(report(EventloopWaitedForResume(group, clientId, waited, consumerAttributes)))
+            _ <- pollAndHandle()
+            _ <- seekIfRequested()
+            _ <- commitOffsets()
+          } yield ()
+      }
 
   private def seekIfRequested()(implicit trace: Trace) =
     seekRequests.get
@@ -139,16 +142,19 @@ private[greyhound] class BatchEventLoopImpl[R](
   }
 
   private def handleInParallelWithRetry(readyToHandle: Map[TopicPartition, Seq[Record]])(implicit trace: Trace): ZIO[R, Nothing, Unit] = {
-    ZIO.foreachParDiscard(readyToHandle) {
-      case (tp, records) =>
-        (handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records)) *> elState.markHandled(tp, records)).catchAllCause { cause =>
-          val forceNoRetry = cause.failureOption.fold(false)(_.forceNoRetry)
-          report(HandleAttemptFailed(group, clientId, tp.topic, tp.partition, records, !forceNoRetry, consumerAttributes)) *> {
-            if (forceNoRetry) elState.markHandled(tp, records)
-            else elState.attemptFailed(tp, records).provideEnvironment(ZEnvironment(capturedR))
+    ZIO
+      .foreachParDiscard(readyToHandle) {
+        case (tp, records) =>
+          (handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records)) *> elState.markHandled(tp, records)).catchAllCause {
+            cause =>
+              val forceNoRetry = cause.failureOption.fold(false)(_.forceNoRetry)
+              report(HandleAttemptFailed(group, clientId, tp.topic, tp.partition, records, !forceNoRetry, consumerAttributes)) *> {
+                if (forceNoRetry) elState.markHandled(tp, records)
+                else elState.attemptFailed(tp, records).provideEnvironment(ZEnvironment(capturedR))
+              }
           }
-        }
-    }.withParallelism(config.parallelism)
+      }
+      .withParallelism(config.parallelism)
   }
 
   private def concatByKey[K, V](a: Map[K, Seq[V]], b: Map[K, Seq[V]]) = {
@@ -159,10 +165,12 @@ private[greyhound] class BatchEventLoopImpl[R](
   }
 
   private def handleWithNoRetry(polled: Records)(implicit trace: Trace) = {
-    ZIO.foreachParDiscard(recordsByPartition(polled)) {
-      case (tp, records) =>
-        handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records)).sandbox.ignore *> elState.offsets.update(records)
-    }.withParallelism(config.parallelism)
+    ZIO
+      .foreachParDiscard(recordsByPartition(polled)) {
+        case (tp, records) =>
+          handler.handle(ConsumerRecordBatch(tp.topic, tp.partition, records)).sandbox.ignore *> elState.offsets.update(records)
+      }
+      .withParallelism(config.parallelism)
   }
 
   private def commitOffsets()(implicit trace: Trace): UIO[Unit] =
@@ -230,7 +238,9 @@ object BatchEventLoop {
   ): RebalanceListener[Any] = {
     config.rebalanceListener *>
       new RebalanceListener[Any] {
-        override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, DelayedRebalanceEffect] = {
+        override def onPartitionsRevoked(consumer: Consumer, partitions: Set[TopicPartition])(
+          implicit trace: Trace
+        ): URIO[Any, DelayedRebalanceEffect] = {
           state.partitionsRevoked(partitions).as(DelayedRebalanceEffect.unit)
         }
 
@@ -402,7 +412,7 @@ private[greyhound] object BatchEventLoopState {
 
   case class PauseResume(toPause: Set[TopicPartition], toResume: Set[TopicPartition])
 
-  def make (implicit trace: Trace) = for {
+  def make(implicit trace: Trace) = for {
     running   <- TRef.make(true).commit
     shutdown  <- Ref.make(false)
     offsets   <- Offsets.make
@@ -428,8 +438,8 @@ private[greyhound] class BatchEventLoopState(
   pausedPartitionsRef: Ref[Set[TopicPartition]],
   val offsets: Offsets
 ) {
-  private[greyhound] def clearPending(partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Unit] = pendingRecordsRef.update { pending =>
-    partitions.foldLeft(pending) { case (res, tp) => res - tp }
+  private[greyhound] def clearPending(partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Unit] = pendingRecordsRef.update {
+    pending => partitions.foldLeft(pending) { case (res, tp) => res - tp }
   }
 
   def partitionsRevoked(partitions: Set[TopicPartition])(implicit trace: Trace) = {

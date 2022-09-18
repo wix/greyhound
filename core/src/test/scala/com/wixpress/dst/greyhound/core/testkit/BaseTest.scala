@@ -12,7 +12,7 @@ import zio.test.{TestClock, TestEnvironment}
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.TimeoutException
 
-abstract class BaseTest[R /*: EnvironmentTag*/] extends SpecificationWithJUnit with TimeoutSupport {
+abstract class BaseTest[R /*: EnvironmentTag*/ ] extends SpecificationWithJUnit with TimeoutSupport {
   implicit val trace = Trace.empty
   type ENV = R
 
@@ -36,7 +36,7 @@ abstract class BaseTest[R /*: EnvironmentTag*/] extends SpecificationWithJUnit w
       override def asResult(t: => ZIO[R1, E, A]): Result = {
         ev.asResult(run(t))
       }
-  }
+    }
 
   def testEnvironment: UManaged[ZEnvironment[TestEnvironment]] =
     BaseTestEnvHelper.testEnvironment
@@ -47,7 +47,7 @@ abstract class BaseTest[R /*: EnvironmentTag*/] extends SpecificationWithJUnit w
 }
 
 trait BaseTestNoEnv extends BaseTest[Any] {
-  override def env  = managed.ZManaged.succeed(ZEnvironment())(zio.Trace.empty)
+  override def env = managed.ZManaged.succeed(ZEnvironment())(zio.Trace.empty)
 }
 
 abstract class BaseTestWithSharedEnv[R, SHARED] extends SpecificationWithJUnit with BeforeAfterAll with TimeoutSupport {
@@ -63,36 +63,37 @@ abstract class BaseTestWithSharedEnv[R, SHARED] extends SpecificationWithJUnit w
 
   def env: UManaged[ZEnvironment[R]]
 
-
   override def beforeAll(): Unit = {
     sharedRef.set(Some(initShared()))
   }
 
   private def initShared(): (SHARED, UIO[Unit]) = {
     zio.Unsafe.unsafe { implicit s =>
-      runtime.unsafe.run(
-        env.use(e =>
-          ZIO.debug(s"***** Shared environment initializing ****") *>
-            (for {
-              reservation <- sharedEnv.reserve
-              acquired <- reservation.acquire
-                .provideEnvironment(e)
-                .timed
-                .tapBoth(
-                  (error: Throwable) =>
-                    ZIO.succeed(
-                      new Throwable(
-                        s"***** shared environment initialization failed - ${error.getClass.getName}: ${error.getMessage}",
-                        error
-                      )
-                        .printStackTrace()
-                    ),
-                  { case (elapsed, _) => ZIO.debug(s"***** Shared environment initialized in ${elapsed.toMillis} ms *****") }
-                )
-              (_, res) = acquired
-            } yield res -> reservation.release(Exit.unit).unit.provideEnvironment(e))
+      runtime.unsafe
+        .run(
+          env.use(e =>
+            ZIO.debug(s"***** Shared environment initializing ****") *>
+              (for {
+                reservation <- sharedEnv.reserve
+                acquired    <- reservation.acquire
+                                 .provideEnvironment(e)
+                                 .timed
+                                 .tapBoth(
+                                   (error: Throwable) =>
+                                     ZIO.succeed(
+                                       new Throwable(
+                                         s"***** shared environment initialization failed - ${error.getClass.getName}: ${error.getMessage}",
+                                         error
+                                       )
+                                         .printStackTrace()
+                                     ),
+                                   { case (elapsed, _) => ZIO.debug(s"***** Shared environment initialized in ${elapsed.toMillis} ms *****") }
+                                 )
+                (_, res)     = acquired
+              } yield res -> reservation.release(Exit.unit).unit.provideEnvironment(e))
+          )
         )
-      ).getOrThrowFiberFailure()
+        .getOrThrowFiberFailure()
     }
   }
 
@@ -111,8 +112,7 @@ abstract class BaseTestWithSharedEnv[R, SHARED] extends SpecificationWithJUnit w
   implicit def zioAsResult[R1 >: R, E, A](implicit ev: AsResult[A]): AsResult[ZIO[R1, E, A]] =
     new AsResult[ZIO[R1, E, A]] {
       override def asResult(t: => ZIO[R1, E, A]): Result = {
-        ev.asResult(zio.Unsafe.unsafe { implicit s => runtime.unsafe.run(
-          env.use(e => t.provideEnvironment(e))).getOrThrowFiberFailure() })
+        ev.asResult(zio.Unsafe.unsafe { implicit s => runtime.unsafe.run(env.use(e => t.provideEnvironment(e))).getOrThrowFiberFailure() })
       }
     }
 }
@@ -120,10 +120,10 @@ abstract class BaseTestWithSharedEnv[R, SHARED] extends SpecificationWithJUnit w
 case class TestAndGreyhoundMetrics(g: GreyhoundMetrics, t: TestMetrics)
 
 trait TimeoutSupport {
-  private implicit val trace =  Trace.empty
+  private implicit val trace = Trace.empty
 
-  implicit class ZioOps[R <: Any : Tag, E, A](zio: ZIO[R, E, A]) {
-    def withTimeout(duration: Duration, message: Option[String] = None) (implicit trace: Trace): ZIO[R, Any, A] = {
+  implicit class ZioOps[R <: Any: Tag, E, A](zio: ZIO[R, E, A]) {
+    def withTimeout(duration: Duration, message: Option[String] = None)(implicit trace: Trace): ZIO[R, Any, A] = {
       val msg = message.getOrElse(s"Timed out after ${duration.render}")
       zio
         .timeoutFail(new TimeoutException(msg))(duration)

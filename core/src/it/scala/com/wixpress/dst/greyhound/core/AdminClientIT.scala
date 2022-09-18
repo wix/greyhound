@@ -125,7 +125,7 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
                       .flatMap { _ => r.kafka.adminClient.listGroups() }
                   )
       } yield {
-        (groups === Set(group))
+        groups === Set(group)
       }
     }
 
@@ -152,8 +152,8 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
                                                groupOffsets    <- groupOffsetsRef.get
                                              } yield (awaitResult, groupOffsets)
       } yield {
-        ((awaitResultAndGroupOffsets._1 aka "awaitResult" must not(beNone)) and
-          (awaitResultAndGroupOffsets._2 === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L))))
+        (awaitResultAndGroupOffsets._1 aka "awaitResult" must not(beNone)) and
+          (awaitResultAndGroupOffsets._2 === Map(GroupTopicPartition(group, TopicPartition(topic.name, 0)) -> PartitionOffset(0L)))
       })
     }
 
@@ -169,8 +169,7 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
         handler                           = RecordHandler { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
                                               {
                                                 ZIO.debug("in record handler....") *>
-                                                r.kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *>
-                                                  ZIO.debug("yay!....") *>
+                                                  r.kafka.adminClient.groupState(Set(group)).flatMap(r => groupStateRef.set(r.get(group))) *> ZIO.debug("yay!....") *>
                                                   calledGroupsStateAfterAssignment.countDown
                                               }
                                             }
@@ -181,8 +180,9 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
               .flatMap { _ =>
                 for {
                   recordPartition  <- ZIO.succeed(ProducerRecord(topic.name, Chunk.empty, partition = Some(0)))
-                  _                <- r.producer.produce(recordPartition)
-                    .tap(rm => ZIO.debug(s"produced!! offset ${rm.offset}"))
+                  _                <- r.producer
+                                        .produce(recordPartition)
+                                        .tap(rm => ZIO.debug(s"produced!! offset ${rm.offset}"))
                   awaitResult      <- calledGroupsStateAfterAssignment.await.timeout(fromScala(10.seconds))
                   stateWhenStarted <- groupStateRef.get
                 } yield (awaitResult, stateWhenStarted)
