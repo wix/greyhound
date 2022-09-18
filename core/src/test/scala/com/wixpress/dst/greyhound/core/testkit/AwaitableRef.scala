@@ -12,7 +12,7 @@ trait AwaitableRef[A] {
   def updateAndGet(f: A => A): UIO[A]
   def get: UIO[A]
   def await(p: A => Boolean, timeout: Duration = 1000.millis): IO[TimeoutException, A]
-  def awaitChangeAfter[R, E, A1](effect: => ZIO[R, E, Any], timeout: Duration = 1000.millis) (implicit trace: Trace): ZIO[R, E, A] =
+  def awaitChangeAfter[R, E, A1](effect: => ZIO[R, E, Any], timeout: Duration = 1000.millis)(implicit trace: Trace): ZIO[R, E, A] =
     for {
       before <- get
       _      <- effect
@@ -21,7 +21,7 @@ trait AwaitableRef[A] {
 }
 
 object AwaitableRef {
-  def make[A](a: A) (implicit trace: Trace): UIO[AwaitableRef[A]] =
+  def make[A](a: A)(implicit trace: Trace): UIO[AwaitableRef[A]] =
     for {
       runtime <- ZIO.runtime[Any]
       ref     <- TRef.make(a).commit
@@ -47,7 +47,8 @@ object AwaitableRef {
         ).commit
           .timeoutFail(
             new TimeoutException(
-              s"AwaitableRef: timed out waiting for condition [timeout: $timeout]\ncurrent value: ${zio.Unsafe.unsafe { implicit s => runtime.unsafe.run(ref.get.commit).getOrThrowFiberFailure() }}"
+              s"AwaitableRef: timed out waiting for condition [timeout: $timeout]\ncurrent value: ${zio.Unsafe
+                  .unsafe { implicit s => runtime.unsafe.run(ref.get.commit).getOrThrowFiberFailure() }}"
             )
           )(timeout)
     }
