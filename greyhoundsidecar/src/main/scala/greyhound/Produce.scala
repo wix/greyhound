@@ -17,9 +17,5 @@ object Produce {
           keySerializer = Serdes.StringSerde,
           valueSerializer = Serdes.StringSerde
         )
-        .tapBoth(
-          error => ZIO.succeed(println(s"~~~ PRODUCE ~~~ failed producing a msg, error [$error] request [$request]")),
-          response => ZIO.succeed(println(s"~~~ PRODUCE ~~~ produced a msg! response [$response]"))
-        )
     }
 }
