@@ -19,9 +19,6 @@ object BatchConsumerHandler {
 
       client
         .handleMessages(request)
-        .tapBoth(
-          fail => ZIO.succeed(println(s"~~~ CONSUME BATCH - send message failed: $fail")),
-          _ => ZIO.succeed(println("CONSUME BATCH - SENT")))
         .catchAll(grpcStatus => ZIO.fail(HandleError(BatchConsumerFailure(grpcStatus))))
     }
 

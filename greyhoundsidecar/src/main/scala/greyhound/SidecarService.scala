@@ -19,7 +19,6 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
   private def register0(request: RegisterRequest) = for {
     port <- ZIO.effect(request.port.toInt)
     _    <- register.add(request.host, port)
-    _    <- putStrLn(s"~~~ REGISTER $request ~~~").orDie
   } yield RegisterResponse()
 
   override def produce(request: ProduceRequest): ZIO[ZEnv, Status, ProduceResponse] =
@@ -29,7 +28,6 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
 
   private def produce0(request: ProduceRequest) =
     for {
-      _            <- putStrLn(s"~~~ START PRODUCE $request~~~").orDie
       kafkaAddress <- register.get.map(_.kafkaAddress)
       _            <- Produce(request, kafkaAddress)
     } yield ()
@@ -41,10 +39,8 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
 
   private def createTopics0(request: CreateTopicsRequest) =
     for {
-      _            <- putStrLn(s"~~~ START CREATE TOPICS $request ~~~").orDie
       kafkaAddress <- register.get.map(_.kafkaAddress)
       _            <- SidecarAdminClient.admin(kafkaAddress).use { client => client.createTopics(request.topics.toSet.map(mapTopic)) }
-      _            <- putStrLn("~~~ END CREATE TOPICS ~~~")
     } yield ()
 
   private def mapTopic(topic: TopicToCreate): TopicConfig =
@@ -57,11 +53,9 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
 
   private def startConsuming0(request: StartConsumingRequest) =
     ZIO.foreach(request.consumers) { consumer =>
-      println(s"~~~ CREATE CONSUMER $consumer~~~")
       CreateConsumer(consumer.topic, consumer.group, consumer.retryStrategy).forkDaemon
     } *>
       ZIO.foreach(request.batchConsumers) { consumer =>
-        println(s"~~~ CREATE BATCH CONSUMER $consumer~~~")
         CreateBatchConsumer(consumer.topic, consumer.group, consumer.retryStrategy).forkDaemon
       }
 

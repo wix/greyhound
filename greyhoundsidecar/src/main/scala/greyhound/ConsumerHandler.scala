@@ -17,9 +17,6 @@ object ConsumerHandler {
 
       client
         .handleMessages(request)
-        .tapBoth(
-          fail => ZIO.succeed(println(s"~~~ CONSUME - send message failed: $fail")),
-          _ => ZIO.succeed(println("CONSUME - SENT")))
         .catchAll(grpcStatus => ZIO.fail(ConsumerFailure(grpcStatus)))
     }
 
