@@ -9,6 +9,7 @@ scala_library(
         ":sources",
     ],
     deps = [
+        "@dev_zio_zio_stacktracer_2_12",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         # "@dev_zio_izumi_reflect_2_12",
         "@dev_zio_zio_2_12",
