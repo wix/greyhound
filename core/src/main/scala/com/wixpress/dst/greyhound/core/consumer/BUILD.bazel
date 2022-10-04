@@ -10,6 +10,8 @@ scala_library(
     ],
     plugins = ["@com_kubukoz_better_tostring_2_12"],
     deps = [
+        "@dev_zio_izumi_reflect_2_12",
+        "@dev_zio_zio_stacktracer_2_12",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/admin",
         "//core/src/main/scala/com/wixpress/dst/greyhound/core/consumer/domain",
