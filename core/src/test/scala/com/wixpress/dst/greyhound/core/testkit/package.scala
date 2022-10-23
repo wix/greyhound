@@ -3,7 +3,6 @@ package com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import zio.Schedule._
-
 import zio._
 
 package object testkit {
@@ -29,9 +28,11 @@ package object testkit {
       result      = timeoutRes.map(_._2)
       _          <-
         ZIO.when(timeoutRes.isEmpty)(
-          ZIO.fail(
-            new RuntimeException(
-              s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds${message.map(m => s" ($m)").getOrElse("")}. result: $result"
+          f.flatMap(result =>
+            ZIO.fail(
+              new RuntimeException(
+                s"eventuallyZ predicate failed after ${timeout.toMillis} milliseconds${message.map(m => s" ($m)").getOrElse("")}. result: $result"
+              )
             )
           )
         )
