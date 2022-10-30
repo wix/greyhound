@@ -217,7 +217,7 @@ object Consumer {
         withConsumer(_.listTopics()).map { topics => topics.asScala.mapValues(_.asScala.toList.map(PartitionInfo.apply)).toMap }
 
       override def shutdown(timeout: Duration)(implicit trace: Trace): Task[Unit] =
-        withConsumer(_.close(timeout.toMillis, TimeUnit.MILLISECONDS))
+        withConsumer(_.close(java.time.Duration.ofMillis(timeout.toMillis)))
           .reporting(ClosedConsumer(config.groupId, config.clientId, _))
           .provideEnvironment(metrics)
     }
