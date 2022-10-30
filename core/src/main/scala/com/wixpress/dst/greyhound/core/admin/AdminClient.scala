@@ -9,10 +9,10 @@ import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
 import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig, AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription}
+import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
-import org.apache.kafka.common.errors.{TopicExistsException, UnknownTopicOrPartitionException}
+import org.apache.kafka.common.errors.{InvalidTopicException, TopicExistsException, UnknownTopicOrPartitionException}
 import zio.{IO, RIO, Scope, Trace, ZIO}
 import GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
@@ -137,6 +137,7 @@ object AdminClient {
                   topicResult.asZio.either.flatMap {
                     case Right(_)                                  => ZIO.succeed(true)
                     case Left(_: UnknownTopicOrPartitionException) => ZIO.succeed(false)
+                    case Left(_: InvalidTopicException)            => ZIO.succeed(false)
                     case Left(ex)                                  => ZIO.fail(ex)
                   }
               }
