@@ -110,7 +110,7 @@ case class KafkaServerConfig(port: Int, zooKeeperPort: Int, brokerId: Int, logDi
     // force `listeners` to localhost, otherwise  Kaka will try and discover the hostname of the machine
     // running the tests and tell clients to use this to connect, which in some cases may not work.
     props.setProperty("listeners", s"PLAINTEXT://localhost:$port")
-    props.setProperty("authorizer.class.name", "kafka.security.auth.SimpleAclAuthorizer")
+    props.setProperty("authorizer.class.name", "kafka.security.authorizer.AclAuthorizer")
     props.setProperty("super.users", "User:testadmin;")
     props.setProperty("allow.everyone.if.no.acl.found", "true")
     props.setProperty("offsets.topic.replication.factor", "1")
