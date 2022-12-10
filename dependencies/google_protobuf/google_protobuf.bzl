@@ -27,7 +27,7 @@ def google_protobuf():
     for name, args in _PROTOC_BINARIES.items():
         http_archive(
             name = name,
-            build_file = "@core_server_build_tools//dependencies/google_protobuf:BUILD.binary",
+            build_file = "//dependencies/google_protobuf:BUILD.binary",
             **args
         )
 
@@ -51,6 +51,6 @@ def _protoc_proxy_impl(ctx):
 _protoc_proxy = repository_rule(
     implementation = _protoc_proxy_impl,
     attrs = {
-        "_build": attr.label(default = "@core_server_build_tools//dependencies/google_protobuf:BUILD.proxy"),
+        "_build": attr.label(default = "//dependencies/google_protobuf:BUILD.proxy"),
     },
 )
