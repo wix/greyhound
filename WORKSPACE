@@ -35,9 +35,9 @@ tests_external_repository(
     jdk_version = "11",
 )
 
-#load("//dependencies/google_protobuf:google_protobuf.bzl", "google_protobuf")
+load("//dependencies/google_protobuf:google_protobuf.bzl", "google_protobuf")
 
-#google_protobuf()
+google_protobuf()
 
 # TODO: move to wix_oss_infra
 scala_version = "2.12.6"

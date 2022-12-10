@@ -1,0 +1,4 @@
+exports_files([
+    "BUILD.binary",
+    "BUILD.proxy",
+])
