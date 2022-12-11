@@ -9,13 +9,16 @@ object Produce {
 
   val defaultKey: Option[String] = Some("")
 
-  def apply(request: ProduceRequest, kafkaAddress: String) =
-    Producer.make(ProducerConfig(kafkaAddress)).use { producer =>
-      producer
-        .produce(
+  def apply(request: ProduceRequest, kafkaAddress: String) = {
+    ZIO.scoped {
+      for {
+        producer <- Producer.make(ProducerConfig(kafkaAddress))
+        _ <- producer.produce(
           record = ProducerRecord(topic = request.topic, value = request.payload.getOrElse(""), key = request.target.key orElse defaultKey),
           keySerializer = Serdes.StringSerde,
           valueSerializer = Serdes.StringSerde
         )
+      } yield ()
     }
+  }
 }

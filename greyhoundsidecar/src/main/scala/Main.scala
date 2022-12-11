@@ -4,9 +4,10 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import greyhound.{DebugMetrics, EnvArgs, Ports, SidecarClient, SidecarServerMain, SidecarUserServerMain}
 import zio._
-import zio.console.{getStrLn, putStrLn}
+import zio.ZIOAppDefault
+import zio.Console.{ printLine, readLine }
 
-object Main extends App {
+object Main extends ZIOAppDefault {
 
   val initSidecarServer = SidecarServerMain.myAppLogic.forkDaemon
 
@@ -16,7 +17,7 @@ object Main extends App {
     .provideCustomLayer(DebugMetrics.layer)
     .useForever
     .forkDaemon
-    .whenM(EnvArgs.kafkaAddress.map(_.isEmpty))
+    .whenZIO(EnvArgs.kafkaAddress.map(_.isEmpty))
 
   def startConsuming(topic: String, group: String, retryStrategy: RetryStrategy = RetryStrategy.NoRetry(NoRetry())) =  SidecarClient.managed.use { client =>
     client.startConsuming(StartConsumingRequest(
@@ -57,14 +58,14 @@ object Main extends App {
     _ <- register
     _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
 //    _ <- startConsuming(topic, "test-consumer", RetryStrategy.Blocking(BlockingRetry(1000)))
-    _ <- putStrLn("~~~ ENTER MESSAGE")
-    payload <- getStrLn
-    _ <- putStrLn(s"~~~ Producing to $topic")
+    _ <- printLine("~~~ ENTER MESSAGE")
+    payload <- readLine
+    _ <- printLine(s"~~~ Producing to $topic")
     _ <- produce(topic, payload)
-    _ <- putStrLn(s"~~~ Producing to $topic-batch")
+    _ <- printLine(s"~~~ Producing to $topic-batch")
     _ <- produce(s"$topic-batch", s"$payload-batch")
-    _ <- putStrLn("~~~ WAITING FOR USER INPUT")
-    _ <- getStrLn
+    _ <- printLine("~~~ WAITING FOR USER INPUT")
+    _ <- readLine
   } yield scala.io.StdIn.readLine()
 
   override def run(args: List[String]) = {
