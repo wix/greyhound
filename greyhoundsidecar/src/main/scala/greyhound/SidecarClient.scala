@@ -11,5 +11,5 @@ object SidecarClient {
       .forAddress("localhost", Ports.SidecarGrpcPort)
       .usePlaintext())
 
-  val managed = GreyhoundSidecarClient.managed(channel)
+  val managed = GreyhoundSidecarClient.scoped(channel)
 }

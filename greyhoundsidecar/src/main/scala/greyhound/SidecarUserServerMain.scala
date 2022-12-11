@@ -1,13 +1,10 @@
 package greyhound
 
 import scalapb.zio_grpc.{ServerMain, ServiceList}
-import zio.ZIO
 
 object SidecarUserServerMain extends ServerMain {
 
   override def port: Int = Ports.RegisterPort
 
-  override def services: ServiceList[Any] = ServiceList.addScoped {
-    ZIO(new SidecarUserService)
-  }
+  override def services: ServiceList[Any] = ServiceList.add(new SidecarUserService)
 }

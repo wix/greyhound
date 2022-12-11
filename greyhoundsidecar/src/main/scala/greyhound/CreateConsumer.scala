@@ -29,7 +29,7 @@ object CreateConsumer {
                                .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
                            )
                          )
-                         .useForever
+                         .forever
     } yield ()
 
 }
