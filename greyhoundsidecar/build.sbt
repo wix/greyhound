@@ -12,16 +12,16 @@ lazy val root = (project in file("."))
   .settings(
     name := "greyhound-sidecar",
     libraryDependencies ++= Seq(
-      "dev.zio" %% "zio" % "1.0.9",
+      "dev.zio" %% "zio" % "2.0.3",
       "io.grpc" % "grpc-netty" % "1.34.0",
-      "com.wix" %% "greyhound-core" % "0.2.0",
+      "com.wix" %% "greyhound-core" % "0.3.0",
       "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion % sbtprotoc.ProtocPlugin.ProtobufConfig,
       "org.slf4j" % "slf4j-api" % "1.7.25",
 
       // -- test -- //
-      "dev.zio" %% "zio-test" % "1.0.13" % Test,
+      "dev.zio" %% "zio-test" % "2.0.3" % Test,
       "org.specs2" %% "specs2-core" % "4.14.1" % Test,
       "com.wix" %% "greyhound-testkit" % "0.2.0",
     ),

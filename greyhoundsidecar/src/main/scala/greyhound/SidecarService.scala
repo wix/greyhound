@@ -7,32 +7,32 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
 import greyhound.Register.Register
 import io.grpc.Status
-import zio.{Fiber, ULayer, ZEnv, ZIO, ZLayer}
-import zio.console.putStrLn
+import zio.CanFail.canFailAmbiguous2
+import zio.{Fiber, IO, UIO, ULayer, ZIO, ZLayer}
 
-class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv] {
+class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] {
 
-  override def register(request: RegisterRequest): ZIO[ZEnv, Status, RegisterResponse] =
+  override def register(request: RegisterRequest): IO[Status, RegisterResponse] =
     register0(request)
       .mapError(Status.fromThrowable)
 
   private def register0(request: RegisterRequest) = for {
-    port <- ZIO.effect(request.port.toInt)
+    port <- ZIO.attempt(request.port.toInt)
     _    <- register.add(request.host, port)
   } yield RegisterResponse()
 
-  override def produce(request: ProduceRequest): ZIO[ZEnv, Status, ProduceResponse] =
+  override def produce(request: ProduceRequest): IO[Status, ProduceResponse] =
     produce0(request)
       .mapError(Status.fromThrowable)
       .as(ProduceResponse())
 
-  private def produce0(request: ProduceRequest) =
+  private def produce0(request: ProduceRequest): UIO[Unit] =
     for {
       kafkaAddress <- register.get.map(_.kafkaAddress)
       _            <- Produce(request, kafkaAddress)
     } yield ()
 
-  override def createTopics(request: CreateTopicsRequest): ZIO[ZEnv, Status, CreateTopicsResponse] =
+  override def createTopics(request: CreateTopicsRequest): IO[Status, CreateTopicsResponse] =
     createTopics0(request)
       .mapError(Status.fromThrowable)
       .as(CreateTopicsResponse())
@@ -46,7 +46,7 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
-  override def startConsuming(request: StartConsumingRequest): ZIO[ZEnv, Status, StartConsumingResponse] =
+  override def startConsuming(request: StartConsumingRequest): IO[Status, StartConsumingResponse] =
     startConsuming0(request)
       .provideCustomLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
       .as(StartConsumingResponse())
