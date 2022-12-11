@@ -3,12 +3,12 @@ package greyhound
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.{HandleMessagesRequest, HandleMessagesResponse, Record}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.ZioGreyhoundsidecaruser.RGreyhoundSidecarUser
 import io.grpc.Status
-import zio.{ZEnv, ZIO}
+import zio.{Scope, ZIO}
 import zio.Console.printLine
 
-class SidecarUserService extends RGreyhoundSidecarUser[ZEnv]{
+class SidecarUserService extends RGreyhoundSidecarUser[Scope]{
 
-  override def handleMessages(request: HandleMessagesRequest): ZIO[ZEnv, Status, HandleMessagesResponse] = {
+  override def handleMessages(request: HandleMessagesRequest): ZIO[Any, Status, HandleMessagesResponse] = {
     printLine(
       s"""~~~ Sidecar User CONSUMING ~~~
          |topic = ${request.topic}
