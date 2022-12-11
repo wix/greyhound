@@ -12,7 +12,7 @@ object DebugMetrics {
 
   private def report(report: GreyhoundMetric => Unit): GreyhoundMetrics.Service  = {
     case _: PolledRecords => ZIO.unit
-    case metric => ZIO.succeed(report(metric))
+    case metric: GreyhoundMetric => ZIO.succeed(report(metric))
   }
 
 }

@@ -3,13 +3,13 @@ package greyhound
 import com.wixpress.dst.greyhound.core.Serdes
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest
-import zio.ZIO
+import zio.{Task, ZIO}
 
 object Produce {
 
   val defaultKey: Option[String] = Some("")
 
-  def apply(request: ProduceRequest, kafkaAddress: String) = {
+  def apply(request: ProduceRequest, kafkaAddress: String): Task[Unit] = {
     ZIO.scoped {
       for {
         producer <- Producer.make(ProducerConfig(kafkaAddress))

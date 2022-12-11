@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsi
 import greyhound.Register.Register
 import io.grpc.Status
 import zio.CanFail.canFailAmbiguous2
-import zio.{Fiber, IO, UIO, ULayer, ZIO, ZLayer}
+import zio.{Fiber, IO, Scope, UIO, ULayer, ZEnvironment, ZIO, ZLayer}
 
 class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] {
 
@@ -18,7 +18,7 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] 
 
   private def register0(request: RegisterRequest) = for {
     port <- ZIO.attempt(request.port.toInt)
-    _    <- register.add(request.host, port)
+    _ <- register.add(request.host, port)
   } yield RegisterResponse()
 
   override def produce(request: ProduceRequest): IO[Status, ProduceResponse] =
@@ -29,7 +29,7 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] 
   private def produce0(request: ProduceRequest): UIO[Unit] =
     for {
       kafkaAddress <- register.get.map(_.kafkaAddress)
-      _            <- Produce(request, kafkaAddress)
+      _ = Produce(request, kafkaAddress)
     } yield ()
 
   override def createTopics(request: CreateTopicsRequest): IO[Status, CreateTopicsResponse] =
@@ -37,19 +37,24 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] 
       .mapError(Status.fromThrowable)
       .as(CreateTopicsResponse())
 
-  private def createTopics0(request: CreateTopicsRequest) =
-    for {
-      kafkaAddress <- register.get.map(_.kafkaAddress)
-      _            <- SidecarAdminClient.admin(kafkaAddress).use { client => client.createTopics(request.topics.toSet.map(mapTopic)) }
-    } yield ()
+  private def createTopics0(request: CreateTopicsRequest) = {
+
+    ZIO.scoped {
+      for {
+        kafkaAddress <- register.get.map(_.kafkaAddress)
+        client <- SidecarAdminClient.admin(kafkaAddress)
+        _ = client.createTopics(request.topics.toSet.map(mapTopic))
+      } yield ()
+    }
+  }
 
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
-  override def startConsuming(request: StartConsumingRequest): IO[Status, StartConsumingResponse] =
-    startConsuming0(request)
-      .provideCustomLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
-      .as(StartConsumingResponse())
+  override def startConsuming(request: StartConsumingRequest): IO[Status with Scope, StartConsumingResponse] =
+      startConsuming0(request)
+        .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
+        .as(StartConsumingResponse())
 
   private def startConsuming0(request: StartConsumingRequest) =
     ZIO.foreach(request.consumers) { consumer =>

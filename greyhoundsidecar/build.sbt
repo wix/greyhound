@@ -14,7 +14,7 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % "2.0.3",
       "io.grpc" % "grpc-netty" % "1.51.0",
-//      "com.wix" %% "greyhound-core" % "0.3.0",
+      "com.wix" %% "greyhound-core" % "0.3.0",
       "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion % sbtprotoc.ProtocPlugin.ProtobufConfig,

@@ -30,7 +30,7 @@ object CreateBatchConsumer {
                                .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
                            )
                          )
-                         .useForever
+                         .forever
     } yield ()
 
 }

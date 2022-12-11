@@ -9,14 +9,16 @@ import zio.{Scope, ZIO}
 object SidecarUserClient extends {
 
 
-  val channel: ZIO[Register, Nothing, ZIO[Scope, Throwable, ZChannel[Any]]] = Register.get.map{ db =>
-    ZManagedChannel[ZIO[Scope, Throwable, ZChannel[Any]]](
+  val channel: ZIO[Register, Nothing, ZManagedChannel[Any]] = Register.get.map { db =>
+    // this val construction in needed for IntelliJ to understand the type - god knows why???
+    val managedChannel: ZManagedChannel[Any] = ZManagedChannel[Any](
       ManagedChannelBuilder
         .forAddress(db.host.host, db.host.port)
         .usePlaintext()
     )
 
+    managedChannel
   }
 
-  val managed = channel.map(cn=> GreyhoundSidecarUserClient.scoped(cn))
+  val managed: ZIO[Register, Nothing, ZIO[Scope, Throwable, GreyhoundSidecarUserClient.ZService[Any, Any]]] = channel.map(channel => GreyhoundSidecarUserClient.scoped(channel))
 }
