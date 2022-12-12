@@ -1,6 +1,5 @@
 package greyhound
 
-import com.wixpress.dst.greyhound.testkit.ManagedKafkaConfig
 import zio.{RIO, Ref, Task, UIO, URIO, ZIO}
 
 object Register {
