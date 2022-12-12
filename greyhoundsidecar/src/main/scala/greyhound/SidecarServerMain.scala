@@ -1,18 +1,17 @@
 package greyhound
 
-import com.wixpress.dst.greyhound.testkit.ManagedKafkaConfig
 import scalapb.zio_grpc.{ServerMain, ServiceList}
+import zio.UIO
 
-object SidecarServerMain extends ServerMain {
+class SidecarServerMain(registerService: UIO[Register.Service], kafkaAddress: String) extends ServerMain {
 
   override def port: Int = Ports.SidecarGrpcPort
 
-  private val defaultKafkaAddress = s"localhost:${ManagedKafkaConfig.Default.kafkaPort}"
 
   override def services: ServiceList[Any] = ServiceList.addScoped {
     for {
-      register     <- RegisterLive.Default
-      kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(defaultKafkaAddress))
+      kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(kafkaAddress))
+      register     <- registerService
       _            <- register.updateKafkaAddress(kafkaAddress)
       db           <- register.get
       _             = println("""   ____                _                           _ 

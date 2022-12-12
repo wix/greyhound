@@ -35,23 +35,12 @@ case class RegisterLive(ref: Ref[Database]) extends Register.Service {
   override val get: UIO[Database] = ref.get
 }
 
-object RegisterLive {
-
-  val Default = Ref
-    .make(Database.Default)
-    .map(RegisterLive(_))
-}
-
 case class Database(host: HostDetails, kafkaAddress: String) {
   def updateHost(host: String, port: Int): Database =
     copy(host = HostDetails(host, port))
 
   def updateKafkaAddress(address: String): Database =
     copy(kafkaAddress = address)
-}
-
-object Database {
-  val Default = Database(HostDetails.Default, s"localhost:${ManagedKafkaConfig.Default.kafkaPort}")
 }
 
 case class HostDetails(host: String, port: Int)
