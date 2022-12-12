@@ -1,7 +1,7 @@
 
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
-import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
+import greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import greyhound.{DebugMetrics, EnvArgs, Ports, SidecarClient, SidecarServerMain, SidecarUserServerMain}
 import zio._
 import zio.ZIOAppDefault

@@ -15,6 +15,8 @@ lazy val root = (project in file("."))
       "dev.zio" %% "zio" % "2.0.3",
       "io.grpc" % "grpc-netty" % "1.51.0",
       "com.wix" %% "greyhound-core" % "0.3.0",
+      "org.apache.kafka" %% "kafka" % "2.4.1",
+//      "org.apache.kafka" %% "kafka-client" % "2.4.1",
       "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion % sbtprotoc.ProtocPlugin.ProtobufConfig,
@@ -23,7 +25,8 @@ lazy val root = (project in file("."))
       // -- test -- //
       "dev.zio" %% "zio-test" % "2.0.3" % Test,
       "org.specs2" %% "specs2-core" % "4.14.1" % Test,
-      "com.wix" %% "greyhound-testkit" % "0.2.0",
+      "org.apache.curator" % "curator-test" % "5.3.0" % Test,
+//      "com.wix" %% "greyhound-testkit" % "0.2.0",
     ),
     packageName := "greyhound-sidecar",
     version := "1.0",
