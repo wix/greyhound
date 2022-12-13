@@ -1,7 +1,7 @@
 package greyhound
 
 import scalapb.zio_grpc.{ServerMain, ServiceList}
-import zio.UIO
+import zio.{UIO, ZIO}
 
 class SidecarServerMain(registerService: UIO[Register.Service], kafkaAddress: String) extends ServerMain {
 
@@ -27,5 +27,7 @@ class SidecarServerMain(registerService: UIO[Register.Service], kafkaAddress: St
       _             = println(s"~~~ INIT Sidecar Server with kafka address ${db.kafkaAddress}")
     } yield new SidecarService(register)
   }
+
+  override def welcome: ZIO[Any, Throwable, Unit] = super.welcome *> zio.Console.printLine(s"SidecarServerMain with port $port")
 
 }

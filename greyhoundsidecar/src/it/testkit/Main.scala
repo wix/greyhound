@@ -31,7 +31,8 @@ object Main extends ZIOAppDefault {
     } yield ()
 
 
-  def createTopics(topic: String) = ZIO.scoped {
+
+  def createTopics(topic: String) =
     for {
       manageClient <- SidecarClient.managed
       _ <- manageClient.createTopics(CreateTopicsRequest(Seq(
@@ -39,10 +40,10 @@ object Main extends ZIOAppDefault {
         TopicToCreate(s"$topic-batch", Some(1))
       )))
     } yield ()
-  }
 
 
-  def produce(topic: String, payload: String) = ZIO.scoped {
+
+  def produce(topic: String, payload: String) =
     for {
       manageClient <- SidecarClient.managed
       produceRequest = ProduceRequest(
@@ -51,17 +52,17 @@ object Main extends ZIOAppDefault {
         target = ProduceRequest.Target.Key("key"))
       _ <- manageClient.produce(produceRequest)
     } yield ()
-  }
 
 
-  val register = ZIO.scoped {
+
+  val register =
     for {
       manageClient <- SidecarClient.managed
       _ <- manageClient.register(RegisterRequest(
         host = "localhost",
         port = Ports.RegisterPort.toString))
     } yield ()
-  }
+
 
   val greyhoundProduceApp = for {
     _ <- initKafka

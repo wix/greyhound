@@ -15,6 +15,7 @@ object CreateConsumer {
 
   def apply(topic: String, group: String, retryStrategy: RetryStrategy) =
     for {
+      _ <- zio.Console.printLine(s"inside handler function")
       kafkaAddress  <- Register.get.map(_.kafkaAddress)
       managedClient <- SidecarUserClient.managed
       _             <- ZIO.scoped {
