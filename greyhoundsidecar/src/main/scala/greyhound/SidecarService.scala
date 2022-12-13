@@ -51,13 +51,16 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] 
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
-  override def startConsuming(request: StartConsumingRequest): IO[Status with Scope, StartConsumingResponse] =
+  override def startConsuming(request: StartConsumingRequest): IO[Status with Scope, StartConsumingResponse] = {
+    println(s"AMIR inside startConsuming SidecarService")
       startConsuming0(request)
         .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
         .as(StartConsumingResponse())
+  }
 
   private def startConsuming0(request: StartConsumingRequest) =
     ZIO.foreach(request.consumers) { consumer =>
+      println(s"AMIR starting to consume $consumer")
       CreateConsumer(consumer.topic, consumer.group, consumer.retryStrategy).forkDaemon
     } *>
       ZIO.foreach(request.batchConsumers) { consumer =>
