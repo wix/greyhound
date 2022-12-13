@@ -1,14 +1,12 @@
 package greyhound
 
-import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
+import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
-import greyhound.Register.Register
+import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
-import zio.CanFail.canFailAmbiguous2
-import zio.{Fiber, IO, Scope, UIO, ULayer, ZEnvironment, ZIO, ZLayer}
+import zio.{IO, Scope, ZIO, ZLayer}
 
 class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] {
 
@@ -22,14 +20,17 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] 
   } yield RegisterResponse()
 
   override def produce(request: ProduceRequest): IO[Status, ProduceResponse] =
-    produce0(request)
-      .mapError(Status.fromThrowable)
-      .as(ProduceResponse())
+    ZIO.scoped {
+      produce0(request)
+        .mapError(Status.fromThrowable)
+        .as(ProduceResponse())
+    }
 
-  private def produce0(request: ProduceRequest): UIO[Unit] =
+  private def produce0(request: ProduceRequest) =
     for {
       kafkaAddress <- register.get.map(_.kafkaAddress)
-      _ = Produce(request, kafkaAddress)
+      _ <- Produce(request, kafkaAddress).tapError(e => zio.Console.printLine(e))
+      _ <- zio.Console.printLine("********************  done producing ********************")
     } yield ()
 
   override def createTopics(request: CreateTopicsRequest): IO[Status, CreateTopicsResponse] =
@@ -37,25 +38,37 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[Any] 
       .mapError(Status.fromThrowable)
       .as(CreateTopicsResponse())
 
-  private def createTopics0(request: CreateTopicsRequest) = {
 
-    ZIO.scoped {
-      for {
-        kafkaAddress <- register.get.map(_.kafkaAddress)
-        client <- SidecarAdminClient.admin(kafkaAddress)
-        _ = client.createTopics(request.topics.toSet.map(mapTopic))
-      } yield ()
-    }
+  private def createTopics0(request: CreateTopicsRequest) =ZIO.scoped {
+    for {
+      kafkaAddress <- register.get.map(_.kafkaAddress)
+      client <- SidecarAdminClient.admin(kafkaAddress)
+      _ <- client.createTopics(request.topics.toSet.map(mapTopic)).provideSomeLayer(DebugMetrics.layer)
+    } yield ()
   }
+//  def createTopics0(request: CreateTopicsRequest) //: ZIO[GreyhoundMetrics with Scope with Any, Throwable, Unit]
+//  = {
+//    for {
+//      kafkaAddress <- register.get.map(_.kafkaAddress)
+//      client <- SidecarAdminClient.admin(kafkaAddress)
+//      _ <- zio.Console.printLine("$$$$$$$$$$$ create topic with admin $$$$$$$$$$$$$")
+//      topics = request.topics.toSet.map(mapTopic)
+//      _ <- ZIO.scoped {client.createTopics(topics) }
+//      _ <- zio.Console.printLine("&&&&&&&&&&&&& done creating topics &&&&&&&&&&")
+//      //        topicExists <- client.topicsExist(topics.map(_.name)).tapError(e => zio.Console.printLine(e))
+//      //        _ <- zio.Console.printLine(s"&&&&&&&&&&&&&&&&&&&&&& topic exists: $topicExists &&&&&&&&&&&&&&&&&&&&&&&&&")
+//    } yield ()
+//
+//  }
 
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
   override def startConsuming(request: StartConsumingRequest): IO[Status with Scope, StartConsumingResponse] = {
     println(s"AMIR inside startConsuming SidecarService")
-      startConsuming0(request)
-        .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
-        .as(StartConsumingResponse())
+    startConsuming0(request)
+      .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
+      .as(StartConsumingResponse())
   }
 
   private def startConsuming0(request: StartConsumingRequest) =

@@ -11,17 +11,17 @@ object Main extends ZIOAppDefault {
   val defaultRegister = Ref.make(defaultDB).map(RegisterLive)
   val defaultKafkaAddress = s"localhost:${ManagedKafkaConfig.Default.kafkaPort}"
 
-  val initSidecarServer = new SidecarServerMain(defaultRegister, defaultKafkaAddress).myAppLogic.forkDaemon
+  val initSidecarServer = new SidecarServerMain(defaultRegister, defaultKafkaAddress).myAppLogic.fork
 
-  val initSidecarUserServer = SidecarUserServerMain.myAppLogic.forkDaemon
+  val initSidecarUserServer = SidecarUserServerMain.myAppLogic.fork
 
   val initKafka = ManagedKafka.make(ManagedKafkaConfig.Default)
-      .provideLayer(DebugMetrics.layer ++ ZLayer.succeed(zio.Scope.global))
       .forever
-      .forkDaemon
+      .fork
       .whenZIO(EnvArgs.kafkaAddress.map(_.isEmpty))
 
   def startConsuming(topic: String, group: String, retryStrategy: RetryStrategy = RetryStrategy.NoRetry(NoRetry())) =
+    ZIO.scoped{
     for {
       manageClient <- SidecarClient.managed
       _ <- manageClient.startConsuming(StartConsumingRequest(
@@ -29,10 +29,10 @@ object Main extends ZIOAppDefault {
         batchConsumers = Seq(BatchConsumer("id2", s"$group-batch", s"$topic-batch"))
       ))
     } yield ()
+  }
 
 
-
-  def createTopics(topic: String) =
+  def createTopics(topic: String) = ZIO.scoped {
     for {
       manageClient <- SidecarClient.managed
       _ <- manageClient.createTopics(CreateTopicsRequest(Seq(
@@ -40,10 +40,10 @@ object Main extends ZIOAppDefault {
         TopicToCreate(s"$topic-batch", Some(1))
       )))
     } yield ()
+  }
 
 
-
-  def produce(topic: String, payload: String) =
+  def produce(topic: String, payload: String) = {
     for {
       manageClient <- SidecarClient.managed
       produceRequest = ProduceRequest(
@@ -52,17 +52,17 @@ object Main extends ZIOAppDefault {
         target = ProduceRequest.Target.Key("key"))
       _ <- manageClient.produce(produceRequest)
     } yield ()
+  }
 
 
-
-  val register =
+  val register = ZIO.scoped {
     for {
       manageClient <- SidecarClient.managed
       _ <- manageClient.register(RegisterRequest(
         host = "localhost",
         port = Ports.RegisterPort.toString))
     } yield ()
-
+  }
 
   val greyhoundProduceApp = for {
     _ <- initKafka
@@ -70,8 +70,8 @@ object Main extends ZIOAppDefault {
     _ <- initSidecarUserServer
     topic = "test-topic"
     _ <- createTopics(topic)
-    _ <- register
-    _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
+//    _ <- register
+//    _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
     //    _ <- startConsuming(topic, "test-consumer", RetryStrategy.Blocking(BlockingRetry(1000)))
     _ <- printLine("~~~ ENTER MESSAGE")
     payload <- readLine
@@ -84,7 +84,8 @@ object Main extends ZIOAppDefault {
   } yield scala.io.StdIn.readLine()
 
   override def run: ZIO[Any with ZIOAppArgs with Scope, Any, Any] =
-    ZIO.scoped(greyhoundProduceApp.exitCode)
+    greyhoundProduceApp.exitCode
+      .provideLayer(DebugMetrics.layer ++ ZLayer.succeed(zio.Scope.global))
 
   //  override def run: ZIO[Any with ZIOAppArgs with Scope, Any, Any] = ???
 }

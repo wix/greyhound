@@ -5,8 +5,6 @@ import zio.{Scope, ZIO}
 
 object SidecarAdminClient {
 
-  def admin(kafkaAddress: String): ZIO[Scope with Any, Throwable, AdminClient] = {
-    zio.ZIO.acquireRelease(
-    AdminClient.make(AdminClientConfig(kafkaAddress)))(_.shutdown.ignore)
-  }
+  def admin(kafkaAddress: String): ZIO[Scope with Any, Throwable, AdminClient] =
+    AdminClient.make(AdminClientConfig(kafkaAddress))
 }
