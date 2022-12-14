@@ -11,13 +11,13 @@ object Main extends ZIOAppDefault {
   val defaultRegister = Ref.make(defaultDB).map(RegisterLive)
   val defaultKafkaAddress = s"localhost:${ManagedKafkaConfig.Default.kafkaPort}"
 
-  val initSidecarServer = new SidecarServerMain(defaultRegister, defaultKafkaAddress).myAppLogic.fork
+  val initSidecarServer = new SidecarServerMain(defaultRegister, defaultKafkaAddress).myAppLogic.forkDaemon
 
-  val initSidecarUserServer = SidecarUserServerMain.myAppLogic.fork
+  val initSidecarUserServer = SidecarUserServerMain.myAppLogic.forkDaemon
 
   val initKafka = ManagedKafka.make(ManagedKafkaConfig.Default)
       .forever
-      .fork
+      .forkDaemon
       .whenZIO(EnvArgs.kafkaAddress.map(_.isEmpty))
 
   def startConsuming(topic: String, group: String, retryStrategy: RetryStrategy = RetryStrategy.NoRetry(NoRetry())) =
@@ -43,7 +43,7 @@ object Main extends ZIOAppDefault {
   }
 
 
-  def produce(topic: String, payload: String) = {
+  def produce(topic: String, payload: String) = ZIO.scoped {
     for {
       manageClient <- SidecarClient.managed
       produceRequest = ProduceRequest(
@@ -70,8 +70,8 @@ object Main extends ZIOAppDefault {
     _ <- initSidecarUserServer
     topic = "test-topic"
     _ <- createTopics(topic)
-//    _ <- register
-//    _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
+    _ <- register
+    _ <- startConsuming(topic, "test-consumer", RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000))))
     //    _ <- startConsuming(topic, "test-consumer", RetryStrategy.Blocking(BlockingRetry(1000)))
     _ <- printLine("~~~ ENTER MESSAGE")
     payload <- readLine
@@ -80,12 +80,12 @@ object Main extends ZIOAppDefault {
     _ <- printLine(s"~~~ Producing to $topic-batch")
     _ <- produce(s"$topic-batch", s"$payload-batch")
     _ <- printLine("~~~ WAITING FOR USER INPUT")
-    _ <- readLine
-  } yield scala.io.StdIn.readLine()
+    e <- readLine
+  } yield e
+
 
   override def run: ZIO[Any with ZIOAppArgs with Scope, Any, Any] =
     greyhoundProduceApp.exitCode
       .provideLayer(DebugMetrics.layer ++ ZLayer.succeed(zio.Scope.global))
 
-  //  override def run: ZIO[Any with ZIOAppArgs with Scope, Any, Any] = ???
 }
