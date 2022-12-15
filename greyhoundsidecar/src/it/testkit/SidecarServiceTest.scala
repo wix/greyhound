@@ -1,10 +1,11 @@
 
+import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest.Target
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
-import greyhound.SidecarService
+import greyhound.{HostDetails, SidecarService}
 import sidecaruser._
 import support.{KafkaTestSupport, SidecarTestSupport, TestContext}
 import zio.test.Assertion.equalTo
@@ -34,31 +35,31 @@ class SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with 
 
   override def spec: Spec[TestEnvironment with Scope, Any] =
     suite("sidecar service")(
-//
-//      test("register a sidecar user") {
-//        for {
-//          _ <- sideCar.register(RegisterRequest(localHost, "4567"))
-//          db <- DefaultRegister.get
-//        } yield assert(db.host)(equalTo(HostDetails(localHost, 4567)))
-//      },
-//
-//      test("create new topic") {
-//        for {
-//          context <- ZIO.service[TestContext]
-//          _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
-//          db <- DefaultRegister.get
-//          adminClient <- AdminClient.make(AdminClientConfig(db.kafkaAddress))
-//          topicExist <- adminClient.topicExists(context.topicName)
-//        } yield assert(topicExist)(equalTo(true))
-//      },
 
-//      test("produce event") {
-//        for {
-//          context <- ZIO.service[TestContext]
-//          _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
-//          _ <- sideCar.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
-//        } yield assert(producedCalled)(equalTo(true))
-//      },
+      test("register a sidecar user") {
+        for {
+          _ <- sideCar.register(RegisterRequest(localHost, "4567"))
+          db <- DefaultRegister.get
+        } yield assert(db.host)(equalTo(HostDetails(localHost, 4567)))
+      },
+
+      test("create new topic") {
+        for {
+          context <- ZIO.service[TestContext]
+          _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+          db <- DefaultRegister.get
+          adminClient <- AdminClient.make(AdminClientConfig(db.kafkaAddress))
+          topicExist <- adminClient.topicExists(context.topicName)
+        } yield assert(topicExist)(equalTo(true))
+      },
+
+      test("produce event") {
+        for {
+          context <- ZIO.service[TestContext]
+          _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+          _ <- sideCar.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
+        } yield assert(producedCalled)(equalTo(true))
+      },
 
       test("consume topic") {
         for {
