@@ -14,7 +14,7 @@ object ConsumerHandler {
         group = group,
         records = Seq(Record(partition = record.partition, offset = record.offset, payload = Some(record.value), key = record.key))
       )
-
+      println("message consumed")
       client
         .handleMessages(request)
         .catchAll(grpcStatus => ZIO.fail(ConsumerFailure(grpcStatus)))
