@@ -24,9 +24,10 @@ lazy val root = (project in file("."))
 
       // -- test -- //
       "dev.zio" %% "zio-test" % "2.0.3" % Test,
+      "dev.zio" %% "zio-test-junit" % "2.0.3" % Test,
       "org.specs2" %% "specs2-core" % "4.14.1" % Test,
       "org.apache.curator" % "curator-test" % "5.3.0" % Test,
-//      "com.wix" %% "greyhound-testkit" % "0.2.0",
+//      "com.wix" %% "greyhound-testkit" % "0.3.0", // - sync from mvn central after proper publish of V0.3.0
     ),
     packageName := "greyhound-sidecar",
     version := "1.0",
