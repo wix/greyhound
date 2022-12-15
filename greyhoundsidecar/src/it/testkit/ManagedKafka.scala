@@ -8,7 +8,7 @@ import com.wixpress.dst.greyhound.testkit.ManagedKafkaMetric._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.apache.curator.test.TestingServer
 import zio.ZIO.attemptBlocking
-import zio.{RIO, Scope, Trace, UIO, ZIO}
+import zio.{RIO, Scope, Trace, ZIO}
 
 import java.util.Properties
 import scala.reflect.io.Directory
