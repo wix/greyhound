@@ -6,10 +6,10 @@ import scalapb.zio_grpc.ZManagedChannel
 
 object SidecarClient {
 
-  val channel = ZManagedChannel[Any](
+  val channel: ZManagedChannel[Any] = ZManagedChannel[Any](
     ManagedChannelBuilder
       .forAddress("localhost", Ports.SidecarGrpcPort)
       .usePlaintext())
 
-  val managed = GreyhoundSidecarClient.managed(channel)
+  val managed = GreyhoundSidecarClient.scoped(channel)
 }

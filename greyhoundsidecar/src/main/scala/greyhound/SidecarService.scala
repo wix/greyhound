@@ -1,55 +1,58 @@
 package greyhound
 
-import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
-import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
-import greyhound.Register.Register
+import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
-import zio.{Fiber, ULayer, ZEnv, ZIO, ZLayer}
-import zio.console.putStrLn
+import zio.{IO, Scope, UIO, ZIO, ZLayer}
 
-class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv] {
+class SidecarService(register: Register.Service, onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit) extends RGreyhoundSidecar[Any] {
 
-  override def register(request: RegisterRequest): ZIO[ZEnv, Status, RegisterResponse] =
+  override def register(request: RegisterRequest): IO[Status, RegisterResponse] =
     register0(request)
       .mapError(Status.fromThrowable)
 
   private def register0(request: RegisterRequest) = for {
-    port <- ZIO.effect(request.port.toInt)
-    _    <- register.add(request.host, port)
+    port <- ZIO.attempt(request.port.toInt)
+    _ <- register.add(request.host, port)
   } yield RegisterResponse()
 
-  override def produce(request: ProduceRequest): ZIO[ZEnv, Status, ProduceResponse] =
-    produce0(request)
-      .mapError(Status.fromThrowable)
-      .as(ProduceResponse())
+  override def produce(request: ProduceRequest): IO[Status, ProduceResponse] =
+    ZIO.scoped {
+      produce0(request)
+        .mapError(Status.fromThrowable)
+        .as(ProduceResponse())
+    }
 
   private def produce0(request: ProduceRequest) =
     for {
       kafkaAddress <- register.get.map(_.kafkaAddress)
-      _            <- Produce(request, kafkaAddress)
+      _ <- Produce(request, kafkaAddress, onProduceListener).tapError(e => zio.Console.printLine(e))
     } yield ()
 
-  override def createTopics(request: CreateTopicsRequest): ZIO[ZEnv, Status, CreateTopicsResponse] =
+  override def createTopics(request: CreateTopicsRequest): IO[Status, CreateTopicsResponse] =
     createTopics0(request)
       .mapError(Status.fromThrowable)
       .as(CreateTopicsResponse())
 
-  private def createTopics0(request: CreateTopicsRequest) =
+
+  private def createTopics0(request: CreateTopicsRequest) = ZIO.scoped {
     for {
       kafkaAddress <- register.get.map(_.kafkaAddress)
-      _            <- SidecarAdminClient.admin(kafkaAddress).use { client => client.createTopics(request.topics.toSet.map(mapTopic)) }
+      client <- SidecarAdminClient.admin(kafkaAddress)
+      _ <- client.createTopics(request.topics.toSet.map(mapTopic)).provideSomeLayer(DebugMetrics.layer)
     } yield ()
+  }
 
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
-  override def startConsuming(request: StartConsumingRequest): ZIO[ZEnv, Status, StartConsumingResponse] =
+  override def startConsuming(request: StartConsumingRequest): IO[Status with Scope, StartConsumingResponse] = {
     startConsuming0(request)
-      .provideCustomLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
+      .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
       .as(StartConsumingResponse())
+  }
 
   private def startConsuming0(request: StartConsumingRequest) =
     ZIO.foreach(request.consumers) { consumer =>
@@ -60,3 +63,5 @@ class SidecarService(register: Register.Service) extends RGreyhoundSidecar[ZEnv]
       }
 
 }
+
+

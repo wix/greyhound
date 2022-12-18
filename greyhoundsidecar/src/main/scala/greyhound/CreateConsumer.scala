@@ -7,6 +7,8 @@ import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy.{Blocking, NoRetry, NonBlocking}
 import greyhound.RetryStrategyMapper.asRetryConfig
+import zio.ZIO
+
 import scala.concurrent.duration.DurationInt
 
 object CreateConsumer {
@@ -15,21 +17,23 @@ object CreateConsumer {
     for {
       kafkaAddress  <- Register.get.map(_.kafkaAddress)
       managedClient <- SidecarUserClient.managed
-      _             <- managedClient
-                         .flatMap(client =>
-                           RecordConsumer.make(
-                             config = RecordConsumerConfig(
-                               bootstrapServers = kafkaAddress,
-                               group = group,
-                               offsetReset = OffsetReset.Earliest,
-                               initialSubscription = ConsumerSubscription.Topics(Set(topic)),
-                               retryConfig = asRetryConfig(retryStrategy)
-                             ),
-                             handler = ConsumerHandler(topic, group, client)
-                               .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
-                           )
-                         )
-                         .useForever
+      _             <- ZIO.scoped {
+        managedClient
+          .flatMap(client =>
+            RecordConsumer.make(
+              config = RecordConsumerConfig(
+                bootstrapServers = kafkaAddress,
+                group = group,
+                offsetReset = OffsetReset.Earliest,
+                initialSubscription = ConsumerSubscription.Topics(Set(topic)),
+                retryConfig = asRetryConfig(retryStrategy)
+              ),
+              handler = ConsumerHandler(topic, group, client)
+                .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
+            )
+          )
+          .forever
+      }
     } yield ()
 
 }

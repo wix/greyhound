@@ -1,7 +1,6 @@
 package greyhound
 
-import com.wixpress.dst.greyhound.testkit.ManagedKafkaConfig
-import zio.{Has, RIO, Ref, Task, UIO, URIO, ZIO}
+import zio.{RIO, Ref, Task, UIO, URIO, ZIO}
 
 object Register {
 
@@ -13,16 +12,16 @@ object Register {
     val get: UIO[Database]
   }
 
-  type Register = Has[Register.Service]
+  type Register = Register.Service
 
   def add(host: String, port: Int): RIO[Register, Unit] =
-    ZIO.serviceWith[Register.Service](_.add(host, port))
+    ZIO.serviceWithZIO[Register.Service](_.add(host, port))
 
   def updateKafkaAddress(address: String): RIO[Register, Unit] =
-    ZIO.serviceWith[Register.Service](_.updateKafkaAddress(address))
+    ZIO.serviceWithZIO[Register.Service](_.updateKafkaAddress(address))
 
   val get: URIO[Register, Database] =
-    ZIO.serviceWith[Register.Service](_.get)
+    ZIO.serviceWithZIO[Register.Service](_.get)
 }
 
 case class RegisterLive(ref: Ref[Database]) extends Register.Service {
@@ -36,23 +35,12 @@ case class RegisterLive(ref: Ref[Database]) extends Register.Service {
   override val get: UIO[Database] = ref.get
 }
 
-object RegisterLive {
-
-  val Default = Ref
-    .make(Database.Default)
-    .map(RegisterLive(_))
-}
-
 case class Database(host: HostDetails, kafkaAddress: String) {
   def updateHost(host: String, port: Int): Database =
     copy(host = HostDetails(host, port))
 
   def updateKafkaAddress(address: String): Database =
     copy(kafkaAddress = address)
-}
-
-object Database {
-  val Default = Database(HostDetails.Default, s"localhost:${ManagedKafkaConfig.Default.kafkaPort}")
 }
 
 case class HostDetails(host: String, port: Int)

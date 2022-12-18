@@ -1,13 +1,14 @@
 package greyhound
 
-import scalapb.zio_grpc.{ServerMain, ServiceList}
-import zio.{ZEnv, ZIO}
+import scalapb.zio_grpc.{ServerMain, ServiceList, ZTransform}
+import zio.ZIO
+
 
 object SidecarUserServerMain extends ServerMain {
 
   override def port: Int = Ports.RegisterPort
 
-  override def services: ServiceList[zio.ZEnv] = ServiceList.addM {
-    ZIO(new SidecarUserService)
-  }
+  override def services: ServiceList[Any] = ServiceList.add(new SidecarUserService)
+
+  override def welcome: ZIO[Any, Throwable, Unit] = super.welcome *> zio.Console.printLine(s"SidecarUserServerMain with port $port")
 }

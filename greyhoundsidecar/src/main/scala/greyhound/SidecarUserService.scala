@@ -1,15 +1,15 @@
 package greyhound
 
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.{HandleMessagesRequest, HandleMessagesResponse, Record}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.ZioGreyhoundsidecaruser.RGreyhoundSidecarUser
+import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.{HandleMessagesRequest, HandleMessagesResponse, Record}
 import io.grpc.Status
-import zio.console.putStrLn
-import zio.{ZEnv, ZIO}
+import zio.Console.printLine
+import zio.ZIO
 
-class SidecarUserService extends RGreyhoundSidecarUser[ZEnv]{
+class SidecarUserService extends RGreyhoundSidecarUser[Any]{
 
-  override def handleMessages(request: HandleMessagesRequest): ZIO[ZEnv, Status, HandleMessagesResponse] = {
-    putStrLn(
+  override def handleMessages(request: HandleMessagesRequest): ZIO[Any, Status, HandleMessagesResponse] = {
+    printLine(
       s"""~~~ Sidecar User CONSUMING ~~~
          |topic = ${request.topic}
          |group = ${request.group}
