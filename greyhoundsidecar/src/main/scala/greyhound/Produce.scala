@@ -3,7 +3,7 @@ package greyhound
 import com.wixpress.dst.greyhound.core.Serdes
 import com.wixpress.dst.greyhound.core.producer._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest
-import zio.{RIO, Scope, Task, UIO}
+import zio.{RIO, Scope, UIO, ZIO}
 
 object Produce {
 
@@ -11,13 +11,14 @@ object Produce {
 
   def apply(request: ProduceRequest, kafkaAddress: String, onProduceListener: ProducerRecord[_, _] => UIO[Unit]): RIO[Scope, Unit] = {
       for {
-        producer <- Producer.make(ProducerConfig(kafkaAddress, onProduceListener = onProduceListener))
+        producer <- Producer.make(ProducerConfig(kafkaAddress, onProduceListener = onProduceListener)) // TODO: memoize or pass
         record = ProducerRecord(topic = request.topic, value = request.payload.getOrElse(""), key = request.target.key orElse defaultKey)
-        _ <- producer.produce(
+        recordMetadata <- producer.produce(
           record = record,
           keySerializer = Serdes.StringSerde,
           valueSerializer = Serdes.StringSerde
         )
+        _ <- ZIO.log(s"got record metadata: $recordMetadata")
       } yield ()
     }
 

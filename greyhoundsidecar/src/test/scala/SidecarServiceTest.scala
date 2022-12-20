@@ -12,6 +12,7 @@ import zio.test.Assertion.equalTo
 import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 import zio._
+import zio.test.TestAspect.withLiveClock
 
 
 object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport {
@@ -68,12 +69,12 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           sidecarUser <- ZIO.service[SidecarUserServiceTest]
           _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
           _ <- sideCar.register(RegisterRequest(localHost, "9100"))
-          _ <- sideCar.startConsuming(StartConsumingRequest(Seq(Consumer("1", "group", context.topicName, RetryStrategy.NonBlocking(NonBlockingRetry(Seq(1000, 2000, 3000)))))))
+          _ <- sideCar.startConsuming(StartConsumingRequest(Seq(Consumer("1", "groupy", context.topicName))))
           _ <- sideCar.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
-          records <- sidecarUser.collectedRecords.get
+          records <- sidecarUser.collectedRecords.get.delay(5.seconds)
           _ <- fork.interrupt
         } yield assert(records.nonEmpty)(equalTo(true))
-      },
+      } @@ withLiveClock,
 
     ).provideLayer(testContextLayer ++ ZLayer.succeed(zio.Scope.global) ++ sidecarUserLayer) @@ runKafka @@ closeKafka
 

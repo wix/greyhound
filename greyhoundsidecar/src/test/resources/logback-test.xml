@@ -11,6 +11,7 @@
     <logger name="kafka" level="INFO"/>
     <logger name="greyhound" level="INFO"/>
     <logger name="com.wixpress.dst.greyhound" level="INFO"/>
+    <logger name="org.apache.zookeeper" level="WARN"/>
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
