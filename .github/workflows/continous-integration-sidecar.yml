@@ -1,0 +1,33 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  
+  build:
+    name: test-sidecar //...
+    # This job runs on Linux
+    runs-on: ubuntu-18.04
+    container:
+      image: l.gcr.io/google/bazel:3.5.0
+    steps:
+     
+ 
+      - name: run sbt
+        run: |
+            cd greyhoundsidecar 
+            sbt Test/test //...
+#       - name: copy test logs
+#         if: ${{ always() }}
+#         run: |
+#             pwd
+#             ls -la bazel-testlogs/
+#             mkdir -p bazel-testlogs-copy
+#             cp -r bazel-testlogs/ bazel-testlogs-copy/
+#       - name: upload test logs
+#         uses: actions/upload-artifact@v2
+#         if: ${{ always() }}
+#         with:
+#           name: test-logs
+#           path: bazel-testlogs-copy/
+  
