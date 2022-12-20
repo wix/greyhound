@@ -3,7 +3,7 @@
 # separate terms of service, privacy policy, and support
 # documentation.
 
-name: Scala CI
+name: Sidecar CI
 
 on:
   push:
@@ -31,7 +31,3 @@ jobs:
       run: |
         cd greyhoundsidecar
         sbt test
-
-      # Optional: This step uploads information to the GitHub dependency graph and unblocking Dependabot alerts for the repository
-    - name: Upload dependency graph
-      uses: scalacenter/sbt-dependency-submission@ab086b50c947c9774b70f39fc7f6e20ca2706c91
