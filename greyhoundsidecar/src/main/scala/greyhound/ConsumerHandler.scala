@@ -17,8 +17,8 @@ object ConsumerHandler {
       client
         .handleMessages(request)
         .tapBoth(
-          _ => ZIO.log("Successfully sent msg to client"),
-          e => ZIO.logError(s"Failed to send msg to client: $e"))
+          e => ZIO.logError(s"Failed to send msg to client: $e"),
+          f => ZIO.log(s"Successfully sent msg to client: $f"))
         .catchAll(grpcStatus => ZIO.fail(ConsumerFailure(grpcStatus)))
     }
 
