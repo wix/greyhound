@@ -255,13 +255,17 @@ object Dispatcher {
       clientId: ClientId,
       partition: TopicPartition,
       consumerAttributes: Map[String, String]
-    )(implicit trace: Trace): URIO[R with Env, Boolean] =
+    )(implicit trace: Trace): ZIO[R with GreyhoundMetrics, Any, Boolean] =
       internalState.update(s => s.cleared).commit *>
         state.get.flatMap {
           case DispatcherState.Running        =>
             queue.poll.flatMap {
               case Some(record) =>
-                report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *> internalState.update(_.started).commit *>
+                report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *>
+                  ZIO
+                    .attempt(currentTimeMillis())
+                    .flatMap(t => internalState.update(_.startedWith(t)).commit)
+                    .tapError(e => report(FailToUpdateCurrentExecutionStarted(record, group, clientId, consumerAttributes, e))) *>
                   handle(record).interruptible.ignore *> isActive(internalState)
               case None         => isActive(internalState).delay(5.millis)
             }
@@ -284,7 +288,8 @@ case class WorkerInternalState(
 ) {
   def cleared = copy(currentExecutionStarted = None)
 
-  def started = copy(currentExecutionStarted = Some(currentTimeMillis()))
+  def started                 = copy(currentExecutionStarted = Some(currentTimeMillis()))
+  def startedWith(time: Long) = copy(currentExecutionStarted = Some(time))
 
   def reachedHighWatermark(nowMs: Long): WorkerInternalState = copy(reachedHighWatermarkSince = Some(nowMs))
 
@@ -345,6 +350,13 @@ object DispatcherMetric {
   ) extends DispatcherMetric
 
   case class TookRecordFromQueue(record: Record, group: Group, clientId: ClientId, attributes: Map[String, String]) extends DispatcherMetric
+  case class FailToUpdateCurrentExecutionStarted(
+    record: Record,
+    group: Group,
+    clientId: ClientId,
+    attributes: Map[String, String],
+    e: Throwable
+  ) extends DispatcherMetric
 
   case class WorkerWaitingForResume(group: Group, clientId: ClientId, partition: TopicPartition, attributes: Map[String, String])
       extends DispatcherMetric
