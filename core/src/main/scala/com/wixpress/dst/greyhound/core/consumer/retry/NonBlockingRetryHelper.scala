@@ -1,18 +1,21 @@
 package com.wixpress.dst.greyhound.core.consumer.retry
 
-import java.time.{Duration => JavaDuration, Instant}
+import java.time.{Instant, Duration => JavaDuration}
 import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.util.regex.Pattern
-
 import com.wixpress.dst.greyhound.core.Serdes.StringSerde
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
-import com.wixpress.dst.greyhound.core.consumer.retry.RetryAttempt.{currentTime, RetryAttemptNumber}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryAttempt.{RetryAttemptNumber, currentTime}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetries, RetryWith}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.WaitingForRetry
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.core.{durationDeserializer, instantDeserializer, Group, Headers, Topic}
+import com.wixpress.dst.greyhound.core.{Group, Headers, Topic, durationDeserializer, instantDeserializer}
 import zio.Clock
 import zio.Duration
+import zio.Schedule.spaced
 import zio.{Chunk, UIO, URIO, _}
 
 import scala.util.Try
@@ -156,8 +159,12 @@ object RetryHeader {
 
 case class RetryAttempt(originalTopic: Topic, attempt: RetryAttemptNumber, submittedAt: Instant, backoff: Duration) {
 
-  def sleep(implicit trace: Trace): URIO[Any, Unit] =
-    RetryUtil.sleep(submittedAt, backoff)
+  def sleep(implicit trace: Trace): URIO[GreyhoundMetrics, Unit] =
+    RetryUtil.sleep(submittedAt, backoff) race reportWaitingInIntervals(every = 45.seconds)
+
+  private def reportWaitingInIntervals(every: Duration) =
+    report(WaitingForRetry(originalTopic, attempt, submittedAt.toEpochMilli, backoff.toMillis))
+      .repeat(spaced(every)).unit
 }
 
 object RetryUtil {
