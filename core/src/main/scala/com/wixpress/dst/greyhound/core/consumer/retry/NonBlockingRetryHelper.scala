@@ -23,101 +23,119 @@ import scala.util.Try
 trait NonBlockingRetryHelper {
   def retryTopicsFor(originalTopic: Topic): Set[Topic]
 
-  def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(implicit trace: Trace): UIO[Option[RetryAttempt]]
+  def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
+      implicit trace: Trace
+  ): UIO[Option[RetryAttempt]]
 
   def retryDecision[E](
-    retryAttempt: Option[RetryAttempt],
-    record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-    error: E,
-    subscription: ConsumerSubscription
+      retryAttempt: Option[RetryAttempt],
+      record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+      error: E,
+      subscription: ConsumerSubscription
   )(implicit trace: Trace): URIO[Any, RetryDecision]
 
   def retrySteps = retryTopicsFor("").size
 }
 
 object NonBlockingRetryHelper {
-  def apply(group: Group, retryConfig: Option[RetryConfig]): NonBlockingRetryHelper = new NonBlockingRetryHelper {
+  def apply(group: Group, retryConfig: Option[RetryConfig]): NonBlockingRetryHelper =
+    new NonBlockingRetryHelper {
 
-    def policy(topic: Topic): NonBlockingBackoffPolicy =
-      retryConfig.map(_.nonBlockingBackoffs(originalTopic(topic, group))).getOrElse(NonBlockingBackoffPolicy.empty)
+      def policy(topic: Topic): NonBlockingBackoffPolicy =
+        retryConfig
+          .map(_.nonBlockingBackoffs(originalTopic(topic, group)))
+          .getOrElse(NonBlockingBackoffPolicy.empty)
 
-    override def retryTopicsFor(topic: Topic): Set[Topic] =
-      policy(topic).intervals.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt")
+      override def retryTopicsFor(topic: Topic): Set[Topic] =
+        policy(topic).intervals.indices.foldLeft(Set.empty[String])((acc, attempt) =>
+          acc + s"$topic-$group-retry-$attempt"
+        )
 
-    override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
-      implicit trace: Trace
-    ): UIO[Option[RetryAttempt]] = {
-      (for {
-        submitted     <- headers.get(RetryHeader.Submitted, instantDeserializer)
-        backoff       <- headers.get(RetryHeader.Backoff, durationDeserializer)
-        originalTopic <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
-      } yield for {
-        ta                                  <- topicAttempt(subscription, topic, originalTopic)
-        TopicAttempt(originalTopic, attempt) = ta
-        s                                   <- submitted
-        b                                   <- backoff
-      } yield RetryAttempt(originalTopic, attempt, s, b))
-        .catchAll(_ => ZIO.none)
-    }
-
-    private def topicAttempt(subscription: ConsumerSubscription, topic: Topic, originalTopicHeader: Option[String]) =
-      subscription match {
-        case _: Topics       => extractTopicAttempt(group, topic)
-        case _: TopicPattern => extractTopicAttemptFromPatternRetryTopic(group, topic, originalTopicHeader)
+      override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
+          implicit trace: Trace
+      ): UIO[Option[RetryAttempt]] = {
+        (for {
+          submitted     <- headers.get(RetryHeader.Submitted, instantDeserializer)
+          backoff       <- headers.get(RetryHeader.Backoff, durationDeserializer)
+          originalTopic <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
+        } yield for {
+          ta <- topicAttempt(subscription, topic, originalTopic)
+          TopicAttempt(originalTopic, attempt) = ta
+          s <- submitted
+          b <- backoff
+        } yield RetryAttempt(originalTopic, attempt, s, b))
+          .catchAll(_ => ZIO.none)
       }
 
-    override def retryDecision[E](
-      retryAttempt: Option[RetryAttempt],
-      record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
-      error: E,
-      subscription: ConsumerSubscription
-    )(implicit trace: Trace): URIO[Any, RetryDecision] = currentTime.map(now => {
-      val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
-      val originalTopic    = retryAttempt.fold(record.topic)(_.originalTopic)
-      val retryTopic       = subscription match {
-        case _: TopicPattern => patternRetryTopic(group, nextRetryAttempt)
-        case _: Topics       => fixedRetryTopic(originalTopic, group, nextRetryAttempt)
-      }
-
-      val topicRetryPolicy = policy(record.topic)
-      topicRetryPolicy.intervals
-        .lift(nextRetryAttempt)
-        .map { backoff =>
-          topicRetryPolicy.recordMutate(
-            ProducerRecord(
-              topic = retryTopic,
-              value = record.value,
-              key = record.key,
-              partition = None,
-              headers = record.headers +
-                (RetryHeader.Submitted     -> toChunk(now.toEpochMilli)) +
-                (RetryHeader.Backoff       -> toChunk(backoff.toMillis)) +
-                (RetryHeader.OriginalTopic -> toChunk(originalTopic)) +
-                (RetryHeader.RetryAttempt  -> toChunk(nextRetryAttempt))
-            )
-          )
+      private def topicAttempt(
+          subscription: ConsumerSubscription,
+          topic: Topic,
+          originalTopicHeader: Option[String]
+      ) =
+        subscription match {
+          case _: Topics => extractTopicAttempt(group, topic)
+          case _: TopicPattern =>
+            extractTopicAttemptFromPatternRetryTopic(group, topic, originalTopicHeader)
         }
-        .fold[RetryDecision](NoMoreRetries)(RetryWith)
-    })
 
-    private def toChunk(long: Long): Chunk[Byte] =
-      Chunk.fromArray(long.toString.getBytes)
+      override def retryDecision[E](
+          retryAttempt: Option[RetryAttempt],
+          record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
+          error: E,
+          subscription: ConsumerSubscription
+      )(implicit trace: Trace): URIO[Any, RetryDecision] = currentTime.map(now => {
+        val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
+        val originalTopic    = retryAttempt.fold(record.topic)(_.originalTopic)
+        val retryTopic = subscription match {
+          case _: TopicPattern => patternRetryTopic(group, nextRetryAttempt)
+          case _: Topics       => fixedRetryTopic(originalTopic, group, nextRetryAttempt)
+        }
 
-    private def toChunk(str: String): Chunk[Byte] =
-      Chunk.fromArray(str.getBytes)
-  }
+        val topicRetryPolicy = policy(record.topic)
+        topicRetryPolicy.intervals
+          .lift(nextRetryAttempt)
+          .map { backoff =>
+            topicRetryPolicy.recordMutate(
+              ProducerRecord(
+                topic = retryTopic,
+                value = record.value,
+                key = record.key,
+                partition = None,
+                headers = record.headers +
+                  (RetryHeader.Submitted     -> toChunk(now.toEpochMilli)) +
+                  (RetryHeader.Backoff       -> toChunk(backoff.toMillis)) +
+                  (RetryHeader.OriginalTopic -> toChunk(originalTopic)) +
+                  (RetryHeader.RetryAttempt  -> toChunk(nextRetryAttempt))
+              )
+            )
+          }
+          .fold[RetryDecision](NoMoreRetries)(RetryWith)
+      })
+
+      private def toChunk(long: Long): Chunk[Byte] =
+        Chunk.fromArray(long.toString.getBytes)
+
+      private def toChunk(str: String): Chunk[Byte] =
+        Chunk.fromArray(str.getBytes)
+    }
 
   private def extractTopicAttempt[E](group: Group, inputTopic: Topic) =
     inputTopic.split(s"-$group-retry-").toSeq match {
-      case Seq(topic, attempt) if Try(attempt.toInt).isSuccess => Some(TopicAttempt(topic, attempt.toInt))
-      case _                                                   => None
+      case Seq(topic, attempt) if Try(attempt.toInt).isSuccess =>
+        Some(TopicAttempt(topic, attempt.toInt))
+      case _ => None
     }
 
-  private def extractTopicAttemptFromPatternRetryTopic[E](group: Group, inputTopic: Topic, originalTopicHeader: Option[String]) = {
+  private def extractTopicAttemptFromPatternRetryTopic[E](
+      group: Group,
+      inputTopic: Topic,
+      originalTopicHeader: Option[String]
+  ) = {
     originalTopicHeader.flatMap(originalTopic => {
       inputTopic.split(s"__gh_pattern-retry-$group-attempt-").toSeq match {
-        case Seq(_, attempt) if Try(attempt.toInt).isSuccess => Some(TopicAttempt(originalTopic, attempt.toInt))
-        case _                                               => None
+        case Seq(_, attempt) if Try(attempt.toInt).isSuccess =>
+          Some(TopicAttempt(originalTopic, attempt.toInt))
+        case _ => None
       }
     })
   }
@@ -157,24 +175,33 @@ object RetryHeader {
   val RetryAttempt  = "GH_RetryAttempt"
 }
 
-case class RetryAttempt(originalTopic: Topic, attempt: RetryAttemptNumber, submittedAt: Instant, backoff: Duration) {
+case class RetryAttempt(
+    originalTopic: Topic,
+    attempt: RetryAttemptNumber,
+    submittedAt: Instant,
+    backoff: Duration
+) {
 
   def sleep(implicit trace: Trace): URIO[GreyhoundMetrics, Unit] =
-    RetryUtil.sleep(submittedAt, backoff) race reportWaitingInIntervals(every = 45.seconds)
+    (RetryUtil.sleep(submittedAt, backoff) race reportWaitingInIntervals(every = 45.seconds))
 
   private def reportWaitingInIntervals(every: Duration) =
     report(WaitingForRetry(originalTopic, attempt, submittedAt.toEpochMilli, backoff.toMillis))
-      .repeat(spaced(every)).unit
+      .repeat(spaced(every))
+      .unit
 }
 
 object RetryUtil {
-  def sleep(submittedAt: Instant, backoff: Duration)(implicit trace: Trace): URIO[Any, Unit] =
-    currentTime.flatMap { now =>
-      val expiresAt = submittedAt.plus(backoff.asJava)
-      val sleep     = JavaDuration.between(now, expiresAt)
-      ZIO.sleep(Duration.fromJava(sleep))
-    }
-
+  def sleep(submittedAt: Instant, backoff: Duration)(implicit trace: Trace): URIO[Any, Unit] = {
+    val expiresAt = submittedAt.plus(backoff.asJava)
+    currentTime
+      .map(_.isAfter(expiresAt))
+      .flatMap(expired =>
+        if (expired) ZIO.unit
+        else
+          ZIO.sleep(1.seconds).repeatUntilZIO(_ => currentTime.map(_.isAfter(expiresAt))).unit
+      )
+  }
 }
 
 private case class TopicAttempt(originalTopic: Topic, attempt: Int)
