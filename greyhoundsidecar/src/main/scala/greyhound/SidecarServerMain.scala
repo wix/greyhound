@@ -1,9 +1,11 @@
 package greyhound
 
 import scalapb.zio_grpc.{ServerMain, ServiceList}
-import zio.{Ref, ZIO}
+import zio.logging.backend.SLF4J
+import zio.{Ref, Runtime, ZIO}
 
 object SidecarServerMain extends ServerMain {
+  override val bootstrap = Runtime.removeDefaultLoggers >>> SLF4J.slf4j
 
   override def port: Int = Ports.SidecarGrpcPort
 
