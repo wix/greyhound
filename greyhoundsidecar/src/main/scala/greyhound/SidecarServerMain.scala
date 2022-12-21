@@ -1,17 +1,18 @@
 package greyhound
 
 import scalapb.zio_grpc.{ServerMain, ServiceList}
-import zio.{UIO, ZIO}
+import zio.{Ref, ZIO}
 
-class SidecarServerMain(registerService: UIO[Register.Service], kafkaAddress: String) extends ServerMain {
+object SidecarServerMain extends ServerMain {
 
   override def port: Int = Ports.SidecarGrpcPort
 
 
   override def services: ServiceList[Any] = ServiceList.addScoped {
     for {
-      kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(kafkaAddress))
-      register     <- registerService
+      kafkaAddress <- EnvArgs.kafkaAddress.map(_.get)
+      dbRef        <- Ref.make(Database(HostDetails("localhost", Ports.RegisterPort), ""))
+      register     = RegisterLive(dbRef)
       _            <- register.updateKafkaAddress(kafkaAddress)
       db           <- register.get
       _             = println("""   ____                _                           _ 
