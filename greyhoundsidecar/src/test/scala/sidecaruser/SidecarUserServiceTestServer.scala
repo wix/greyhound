@@ -3,7 +3,7 @@ package sidecaruser
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.ZioGreyhoundsidecaruser.RGreyhoundSidecarUser
 import scalapb.zio_grpc.{ServerMain, ServiceList}
 
-class SidecarUserServiceTestMain(servicePort: Int, impl: RGreyhoundSidecarUser[Any]) extends ServerMain {
+class SidecarUserServiceTestServer(servicePort: Int, impl: RGreyhoundSidecarUser[Any]) extends ServerMain {
 
   override def port: Int = servicePort
 

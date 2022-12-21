@@ -10,6 +10,7 @@ import sidecaruser._
 import support.{KafkaTestSupport, SidecarTestSupport, TestContext}
 import zio.test.Assertion.equalTo
 import zio.test._
+import zio.logging.backend.SLF4J
 import zio.test.junit.JUnitRunnableSpec
 import zio._
 
@@ -20,15 +21,15 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
     ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
   } yield new SidecarUserServiceTest(ref))
 
-  val sidecarUserService: ZIO[Any with Scope with SidecarUserServiceTest, Throwable, Nothing] = for {
+  val sidecarUserServer: ZIO[Any with Scope with SidecarUserServiceTest, Throwable, Nothing] = for {
     user <- ZIO.service[SidecarUserServiceTest]
-    userService <- new SidecarUserServiceTestMain(9100, user).myAppLogic
+    userService <- new SidecarUserServiceTestServer(9100, user).myAppLogic
   } yield userService
 
   var producedCalled = false
-  val onProduceListener: ProducerRecord[Any, Any] => UIO[Unit] = (_: ProducerRecord[Any, Any]) => {
+  val onProduceListener: ProducerRecord[Any, Any] => UIO[Unit] = (r: ProducerRecord[Any, Any]) => {
     producedCalled = true
-    zio.Console.printLine("topic produced").ignore *> ZIO.unit
+    ZIO.log(s"produced record: $r")
   }
   val sideCar: SidecarService = new SidecarService(DefaultRegister, onProduceListener)
 
@@ -63,7 +64,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
 
       test("consume topic") {
         for {
-          fork <- sidecarUserService.forkDaemon
+          fork <- sidecarUserServer.forkDaemon
           context <- ZIO.service[TestContext]
           sidecarUser <- ZIO.service[SidecarUserServiceTest]
           _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
@@ -75,9 +76,13 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
         } yield assert(records.nonEmpty)(equalTo(true))
       } @@ TestAspect.withLiveClock,
 
-    ).provideLayer(testContextLayer ++ ZLayer.succeed(zio.Scope.global) ++ sidecarUserLayer) @@ runKafka @@ closeKafka
-
-
+    ).provideLayer(
+      Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
+      testContextLayer ++
+      ZLayer.succeed(zio.Scope.global) ++
+      sidecarUserLayer) @@
+      runKafka @@
+      closeKafka
 }
 
 
