@@ -205,7 +205,7 @@ object Dispatcher {
       fiber         <-
         (pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
           .repeatWhile(_ == true) raceFirst
-            reportWorkerRunningInInterval(every = 5.seconds)(partition, group, clientId))
+            reportWorkerRunningInInterval(every = 45.seconds)(partition, group, clientId))
           .forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
