@@ -41,7 +41,10 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
         implicit trace: Trace
       ): UIO[DelayedRebalanceEffect] =
         (report(PartitionsRevoked(clientId, group, partitions, config.consumerAttributes)) *>
-          rebalanceListener.onPartitionsRevoked(consumer, partitions)).provideEnvironment(r)
+          rebalanceListener.onPartitionsRevoked(consumer, partitions)
+            .timed.tap { case (duration, _) => report(PartitionsRevokedComplete(clientId, group, partitions, config.consumerAttributes, duration.toMillis)) }
+            .map(_._2)
+          ).provideEnvironment(r)
 
       override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
         (report(PartitionsAssigned(clientId, group, partitions, config.consumerAttributes)) *>
@@ -237,6 +240,12 @@ object ConsumerMetric {
     partitions: Set[TopicPartition],
     attributes: Map[String, String] = Map.empty
   ) extends ConsumerMetric
+
+  case class PartitionsRevokedComplete(clientId: ClientId,
+                                       group: Group,
+                                       partitions: Set[TopicPartition],
+                                       attributes: Map[String, String] = Map.empty,
+                                       durationMs: Long) extends ConsumerMetric
 
   case class SubscribeFailed(clientId: ClientId, group: Group, error: Throwable, attributes: Map[String, String] = Map.empty)
       extends ConsumerMetric

@@ -91,9 +91,9 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
         backoff       <- DurationSerde.serialize(retryTopic, 1.second)
         headers        = Headers("retry-attempt" -> retryAttempt, "retry-submitted-at" -> submittedAt, "retry-backoff" -> backoff)
         _             <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0L, 0L, 0L)).fork
-        _             <- TestClock.adjust(1.second)
+        _             <- TestClock.adjust(1.second).repeat(Schedule.once)
         end           <- executionTime.await.disconnect.timeoutFail(TimeoutWaitingForAssertion)(5.seconds)
-      } yield end must equalTo(begin.plusSeconds(1))
+      } yield end must beBetween(begin.plusSeconds(1), begin.plusSeconds(3))
     }
 
     "retry according to provided intervals" in {
