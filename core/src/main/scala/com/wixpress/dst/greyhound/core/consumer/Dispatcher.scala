@@ -59,7 +59,7 @@ object Dispatcher {
         for {
           _         <- report(SubmittingRecord(group, clientId, record, consumerAttributes))
           partition  = RecordTopicPartition(record)
-          worker    <- workerFor(partition, record.offset)
+          worker    <- workerFor(partition)
           submitted <- worker.submit(record)
         } yield if (submitted) Submitted else Rejected
 
@@ -126,13 +126,13 @@ object Dispatcher {
        * This implementation is not fiber-safe. Since the worker is used per partition, and all operations performed on a single partition
        * are linearizable this is fine.
        */
-      private def workerFor(partition: TopicPartition, offset: Long) =
+      private def workerFor(partition: TopicPartition) =
         workers.get.flatMap { workers1 =>
           workers1.get(partition) match {
             case Some(worker) => ZIO.succeed(worker)
             case None         =>
               for {
-                _               <- report(StartingWorker(group, clientId, partition, offset, consumerAttributes))
+                _               <- report(StartingWorker(group, clientId, partition, consumerAttributes))
                 worker          <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout, consumerAttributes)
                 _               <- workers.update(_ + (partition -> worker))
                 shutdownPromise <- AwaitShutdown.make
@@ -202,9 +202,8 @@ object Dispatcher {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber         <-
-        (pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
-          .repeatWhile(_ == true) raceFirst
-            reportWorkerRunningInInterval(every = 60.seconds)(partition, group, clientId))
+        pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
+          .repeatWhile(_ == true)
           .forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
@@ -278,10 +277,6 @@ object Dispatcher {
         }
   }
 
-  private def reportWorkerRunningInInterval(every: zio.Duration)(topicPartition: TopicPartition, group: Group, clientId: String): URIO[GreyhoundMetrics, Unit] =
-    GreyhoundMetrics.report(WorkerRunning(topicPartition, group, clientId))
-      .repeat(Schedule.spaced(every)).unit
-
   private def isActive[R](internalState: TRef[WorkerInternalState])(implicit trace: Trace) =
     internalState.get.map(_.shuttingDown).commit.negate
 }
@@ -321,9 +316,7 @@ sealed trait DispatcherMetric extends GreyhoundMetric
 
 object DispatcherMetric {
 
-  case class WorkerRunning(topicPartition: TopicPartition, group: Group, clientId: String) extends DispatcherMetric
-
-  case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition, firstOffset: Long, attributes: Map[String, String])
+  case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition, attributes: Map[String, String])
       extends DispatcherMetric
 
   case class StoppingWorker(
