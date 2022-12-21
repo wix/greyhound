@@ -154,8 +154,9 @@ object Dispatcher {
             case (partition, worker) =>
               report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
                 workersShutdownRef.get.flatMap(_.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
-                worker.shutdown.timed
-                  .map(_._1)
+                worker.shutdown
+                  .catchSomeCause{case _: Cause[InterruptedException] => ZIO.unit} // happens on revoke - must not fail on it so we have visibility to worker completion
+                  .timed.map(_._1)
                   .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
           }
           .resurrect
@@ -204,7 +205,7 @@ object Dispatcher {
       fiber         <-
         (pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
           .repeatWhile(_ == true) raceFirst
-            reportWorkerRunningInInterval(every = 60.seconds)(partition, group, clientId))
+            reportWorkerRunningInInterval(every = 5.seconds)(partition, group, clientId))
           .forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
