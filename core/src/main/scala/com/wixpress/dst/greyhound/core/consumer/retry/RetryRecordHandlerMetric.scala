@@ -12,6 +12,7 @@ sealed trait InterruptibleRetryMetric extends GreyhoundMetric {
 
 object RetryRecordHandlerMetric {
 
+  case class WaitingForRetry(originalTopic: String, attempt: Int, submittedAt: Long, backoff: Long)       extends RetryRecordHandlerMetric
   case class BlockingFor(partition: TopicPartition, offset: Long)                                         extends RetryRecordHandlerMetric
   case class BlockingIgnoredForAllFor(partition: TopicPartition, offset: Long)                            extends RetryRecordHandlerMetric
   case class BlockingIgnoredOnceFor(partition: TopicPartition, offset: Long)                              extends RetryRecordHandlerMetric
@@ -19,7 +20,7 @@ object RetryRecordHandlerMetric {
   case class NoRetryOnNonRetryableFailure(partition: TopicPartition, offset: Long, cause: Exception)      extends RetryRecordHandlerMetric
   case object Silent                                                                                      extends RetryRecordHandlerMetric
 
-  case class WaitingBeforeRetry(retryTopic: Topic, retryAttempt: RetryAttempt) extends RetryRecordHandlerMetric
+  case class WaitingBeforeRetry(retryTopic: Topic, retryAttempt: RetryAttempt, partition: Int, offset:Long, correlationId: Int) extends RetryRecordHandlerMetric
 
   case class DoneWaitingBeforeRetry(
     retryTopic: Topic,
@@ -27,7 +28,8 @@ object RetryRecordHandlerMetric {
     offset: Offset,
     retryAttempt: RetryAttempt,
     waitedFor: Duration,
-    interrupted: Boolean = false
+    interrupted: Boolean = false,
+    correlationId: Int
   ) extends RetryRecordHandlerMetric
       with InterruptibleRetryMetric
 
