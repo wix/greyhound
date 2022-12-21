@@ -22,6 +22,7 @@ lazy val root = (project in file("."))
       "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion % sbtprotoc.ProtocPlugin.ProtobufConfig,
       "org.slf4j" % "slf4j-api" % "1.7.25",
       "ch.qos.logback" % "logback-classic" % "1.1.3",
+      "dev.zio" %% "zio-logging-slf4j" % "2.1.3",
 
       // -- test -- //
       "dev.zio" %% "zio-test" % "2.0.3" % Test,
