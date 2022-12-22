@@ -92,7 +92,7 @@ object Consumer {
                               cfg.clientId,
                               cfg.groupId,
                               UnsafeOffsetOperations.make(consumer),
-                              timeout = 500.millis,
+                              timeout = 10.seconds,
                               timeoutIfSeek = 10.seconds,
                               initialSeek = cfg.initialSeek,
                               rewindUncommittedOffsetsBy = cfg.rewindUncommittedOffsetsByMillis.millis,
