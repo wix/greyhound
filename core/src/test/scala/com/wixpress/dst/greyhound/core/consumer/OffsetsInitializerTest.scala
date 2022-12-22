@@ -228,7 +228,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       offsetOps.offsetsForTimes(anyObject, anyObject, anyObject) returns Map.empty
 
     def givenOffsetsForTimes(epochTime: Long, positions: (TopicPartition, Long)*): Unit =
-      offsetOps.offsetsForTimes(`===`(positions.toMap.keySet), `===`(epochTime), anyObject) returns positions.toMap
+      offsetOps.offsetsForTimes(`===`(positions.toMap.keySet), `===`(epochTime), anyObject) returns positions.toMap.mapValues(Some(_))
 
   }
 
