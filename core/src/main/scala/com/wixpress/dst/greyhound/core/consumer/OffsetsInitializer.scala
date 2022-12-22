@@ -22,7 +22,9 @@ class OffsetsInitializer(
   timeoutIfSeek: zio.Duration,
   reporter: GreyhoundMetric => Unit,
   initialSeek: InitialOffsetsSeek,
-  clock: Clock = Clock.systemUTC
+  rewindUncommittedOffsetsBy: Duration,
+  clock: Clock = Clock.systemUTC,
+  offsetResetIsEarliest: Boolean
 ) {
   def initializeOffsets(partitions: Set[TopicPartition]): Unit = {
     val hasSeek          = initialSeek != InitialOffsetsSeek.default
@@ -36,12 +38,17 @@ class OffsetsInitializer(
       val notCommitted                         = partitions -- committed.keySet -- toOffsets.keySet
 
       offsetOperations.pause(toPause)
+      val rewindUncommittedOffsets =
+        if (offsetResetIsEarliest || notCommitted.isEmpty || rewindUncommittedOffsetsBy.isZero) Map.empty
+        else offsetOperations.offsetsForTimes(notCommitted, clock.millis() - rewindUncommittedOffsetsBy.toMillis, effectiveTimeout)
 
       val positions =
-        notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap ++ toOffsets
-      if (toOffsets.nonEmpty) {
-        offsetOperations.seek(toOffsets)
+        notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap ++ toOffsets ++ rewindUncommittedOffsets
+
+      if ((toOffsets ++ rewindUncommittedOffsets).nonEmpty) {
+        offsetOperations.seek(toOffsets ++ rewindUncommittedOffsets)
       }
+
       if (positions.nonEmpty) {
         offsetOperations.commit(positions, effectiveTimeout)
       }
@@ -139,7 +146,9 @@ object OffsetsInitializer {
     timeout: zio.Duration,
     timeoutIfSeek: zio.Duration,
     initialSeek: InitialOffsetsSeek,
-    clock: Clock = Clock.systemUTC
+    clock: Clock = Clock.systemUTC,
+    rewindUncommittedOffsetsBy: Duration,
+    offsetResetIsEarliest: Boolean
   )(implicit trace: Trace): URIO[GreyhoundMetrics, OffsetsInitializer] = for {
     metrics <- ZIO.environment[GreyhoundMetrics].map(_.get)
     runtime <- ZIO.runtime[Any]
@@ -151,6 +160,8 @@ object OffsetsInitializer {
     timeoutIfSeek,
     m => zio.Unsafe.unsafe { implicit s => runtime.unsafe.run(metrics.report(m)).getOrThrowFiberFailure() },
     initialSeek: InitialOffsetsSeek,
-    clock
+    rewindUncommittedOffsetsBy,
+    clock,
+    offsetResetIsEarliest
   )
 }
