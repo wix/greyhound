@@ -1,18 +1,17 @@
 
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest.Target
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
 import greyhound.{HostDetails, SidecarService}
 import sidecaruser._
 import support.{KafkaTestSupport, SidecarTestSupport, TestContext}
+import zio._
+import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
 import zio.test._
-import zio.logging.backend.SLF4J
 import zio.test.junit.JUnitRunnableSpec
-import zio._
 
 
 object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport {
@@ -31,7 +30,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
     producedCalled = true
     ZIO.log(s"produced record: $r")
   }
-  val sideCar: SidecarService = new SidecarService(DefaultRegister, onProduceListener)
+  val sidecarService: SidecarService = new SidecarService(DefaultRegister, onProduceListener)
 
 
   override def spec: Spec[TestEnvironment with Scope, Any] =
@@ -39,7 +38,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
 
       test("register a sidecar user") {
         for {
-          _ <- sideCar.register(RegisterRequest(localHost, "4567"))
+          _ <- sidecarService.register(RegisterRequest(localHost, "4567"))
           db <- DefaultRegister.get
         } yield assert(db.host)(equalTo(HostDetails(localHost, 4567)))
       },
@@ -47,7 +46,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
       test("create new topic") {
         for {
           context <- ZIO.service[TestContext]
-          _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
           db <- DefaultRegister.get
           adminClient <- AdminClient.make(AdminClientConfig(db.kafkaAddress))
           topicExist <- adminClient.topicExists(context.topicName)
@@ -57,20 +56,21 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
       test("produce event") {
         for {
           context <- ZIO.service[TestContext]
-          _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
-          _ <- sideCar.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
         } yield assert(producedCalled)(equalTo(true))
       },
 
       test("consume topic") {
         for {
+          //TODO: try to init sidecarUser for all tests scope
           fork <- sidecarUserServer.forkDaemon
           context <- ZIO.service[TestContext]
           sidecarUser <- ZIO.service[SidecarUserServiceTest]
-          _ <- sideCar.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
-          _ <- sideCar.register(RegisterRequest(localHost, "9100"))
-          _ <- sideCar.startConsuming(StartConsumingRequest(Seq(Consumer("1", "group", context.topicName))))
-          _ <- sideCar.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+          _ <- sidecarService.register(RegisterRequest(localHost, "9100"))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(Seq(Consumer("1", "group", context.topicName))))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
           records <- sidecarUser.collectedRecords.get.delay(6.seconds)
           _ <- fork.interrupt
         } yield assert(records.nonEmpty)(equalTo(true))
