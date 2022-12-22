@@ -16,6 +16,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
   private val Seq(p1, p2, p3)     = Seq("t1" -> 1, "t2" -> 2, "t3" -> 3).map(tp => TopicPartition(tp._1, tp._2))
   private val partitions          = Set(p1, p2, p3)
   private val p1Pos, p2Pos, p3Pos = randomInt.toLong
+  val epochTimeToRewind = 1000L
 
   "do nothing if no missing offsets" in
     new ctx {
@@ -123,7 +124,54 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       reported must contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
     }
 
-  class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty) extends Scope {
+  "rewind uncommitted offsets" in new ctx {
+    givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
+    givenPositions(p2 -> p2Pos, p3 -> p3Pos)
+    givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2 -> 1L)
+
+    committer.initializeOffsets(partitions)
+
+    val missingOffsets = Map(
+      p1 -> p1Pos,
+      p3 -> p3Pos
+    )
+
+    val rewindedOffsets = Map(
+      p1 -> 0L,
+    )
+
+    there was
+      one(offsetOps).commit(
+        missingOffsets ++ rewindedOffsets,
+        timeout
+      )
+  }
+
+  "not rewind uncommitted offsets when offset reset is earliest" in new ctx(offsetReset = OffsetReset.Earliest) {
+    givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
+    givenPositions(p2 -> p2Pos, p3 -> p3Pos)
+    givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2 -> 1L)
+
+    committer.initializeOffsets(partitions)
+
+    val missingOffsets = Map(
+      p1 -> p1Pos,
+      p3 -> p3Pos
+    )
+
+    val rewindedOffsets = Map(
+      p1 -> 0L,
+    )
+
+    there was
+      one(offsetOps).commit(
+        missingOffsets ++ rewindedOffsets,
+        timeout
+      )
+  }
+
+
+  class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty, offsetReset: OffsetReset = OffsetReset.Latest) extends Scope {
     private val metricsLogRef           = new AtomicReference(Seq.empty[GreyhoundMetric])
     def reported                        = metricsLogRef.get
     val timeout                         = Duration.ofMillis(123)
@@ -132,6 +180,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
     val offsetOps                       = mock[UnsafeOffsetOperations]
     val group, clientId                 = randomStr
 
+    givenNoOffsetsForTimes
     val clock = Clock.fixed(java.time.Instant.EPOCH, ZoneId.of("UTC"))
 
     val committer = new OffsetsInitializer(
@@ -142,7 +191,9 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       timeoutIfSeek,
       report,
       if (seekTo == Map.empty) InitialOffsetsSeek.default else (_, _, _, _) => seekTo,
-      clock
+      rewindUncommittedOffsetsBy = zio.Duration.fromMillis(15 * 60 * 1000),
+      clock,
+      offsetResetIsEarliest = offsetReset == OffsetReset.Earliest
     )
 
     def randomOffsets(partitions: Set[TopicPartition]) = partitions.map(p => p -> randomInt.toLong).toMap
@@ -172,6 +223,12 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
           offsetOps.position(tp, timeout) returns p
       }
     }
+
+    def givenNoOffsetsForTimes: Unit =
+      offsetOps.offsetsForTimes(anyObject, anyObject, anyObject) returns Map.empty
+
+    def givenOffsetsForTimes(epochTime: Long, positions: (TopicPartition, Long)*): Unit =
+      offsetOps.offsetsForTimes(`===`(positions.toMap.keySet), `===`(epochTime), anyObject) returns positions.toMap
 
   }
 
