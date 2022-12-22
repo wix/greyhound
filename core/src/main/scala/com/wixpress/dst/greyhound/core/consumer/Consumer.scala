@@ -94,9 +94,7 @@ object Consumer {
                               UnsafeOffsetOperations.make(consumer),
                               timeout = 500.millis,
                               timeoutIfSeek = 10.seconds,
-                              initialSeek = cfg.initialSeek,
-                              rewindUncommittedOffsetsBy = cfg.rewindUncommittedOffsetsByMillis.millis,
-                              offsetResetIsEarliest = cfg.offsetReset == OffsetReset.Earliest
+                              initialSeek = cfg.initialSeek
                             )
   } yield {
     new Consumer {
@@ -284,8 +282,7 @@ case class ConsumerConfig(
   initialSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
   consumerAttributes: Map[String, String] = Map.empty,
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
-  rewindUncommittedOffsetsByMillis: Long = 0L
+  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = Map(
@@ -329,8 +326,6 @@ trait UnsafeOffsetOperations {
   def seek(offsets: Map[TopicPartition, Offset]): Unit
 
   def endOffsets(partitions: Set[TopicPartition], timeout: Duration): Map[TopicPartition, Offset]
-
-  def offsetsForTimes(partitions: Set[TopicPartition], timeEpoch: Long, timeout: Duration): Map[TopicPartition, Long]
 
   def pause(partitions: Set[TopicPartition]): Unit
 
@@ -380,9 +375,5 @@ object UnsafeOffsetOperations {
     override def endOffsets(partitions: Set[TopicPartition], timeout: Duration): Map[TopicPartition, Long] = {
       consumer.endOffsets(partitions.map(_.asKafka).asJava, timeout).asScala.toMap.map { case (tp, of) => TopicPartition(tp) -> (of: Long) }
     }
-
-    override def offsetsForTimes(partitions: Set[TopicPartition], timeEpoch: Long, timeout: Duration): Map[TopicPartition, Long] =
-      consumer.offsetsForTimes(partitions.map(_.asKafka).map(tp => (tp, new lang.Long(timeEpoch))).toMap.asJava, timeout)
-        .asScala.toMap.map { case (tp, of) => TopicPartition(tp) -> (of.offset()) }
   }
 }
