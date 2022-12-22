@@ -183,7 +183,7 @@ case class RetryAttempt(
 ) {
 
   def sleep(implicit trace: Trace): URIO[GreyhoundMetrics, Unit] =
-    (RetryUtil.sleep(submittedAt, backoff) race reportWaitingInIntervals(every = 45.seconds))
+    (RetryUtil.sleep(submittedAt, backoff) race reportWaitingInIntervals(every = 60.seconds))
 
   private def reportWaitingInIntervals(every: Duration) =
     report(WaitingForRetry(originalTopic, attempt, submittedAt.toEpochMilli, backoff.toMillis))
