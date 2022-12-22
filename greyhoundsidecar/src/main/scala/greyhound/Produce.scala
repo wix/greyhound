@@ -10,16 +10,16 @@ object Produce {
   val defaultKey: Option[String] = Some("")
 
   def apply(request: ProduceRequest, kafkaAddress: String, onProduceListener: ProducerRecord[_, _] => UIO[Unit]): RIO[Scope, Unit] = {
-      for {
-        producer <- Producer.make(ProducerConfig(kafkaAddress, onProduceListener = onProduceListener)) // TODO: memoize or pass
-        record = ProducerRecord(topic = request.topic, value = request.payload.getOrElse(""), key = request.target.key orElse defaultKey)
-        recordMetadata <- producer.produce(
-          record = record,
-          keySerializer = Serdes.StringSerde,
-          valueSerializer = Serdes.StringSerde
-        )
-        _ <- ZIO.log(s"got record metadata: $recordMetadata")
-      } yield ()
-    }
+    for {
+      producer <- Producer.make(ProducerConfig(kafkaAddress, onProduceListener = onProduceListener)) // TODO: memoize or pass
+      record = ProducerRecord(topic = request.topic, value = request.payload.getOrElse(""), key = request.target.key orElse defaultKey)
+      recordMetadata <- producer.produce(
+        record = record,
+        keySerializer = Serdes.StringSerde,
+        valueSerializer = Serdes.StringSerde
+      )
+      _ <- ZIO.logDebug(s"Successfully produced - topic: ${recordMetadata.topic} partition: ${recordMetadata.partition} offset: ${recordMetadata.offset}")
+    } yield ()
+  }
 
 }

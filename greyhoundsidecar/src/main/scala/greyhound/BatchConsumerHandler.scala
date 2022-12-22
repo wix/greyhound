@@ -21,7 +21,7 @@ object BatchConsumerHandler {
         .handleMessages(request)
         .tapBoth(
           e => ZIO.logError(s"Failed to send msg to client: $e"),
-          f => ZIO.log(s"Successfully sent msg to client: $f"))
+          f => ZIO.logDebug(s"Successfully sent msg to client: $f"))
         .catchAll(grpcStatus => ZIO.fail(HandleError(BatchConsumerFailure(grpcStatus))))
     }
 
