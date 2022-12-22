@@ -205,7 +205,7 @@ object Dispatcher {
       fiber         <-
         (pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
           .repeatWhile(_ == true) raceFirst
-            reportWorkerRunningInInterval(every = 45.seconds, internalState)(partition, group, clientId))
+            reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId))
           .forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
@@ -279,9 +279,15 @@ object Dispatcher {
         }
   }
 
-  private def reportWorkerRunningInInterval(every: zio.Duration, state: TRef[WorkerInternalState])(topicPartition: TopicPartition, group: Group, clientId: String): URIO[GreyhoundMetrics, Unit] =
-    GreyhoundMetrics.report(WorkerRunning(topicPartition, group, clientId))
-      .repeat(Schedule.recurUntilZIO((_: Any) => state.get.map(_.shuttingDown).commit) && Schedule.spaced(every)).unit
+  private def reportWorkerRunningInInterval(every: zio.Duration, state: TRef[WorkerInternalState])(topicPartition: TopicPartition, group: Group, clientId: String): URIO[GreyhoundMetrics, Unit] = {
+    for {
+      start <- Clock
+        .currentTime(TimeUnit.MILLISECONDS)
+      id <- ZIO.succeed(scala.util.Random.alphanumeric.take(10).mkString)
+      _ <-         GreyhoundMetrics.report(WorkerRunning(topicPartition, group, clientId, start, id))
+        .repeat(Schedule.recurUntilZIO((_: Any) => state.get.map(_.shuttingDown).commit) && Schedule.spaced(every)).unit
+    } yield ()
+  }
 
   private def isActive[R](internalState: TRef[WorkerInternalState])(implicit trace: Trace) =
     internalState.get.map(_.shuttingDown).commit.negate
@@ -322,7 +328,7 @@ sealed trait DispatcherMetric extends GreyhoundMetric
 
 object DispatcherMetric {
 
-  case class WorkerRunning(topicPartition: TopicPartition, group: Group, clientId: String) extends DispatcherMetric
+  case class WorkerRunning(topicPartition: TopicPartition, group: Group, clientId: String, started: Long, id: String) extends DispatcherMetric
 
   case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition, firstOffset: Long, attributes: Map[String, String])
       extends DispatcherMetric
