@@ -330,7 +330,7 @@ trait UnsafeOffsetOperations {
 
   def endOffsets(partitions: Set[TopicPartition], timeout: Duration): Map[TopicPartition, Offset]
 
-  def offsetsForTimes(partitions: Set[TopicPartition], timeEpoch: Long, timeout: Duration): Map[TopicPartition, Long]
+  def offsetsForTimes(partitions: Set[TopicPartition], timeEpoch: Long, timeout: Duration): Map[TopicPartition, Option[Long]]
 
   def pause(partitions: Set[TopicPartition]): Unit
 
@@ -381,8 +381,8 @@ object UnsafeOffsetOperations {
       consumer.endOffsets(partitions.map(_.asKafka).asJava, timeout).asScala.toMap.map { case (tp, of) => TopicPartition(tp) -> (of: Long) }
     }
 
-    override def offsetsForTimes(partitions: Set[TopicPartition], timeEpoch: Long, timeout: Duration): Map[TopicPartition, Long] =
+    override def offsetsForTimes(partitions: Set[TopicPartition], timeEpoch: Long, timeout: Duration): Map[TopicPartition, Option[Long]] =
       consumer.offsetsForTimes(partitions.map(_.asKafka).map(tp => (tp, new lang.Long(timeEpoch))).toMap.asJava, timeout)
-        .asScala.toMap.map { case (tp, of) => TopicPartition(tp) -> (Option(of).map(_.offset()).getOrElse(0L)) }
+        .asScala.toMap.map { case (tp, of) => TopicPartition(tp) -> (Option(of).map(_.offset())) }
   }
 }
