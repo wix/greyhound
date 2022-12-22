@@ -32,7 +32,7 @@ object CreateConsumer {
               handler = ConsumerHandler(topic, group, client)
                 .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
             )
-          ).unit.provideSomeLayer[GreyhoundMetrics with Register](ZLayer.succeed(Scope.global))
+          ).provideSomeLayer[GreyhoundMetrics with Register](ZLayer.succeed(Scope.global))
 
     } yield ()
 
