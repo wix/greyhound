@@ -180,7 +180,7 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                      _                 <- ZIO.foreachParDiscard(0 until someMessages)(_ => producer.produceAsync(record))
                      _                 <- handledSomeMessages.await
                      _                 <- consumer.pause
-                     _                 <- sleep(config.eventLoopConfig.pollTimeout + 1.second) // make sure last poll finished
+                     _                 <- sleep(config.eventLoopConfig.fetchTimeout + 1.second) // make sure last poll finished
                      _                 <- ZIO.foreachParDiscard(0 until restOfMessages)(_ => producer.produceAsync(record))
                      a                 <- handledAllMessages.await.timeout(5.seconds)
                      handledAfterPause <- handleCounter.get
