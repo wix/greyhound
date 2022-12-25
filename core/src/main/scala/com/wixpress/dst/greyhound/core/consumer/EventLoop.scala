@@ -206,7 +206,7 @@ object EventLoop {
     config: EventLoopConfig
   ) =
     for {
-      records      <- consumer.poll(config.pollTimeout).catchAll(_ => ZIO.succeed(Nil))
+      records      <- consumer.poll(config.fetchTimeout).catchAll(_ => ZIO.succeed(Nil))
       paused       <- pausedRef.get
       pausedTopics <- ZIO.foldLeft(records)(paused) { (acc, record) =>
                         val partition = record.topicPartition
@@ -248,7 +248,7 @@ object EventLoop {
 }
 
 case class EventLoopConfig(
-  pollTimeout: Duration,
+  fetchTimeout: Duration,
   drainTimeout: Duration,
   lowWatermark: Int,
   highWatermark: Int,
@@ -259,7 +259,7 @@ case class EventLoopConfig(
 
 object EventLoopConfig {
   val Default = EventLoopConfig(
-    pollTimeout = 500.millis,
+    fetchTimeout = 500.millis,
     drainTimeout = 30.seconds,
     lowWatermark = 128,
     highWatermark = 256,
