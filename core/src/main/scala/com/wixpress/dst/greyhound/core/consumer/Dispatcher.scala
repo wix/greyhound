@@ -155,8 +155,11 @@ object Dispatcher {
               report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
                 workersShutdownRef.get.flatMap(_.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
                 worker.shutdown
-                  .catchSomeCause{case _: Cause[InterruptedException] => ZIO.unit} // happens on revoke - must not fail on it so we have visibility to worker completion
-                  .timed.map(_._1)
+                  .catchSomeCause {
+                    case _: Cause[InterruptedException] => ZIO.unit
+                  } // happens on revoke - must not fail on it so we have visibility to worker completion
+                  .timed
+                  .map(_._1)
                   .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
           }
           .resurrect
@@ -203,10 +206,9 @@ object Dispatcher {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber         <-
-        (pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
-          .repeatWhile(_ == true) raceFirst
-            reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId))
-          .forkDaemon
+      (pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
+        .repeatWhile(_ == true) raceFirst
+        reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId)).forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
         queue
@@ -266,9 +268,11 @@ object Dispatcher {
                 report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *>
                   ZIO
                     .attempt(currentTimeMillis())
-                    .flatMap(t => internalState.update(_.startedWith(t)).commit)
-                    .tapError(e => report(FailToUpdateCurrentExecutionStarted(record, group, clientId, consumerAttributes, e))) *>
-                  handle(record).interruptible.ignore *> isActive(internalState)
+                    .flatMap(t => internalState.updateAndGet(_.startedWith(t)).commit)
+                    .tapBoth(
+                      e => report(FailToUpdateCurrentExecutionStarted(record, group, clientId, consumerAttributes, e)),
+                      t => report(CurrentExecutionStartedEvent(partition, group, clientId, t.currentExecutionStarted))
+                    ) *> handle(record).interruptible.ignore *> isActive(internalState)
               case None         => isActive(internalState).delay(5.millis)
             }
           case DispatcherState.Paused(resume) =>
@@ -279,13 +283,18 @@ object Dispatcher {
         }
   }
 
-  private def reportWorkerRunningInInterval(every: zio.Duration, state: TRef[WorkerInternalState])(topicPartition: TopicPartition, group: Group, clientId: String): URIO[GreyhoundMetrics, Unit] = {
+  private def reportWorkerRunningInInterval(
+    every: zio.Duration,
+    state: TRef[WorkerInternalState]
+  )(topicPartition: TopicPartition, group: Group, clientId: String): URIO[GreyhoundMetrics, Unit] = {
     for {
       start <- Clock
-        .currentTime(TimeUnit.MILLISECONDS)
-      id <- ZIO.succeed(scala.util.Random.alphanumeric.take(10).mkString)
-      _ <-         GreyhoundMetrics.report(WorkerRunning(topicPartition, group, clientId, start, id))
-        .repeat(Schedule.recurUntilZIO((_: Any) => state.get.map(_.shuttingDown).commit) && Schedule.spaced(every)).unit
+                 .currentTime(TimeUnit.MILLISECONDS)
+      id    <- ZIO.succeed(scala.util.Random.alphanumeric.take(10).mkString)
+      _     <- GreyhoundMetrics
+                 .report(WorkerRunning(topicPartition, group, clientId, start, id))
+                 .repeat(Schedule.recurUntilZIO((_: Any) => state.get.map(_.shuttingDown).commit) && Schedule.spaced(every))
+                 .unit
     } yield ()
   }
 
@@ -328,7 +337,8 @@ sealed trait DispatcherMetric extends GreyhoundMetric
 
 object DispatcherMetric {
 
-  case class WorkerRunning(topicPartition: TopicPartition, group: Group, clientId: String, started: Long, id: String) extends DispatcherMetric
+  case class WorkerRunning(topicPartition: TopicPartition, group: Group, clientId: String, started: Long, id: String)
+      extends DispatcherMetric
 
   case class StartingWorker(group: Group, clientId: ClientId, partition: TopicPartition, firstOffset: Long, attributes: Map[String, String])
       extends DispatcherMetric
@@ -374,6 +384,13 @@ object DispatcherMetric {
 
   case class WorkerWaitingForResume(group: Group, clientId: ClientId, partition: TopicPartition, attributes: Map[String, String])
       extends DispatcherMetric
+
+  case class CurrentExecutionStartedEvent(
+    partition: TopicPartition,
+    group: Group,
+    clientId: ClientId,
+    currentExecutionStarted: Option[Long]
+  ) extends DispatcherMetric
 
 }
 
