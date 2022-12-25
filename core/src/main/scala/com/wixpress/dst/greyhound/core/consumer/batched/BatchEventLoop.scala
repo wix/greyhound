@@ -103,7 +103,7 @@ private[greyhound] class BatchEventLoopImpl[R](
     _       <- pauseAndResume().provide(ZLayer.succeed(capturedR))
     records <-
       consumer
-        .poll(config.pollTimeout)
+        .poll(config.fetchTimeout)
         .provide(ZLayer.succeed(capturedR))
         .catchAll(_ => ZIO.succeed(Nil))
         .flatMap(records => seekRequests.get.map(seeks => records.filterNot(record => seeks.keys.toSet.contains(record.topicPartition))))
@@ -302,7 +302,7 @@ case class EventLoopExposedState(
 }
 
 case class BatchEventLoopConfig(
-  pollTimeout: Duration,
+  fetchTimeout: Duration,
   rebalanceListener: RebalanceListener[Any],
   parallelism: Int = 8,
   startPaused: Boolean
@@ -311,7 +311,7 @@ case class BatchEventLoopConfig(
 }
 
 object BatchEventLoopConfig {
-  val Default = BatchEventLoopConfig(pollTimeout = 500.millis, rebalanceListener = RebalanceListener.Empty, startPaused = false)
+  val Default = BatchEventLoopConfig(fetchTimeout = 500.millis, rebalanceListener = RebalanceListener.Empty, startPaused = false)
 }
 
 sealed trait BatchEventLoopMetric extends GreyhoundMetric
