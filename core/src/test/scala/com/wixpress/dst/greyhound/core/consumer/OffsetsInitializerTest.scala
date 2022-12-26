@@ -147,6 +147,25 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       )
   }
 
+  "rewind to endOffsets for uncommitted partitions when offsetsForTimes return null offsets " in new ctx {
+    givenCommittedOffsets(partitions)(Map(p2 -> randomInt, p3 -> randomInt))
+    givenPositions(p3 -> p3Pos)
+    givenEndOffsets(partitions, timeout)(Map(p1 -> p1Pos))
+    givenOffsetsForTimes(Set(p1))(p1 -> None /*kafka SDK returned null*/)
+
+    committer.initializeOffsets(partitions)
+
+    val committedOffsets = Map(
+      p1 -> p1Pos,
+    )
+
+    there was
+      one(offsetOps).commit(
+        committedOffsets,
+        timeout
+      )
+  }
+
   "not rewind uncommitted offsets when offset reset is earliest" in new ctx(offsetReset = OffsetReset.Earliest) {
     givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
     givenPositions(p2 -> p2Pos, p3 -> p3Pos)
@@ -228,8 +247,10 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       offsetOps.offsetsForTimes(anyObject, anyObject, anyObject) returns Map.empty
 
     def givenOffsetsForTimes(epochTime: Long, positions: (TopicPartition, Long)*): Unit =
-      offsetOps.offsetsForTimes(`===`(positions.toMap.keySet), `===`(epochTime), anyObject) returns positions.toMap.mapValues(Some(_))
+      offsetOps.offsetsForTimes(`===`(positions.toMap.keySet), `===`(epochTime), anyObject) returns positions.toMap.mapValues(Option(_))
 
+    def givenOffsetsForTimes(partitions: Set[TopicPartition])(positions: (TopicPartition, Option[Long])*): Unit =
+      offsetOps.offsetsForTimes(`===`(partitions), anyObject, anyObject) returns positions.toMap
   }
 
   private def randomStr       = Random.alphanumeric.take(5).mkString
