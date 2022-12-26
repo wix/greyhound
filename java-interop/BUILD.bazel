@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "assemble_maven", "deploy_maven")
+load("@vaticle_bazel_distribution//maven:rules.bzl", "assemble_maven", "deploy_maven")
 
 java_library(
     name = "greyhound-java-core",
@@ -33,6 +33,10 @@ scala_library(
         "//core:greyhound-core",
         "//future-interop:greyhound-future",
         "//java-interop:greyhound-java-core",
+        "@dev_zio_izumi_reflect_2_12",
+        "@dev_zio_zio_2_12",
+        "@dev_zio_zio_stacktracer_2_12",
+        "@dev_zio_zio_streams_2_12",
         "@org_apache_kafka_kafka_clients",
     ],
 )
@@ -57,7 +61,6 @@ assemble_maven(
         ],
     },
     license = "mit",
-    package = "{maven_packages}",
     project_description = "Greyhound - Rich Kafka Client with Java API",
     project_name = "Greyhound Java Core",
     project_url = "https://github.com/wix/greyhound",
@@ -65,11 +68,13 @@ assemble_maven(
     tags = ["manual"],
     target = "//java-interop:greyhound-java-core",
     version_file = "//central-sync:VERSION",
+    workspace_refs = "//central-sync:workspace_refs.json",
 )
 
 deploy_maven(
     name = "deploy-maven-java-core",
-    deployment_properties = "//central-sync:deployment.properties",
+    release = "https://oss.sonatype.org/service/local/staging/deploy/maven2/",
+    snapshot = "https://oss.sonatype.org/content/repositories/snapshots",
     tags = ["manual"],
     target = ":assemble-maven-java-core",
 )
@@ -94,7 +99,6 @@ assemble_maven(
         ],
     },
     license = "mit",
-    package = "{maven_packages}",
     project_description = "Greyhound - Rich Kafka Client with Java API",
     project_name = "Greyhound Java",
     project_url = "https://github.com/wix/greyhound",
@@ -102,11 +106,13 @@ assemble_maven(
     tags = ["manual"],
     target = "//java-interop:greyhound-java",
     version_file = "//central-sync:VERSION",
+    workspace_refs = "//central-sync:workspace_refs.json",
 )
 
 deploy_maven(
     name = "deploy-maven",
-    deployment_properties = "//central-sync:deployment.properties",
+    release = "https://oss.sonatype.org/service/local/staging/deploy/maven2/",
+    snapshot = "https://oss.sonatype.org/content/repositories/snapshots",
     tags = ["manual"],
     target = ":assemble-maven",
 )
