@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "assemble_maven", "deploy_maven")
+load("@vaticle_bazel_distribution//maven:rules.bzl", "assemble_maven", "deploy_maven")
 
 scala_library(
     name = "greyhound-future",
@@ -14,7 +14,9 @@ scala_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
+        "@dev_zio_izumi_reflect_2_12",
         "@dev_zio_zio_2_12",
+        "@dev_zio_zio_stacktracer_2_12",
     ],
 )
 
@@ -38,7 +40,6 @@ assemble_maven(
         ],
     },
     license = "mit",
-    package = "{maven_packages}",
     project_description = "Greyhound - Rich Kafka Client with Scala Future API",
     project_name = "Greyhound Future",
     project_url = "https://github.com/wix/greyhound",
@@ -46,11 +47,13 @@ assemble_maven(
     tags = ["manual"],
     target = "//future-interop:greyhound-future",
     version_file = "//central-sync:VERSION",
+    workspace_refs = "//central-sync:workspace_refs.json",
 )
 
 deploy_maven(
     name = "deploy-maven",
-    deployment_properties = "//central-sync:deployment.properties",
+    release = "https://oss.sonatype.org/service/local/staging/deploy/maven2/",
+    snapshot = "https://oss.sonatype.org/content/repositories/snapshots",
     tags = ["manual"],
     target = ":assemble-maven",
 )
