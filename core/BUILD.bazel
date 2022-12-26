@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@graknlabs_bazel_distribution//maven/templates:rules.bzl", "assemble_maven", "deploy_maven")
+load("@vaticle_bazel_distribution//maven:rules.bzl", "assemble_maven", "deploy_maven")
 
 scala_library(
     name = "greyhound-core",
@@ -21,8 +21,11 @@ scala_library(
     ],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//core/src/main/scala/com/wixpress/dst/greyhound/core/producer",
+        "@dev_zio_izumi_reflect_2_12",
         "@dev_zio_zio_2_12",
+        "@dev_zio_zio_managed_2_12",
+        "@dev_zio_zio_stacktracer_2_12",
+        "@dev_zio_zio_streams_2_12",
         "@org_apache_kafka_kafka_clients",
         "@org_slf4j_slf4j_api",
     ],
@@ -48,7 +51,6 @@ assemble_maven(
         ],
     },
     license = "mit",
-    package = "{maven_packages}",
     project_description = "Greyhound - Rich Kafka Client with ZIO API",
     project_name = "Greyhound Core",
     project_url = "https://github.com/wix/greyhound",
@@ -56,11 +58,13 @@ assemble_maven(
     tags = ["manual"],
     target = "//core:greyhound-core",
     version_file = "//central-sync:VERSION",
+    workspace_refs = "//central-sync:workspace_refs.json",
 )
 
 deploy_maven(
     name = "deploy-maven",
-    deployment_properties = "//central-sync:deployment.properties",
+    release = "https://oss.sonatype.org/service/local/staging/deploy/maven2/",
+    snapshot = "https://oss.sonatype.org/content/repositories/snapshots",
     tags = ["manual"],
     target = ":assemble-maven",
 )
@@ -78,6 +82,7 @@ scala_library(
     deps = [
         "//core:greyhound-core",
         "@dev_zio_zio_2_12",
+        "@dev_zio_zio_stacktracer_2_12",
         "@org_apache_curator_curator_test",
         "@org_apache_kafka_kafka_2_12",
         "@org_apache_kafka_kafka_clients",
@@ -105,7 +110,6 @@ assemble_maven(
         ],
     },
     license = "mit",
-    package = "{maven_packages}",
     project_description = "Greyhound - Rich Kafka Client with ZIO API",
     project_name = "Greyhound Testkit",
     project_url = "https://github.com/wix/greyhound",
@@ -113,11 +117,13 @@ assemble_maven(
     tags = ["manual"],
     target = "//core:greyhound-testkit",
     version_file = "//central-sync:VERSION",
+    workspace_refs = "//central-sync:workspace_refs.json",
 )
 
 deploy_maven(
     name = "deploy-maven-testkit",
-    deployment_properties = "//central-sync:deployment.properties",
+    release = "https://oss.sonatype.org/service/local/staging/deploy/maven2/",
+    snapshot = "https://oss.sonatype.org/content/repositories/snapshots",
     tags = ["manual"],
     target = ":assemble-maven-testkit",
 )

@@ -1,4 +1,5 @@
 exports_files([
     "VERSION",
     "deployment.properties",
+    "workspace_refs.json",
 ])
