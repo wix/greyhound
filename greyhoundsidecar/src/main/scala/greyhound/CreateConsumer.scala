@@ -4,10 +4,12 @@ import com.wixpress.dst.greyhound.core.Serdes
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain._
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy.{Blocking, NoRetry, NonBlocking}
+import greyhound.Register.Register
 import greyhound.RetryStrategyMapper.asRetryConfig
-import zio.ZIO
+import zio.{Scope, ZLayer}
 
 import scala.concurrent.duration.DurationInt
 
@@ -17,8 +19,7 @@ object CreateConsumer {
     for {
       kafkaAddress  <- Register.get.map(_.kafkaAddress)
       managedClient <- SidecarUserClient.managed
-      _             <- ZIO.scoped {
-        managedClient
+      _             <- managedClient
           .flatMap(client =>
             RecordConsumer.make(
               config = RecordConsumerConfig(
@@ -31,9 +32,8 @@ object CreateConsumer {
               handler = ConsumerHandler(topic, group, client)
                 .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
             )
-          )
-          .forever
-      }
+          ).provideSomeLayer[GreyhoundMetrics with Register](ZLayer.succeed(Scope.global))
+
     } yield ()
 
 }

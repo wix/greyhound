@@ -17,7 +17,7 @@ object CreateBatchConsumer {
     for {
       kafkaAddress  <- Register.get.map(_.kafkaAddress)
       managedClient <- SidecarUserClient.managed
-      _             <- ZIO.scoped {
+      _             <- ZIO.scoped { // TODO: Fix scoped to be like CreateConsumer + add appropriate test
         managedClient
           .flatMap(client =>
             BatchConsumer.make(

@@ -14,9 +14,11 @@ object ConsumerHandler {
         group = group,
         records = Seq(Record(partition = record.partition, offset = record.offset, payload = Some(record.value), key = record.key))
       )
-      println("message consumed")
       client
         .handleMessages(request)
+        .tapBoth(
+          e => ZIO.logError(s"Failed to send msg to client: $e"),
+          f => ZIO.log(s"Successfully sent msg to client: $f"))
         .catchAll(grpcStatus => ZIO.fail(ConsumerFailure(grpcStatus)))
     }
 
