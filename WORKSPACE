@@ -94,6 +94,10 @@ http_archive(
     urls = ["https://github.com/buildbuddy-io/buildbuddy-toolchain/archive/2a9769e75878519bf48c12334214501d4859154b.tar.gz"],
 )
 
-load("@io_buildbuddy_buildbuddy_toolchain//:rules.bzl", "register_buildbuddy_toolchain")
+load("@io_buildbuddy_buildbuddy_toolchain//:deps.bzl", "buildbuddy_deps")
 
-register_buildbuddy_toolchain(name = "buildbuddy_toolchain")
+buildbuddy_deps()
+
+load("@io_buildbuddy_buildbuddy_toolchain//:rules.bzl", "buildbuddy")
+
+buildbuddy(name = "buildbuddy_toolchain")
