@@ -88,12 +88,12 @@ load("@maven//:compat.bzl", "compat_repositories")
 compat_repositories()
 
 http_archive(
-    name = "io_buildbuddy_toolchain",
+    name = "io_buildbuddy_buildbuddy_toolchain",
     sha256 = "656985ebceaa0116adcae081b19becf41f246893759ac41f86267cb2220f966e",
     strip_prefix = "buildbuddy-toolchain-2a9769e75878519bf48c12334214501d4859154b",
     urls = ["https://github.com/buildbuddy-io/buildbuddy-toolchain/archive/2a9769e75878519bf48c12334214501d4859154b.tar.gz"],
 )
 
-load("@io_buildbuddy_toolchain//:rules.bzl", "register_buildbuddy_toolchain")
+load("@io_buildbuddy_buildbuddy_toolchain//:rules.bzl", "register_buildbuddy_toolchain")
 
 register_buildbuddy_toolchain(name = "buildbuddy_toolchain")
