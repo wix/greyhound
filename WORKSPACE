@@ -13,6 +13,10 @@ http_archive(
     url = "https://github.com/bazelbuild/bazel-skylib/releases/download/{}/bazel-skylib.{}.tar.gz".format(skylib_version, skylib_version),
 )
 
+load("//dependencies/google_protobuf:google_protobuf.bzl", "google_protobuf")
+
+google_protobuf()
+
 wix_oss_infra_version = "e1591c6fb45e665418225bbd034d3e5163278aa1"
 
 wix_oss_infra_version_sha256 = "399a68073420a3920069bd8220296df9c3c11f4cb983fd3f6f71e5e8efff8133"
@@ -24,41 +28,12 @@ http_archive(
     url = "https://github.com/wix/wix-oss-infra/archive/%s.tar.gz" % wix_oss_infra_version,
 )
 
-load("@wix_oss_infra//dependencies/rules_scala:rules_scala.bzl", "rules_scala")
-
-rules_scala()
-
 load("@wix_oss_infra//test-agent/src/shared:tests_external_repository.bzl", "tests_external_repository")
 
 tests_external_repository(
     name = "tests",
     jdk_version = "11",
 )
-
-load("//dependencies/google_protobuf:google_protobuf.bzl", "google_protobuf")
-
-google_protobuf()
-
-# TODO: move to wix_oss_infra
-scala_version = "2.12.6"
-
-load("@io_bazel_rules_scala//scala:scala.bzl", "scala_repositories")
-
-scala_repositories((
-    scala_version,
-    {
-        "scala_compiler": "3023b07cc02f2b0217b2c04f8e636b396130b3a8544a8dfad498a19c3e57a863",
-        "scala_library": "f81d7144f0ce1b8123335b72ba39003c4be2870767aca15dd0888ba3dab65e98",
-        "scala_reflect": "ffa70d522fc9f9deec14358aa674e6dd75c9dfa39d4668ef15bb52f002ce99fa",
-    },
-))
-
-# TODO: move to wix_oss_infra
-load("@io_bazel_rules_scala//specs2:specs2_junit.bzl", "specs2_junit_repositories")
-
-specs2_junit_repositories(scala_version)
-
-register_toolchains("@wix_oss_infra//toolchains:wix_defaults_global_toolchain")
 
 load("@greyhound//central-sync:dependencies.bzl", "graknlabs_bazel_distribution")
 
@@ -86,6 +61,30 @@ pinned_maven_install()
 load("@maven//:compat.bzl", "compat_repositories")
 
 compat_repositories()
+
+load("//dependencies/rules_scala:rules_scala.bzl", "rules_scala")
+
+rules_scala()
+
+load("@io_bazel_rules_scala//:scala_config.bzl", "scala_config")
+
+scala_config()
+
+# Following binds are needed because test macros refer to rules_scala internal labels
+bind(
+    name = "io_bazel_rules_scala/dependency/junit/junit",
+    actual = "@maven//:junit_junit",
+)
+
+bind(
+    name = "io_bazel_rules_scala/dependency/hamcrest/hamcrest_core",
+    actual = "@maven//:org_hamcrest_hamcrest_core",
+)
+
+register_toolchains(
+    "//dependencies/rules_scala:scala_toolchain",
+    "//dependencies/rules_scala:scala_test_toolchain",
+)
 
 http_archive(
     name = "io_buildbuddy_buildbuddy_toolchain",
