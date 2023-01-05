@@ -3,6 +3,7 @@ build --action_env=PATH=/bin:/usr/bin:/usr/local/bin
 build --jobs=500
 build --remote_timeout=600
 build --crosstool_top=@buildbuddy_toolchain//:toolchain
+build --java_language_version=11
 
 build --bes_results_url=https://app.buildbuddy.io/invocation/
 build --bes_backend=grpcs://cloud.buildbuddy.io
