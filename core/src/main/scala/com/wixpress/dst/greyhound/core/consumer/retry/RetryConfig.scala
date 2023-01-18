@@ -4,6 +4,7 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
 import com.wixpress.dst.greyhound.core.consumer.retry.ExponentialBackoffCalculator.exponentialBackoffs
 import com.wixpress.dst.greyhound.core.producer.{Encryptor, NoOpEncryptor, ProducerRecord}
+import com.wixpress.greyhound.visibilityfilter.GHThrowable
 import zio.{Chunk, UIO, ZIO}
 import zio.{Duration => ZDuration}
 
@@ -193,6 +194,6 @@ case object BlockingFollowedByNonBlocking extends RetryType
 
 case object NoRetries extends RetryType
 
-case class NonRetriableException(cause: Exception) extends Exception(cause)
+case class NonRetriableException(cause: Exception) extends Exception(cause) with GHThrowable
 
-case object BlockingHandlerFailed extends RuntimeException
+case object BlockingHandlerFailed extends RuntimeException with GHThrowable
