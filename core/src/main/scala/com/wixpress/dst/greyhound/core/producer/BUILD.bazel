@@ -17,6 +17,5 @@ scala_library(
         "@dev_zio_zio_2_12",
         "@dev_zio_zio_managed_2_12",
         "@org_apache_kafka_kafka_clients",
-        "//data-streams/greyhound/wix-interop/src/main/scala/com/wixpress/greyhound/visibilityfilter",
     ],
 )

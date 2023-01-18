@@ -16,7 +16,6 @@ import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetric
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRetryPolicy, ReportingProducer}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
-import com.wixpress.greyhound.visibilityfilter.GHThrowable
 import zio._
 
 import scala.util.Random
@@ -333,9 +332,9 @@ object RecordConsumerConfig {
 }
 
 case class ResubscribeTimeout(resubscribeTimeout: Duration, subscription: ConsumerSubscription)
-    extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription") with GHThrowable
+    extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")
 
-abstract class ConsumerConfigFailedValidation(val msg: String) extends RuntimeException(msg) with GHThrowable
+abstract class ConsumerConfigFailedValidation(val msg: String) extends RuntimeException(msg)
 
 object ConsumerConfigFailedValidation {
 

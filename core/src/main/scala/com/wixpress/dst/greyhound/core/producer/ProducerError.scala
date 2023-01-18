@@ -1,11 +1,10 @@
 package com.wixpress.dst.greyhound.core.producer
 
-import com.wixpress.greyhound.visibilityfilter.GHThrowable
 import org.apache.kafka.common.KafkaException
 import org.apache.kafka.common.errors._
 import zio.{IO, ZIO}
 
-sealed abstract class ProducerError(cause: Throwable) extends RuntimeException(s"${cause.getClass.getName}: ${cause.getMessage}", cause) with GHThrowable
+sealed abstract class ProducerError(cause: Throwable) extends RuntimeException(s"${cause.getClass.getName}: ${cause.getMessage}", cause)
 
 case class SerializationError(cause: Throwable)                extends ProducerError(cause)
 case class AuthenticationError(cause: AuthenticationException) extends ProducerError(cause)
@@ -39,5 +38,5 @@ object ProducerError {
   def apply(exception: Throwable): IO[ProducerError, Nothing] = ZIO.fail(ProducerError.from(exception))
 }
 
-case class ProducerClosed()            extends RuntimeException("Producer is closing, not accepting writes") with GHThrowable
-case class GrpcError(cause: Throwable) extends RuntimeException(cause) with GHThrowable
+case class ProducerClosed()            extends RuntimeException("Producer is closing, not accepting writes")
+case class GrpcError(cause: Throwable) extends RuntimeException(cause)
