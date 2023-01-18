@@ -1,6 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer.domain
 
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.greyhound.visibilityfilter.GHThrowable
 import zio._
 
 /**
@@ -146,7 +147,7 @@ trait RecordHandler[-R, +E, K, V] {
     }
 }
 
-case class SerializationError(cause: Throwable) extends RuntimeException(cause)
+case class SerializationError(cause: Throwable) extends RuntimeException(cause) with GHThrowable
 
 object RecordHandler {
   def apply[R, E, K, V](f: ConsumerRecord[K, V] => ZIO[R, E, Any]): RecordHandler[R, E, K, V] = {
