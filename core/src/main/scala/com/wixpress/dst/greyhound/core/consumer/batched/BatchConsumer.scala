@@ -6,7 +6,6 @@ import com.wixpress.dst.greyhound.core.consumer.{EventLoopExposedState => _, _}
 import com.wixpress.dst.greyhound.core.consumer.domain.{BatchRecordHandler, ConsumerRecordBatch, ConsumerSubscription, Decryptor, NoOpDecryptor}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Metadata, Offset, OffsetAndMetadata, TopicPartition}
-import com.wixpress.greyhound.visibilityfilter.GHThrowable
 import zio.{Chunk, Promise, RIO, Ref, UIO, URIO}
 
 import scala.reflect.ClassTag
@@ -199,4 +198,4 @@ object BatchRetryConfig {
 }
 
 case class BatchResubscribeTimeout(resubscribeTimeout: zio.Duration, subscription: ConsumerSubscription)
-    extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription") with GHThrowable
+    extends RuntimeException(s"Resubscribe timeout (${resubscribeTimeout.getSeconds} s) for $subscription")
