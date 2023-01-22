@@ -30,7 +30,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
     producedCalled = true
     ZIO.log(s"produced record: $r")
   }
-  val sidecarService: SidecarService = new SidecarService(DefaultRegister, onProduceListener)
+  val sidecarService: SidecarService = new SidecarService(DefaultRegister, onProduceListener, kafkaAddress)
 
 
   override def spec: Spec[TestEnvironment with Scope, Any] =
@@ -38,9 +38,9 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
 
       test("register a sidecar user") {
         for {
-          _ <- sidecarService.register(RegisterRequest(localHost, "4567"))
+          _ <- sidecarService.register(RegisterRequest(localhost, "4567"))
           db <- DefaultRegister.get
-        } yield assert(db.host)(equalTo(HostDetails(localHost, 4567)))
+        } yield assert(db.host)(equalTo(HostDetails(localhost, 4567)))
       },
 
       test("create new topic") {
@@ -48,7 +48,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           context <- ZIO.service[TestContext]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
           db <- DefaultRegister.get
-          adminClient <- AdminClient.make(AdminClientConfig(db.kafkaAddress))
+          adminClient <- AdminClient.make(AdminClientConfig(kafkaAddress))
           topicExist <- adminClient.topicExists(context.topicName)
         } yield assert(topicExist)(equalTo(true))
       },
@@ -68,7 +68,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           context <- ZIO.service[TestContext]
           sidecarUser <- ZIO.service[SidecarUserServiceTest]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
-          _ <- sidecarService.register(RegisterRequest(localHost, "9100"))
+          _ <- sidecarService.register(RegisterRequest(localhost, "9100"))
           _ <- sidecarService.startConsuming(StartConsumingRequest(Seq(Consumer("1", "group", context.topicName))))
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
           records <- sidecarUser.collectedRecords.get.delay(6.seconds)

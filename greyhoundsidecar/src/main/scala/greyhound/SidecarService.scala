@@ -1,13 +1,18 @@
 package greyhound
 
-import com.wixpress.dst.greyhound.core.producer.ProducerRecord
+import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
 import zio.{IO, Scope, UIO, ZIO, ZLayer}
 
-class SidecarService(register: Register.Service, onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit) extends RGreyhoundSidecar[Any] {
+class SidecarService(register: Register.Service,
+                     onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit,
+                     kafkaAddress: String
+                    ) extends RGreyhoundSidecar[Any] {
+
+  private val producer = Producer.make(ProducerConfig(kafkaAddress, onProduceListener = onProduceListener))
 
   override def register(request: RegisterRequest): IO[Status, RegisterResponse] =
     register0(request)
@@ -27,8 +32,8 @@ class SidecarService(register: Register.Service, onProduceListener: ProducerReco
 
   private def produce0(request: ProduceRequest) =
     for {
-      kafkaAddress <- register.get.map(_.kafkaAddress)
-      _ <- Produce(request, kafkaAddress, onProduceListener).tapError(e => zio.Console.printLine(e))
+      producer <- producer
+      _ <- Produce(request, producer).tapError(e => zio.Console.printLine(e))
     } yield ()
 
   override def createTopics(request: CreateTopicsRequest): IO[Status, CreateTopicsResponse] =
@@ -39,7 +44,6 @@ class SidecarService(register: Register.Service, onProduceListener: ProducerReco
 
   private def createTopics0(request: CreateTopicsRequest) = ZIO.scoped {
     for {
-      kafkaAddress <- register.get.map(_.kafkaAddress)
       client <- SidecarAdminClient.admin(kafkaAddress)
       _ <- client.createTopics(request.topics.toSet.map(mapTopic)).provideSomeLayer(DebugMetrics.layer)
     } yield ()
@@ -56,10 +60,10 @@ class SidecarService(register: Register.Service, onProduceListener: ProducerReco
 
   private def startConsuming0(request: StartConsumingRequest) =
     ZIO.foreach(request.consumers) { consumer =>
-      CreateConsumer(consumer.topic, consumer.group, consumer.retryStrategy).forkDaemon
+      CreateConsumer(consumer.topic, consumer.group, consumer.retryStrategy, kafkaAddress).forkDaemon
     } *>
       ZIO.foreach(request.batchConsumers) { consumer =>
-        CreateBatchConsumer(consumer.topic, consumer.group, consumer.retryStrategy).forkDaemon
+        CreateBatchConsumer(consumer.topic, consumer.group, consumer.retryStrategy, kafkaAddress).forkDaemon
       }
 
 }
