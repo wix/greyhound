@@ -15,3 +15,18 @@ class SidecarUserServiceTest(consumedTopics: Ref[Seq[HandleMessagesRequest]]) ex
 
 
 }
+
+class FailOneSidecarUserServiceTest(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends RGreyhoundSidecarUser[Any] {
+
+  var fail = true
+
+  def collectedRecords: Ref[Seq[HandleMessagesRequest]] = consumedTopics
+
+  override def handleMessages(request: HandleMessagesRequest): ZIO[Any, Status, HandleMessagesResponse] =
+    if (fail) {
+      fail = false
+      ZIO.fail(Status.DATA_LOSS)
+    } else {
+      ZIO.succeed(HandleMessagesResponse())
+    }
+}

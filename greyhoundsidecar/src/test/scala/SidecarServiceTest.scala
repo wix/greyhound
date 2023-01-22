@@ -1,6 +1,7 @@
 
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
+import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest.Target
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
@@ -19,6 +20,10 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
   val sidecarUserLayer: ZLayer[Any, Nothing, SidecarUserServiceTest] = ZLayer.fromZIO( for {
     ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
   } yield new SidecarUserServiceTest(ref))
+
+  val failingOnceSidecarUserLayer: ZLayer[Any, Nothing, FailOneSidecarUserServiceTest] = ZLayer.fromZIO( for {
+    ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
+  } yield new FailOneSidecarUserServiceTest(ref))
 
   val sidecarUserServer: ZIO[Any with Scope with SidecarUserServiceTest, Throwable, Nothing] = for {
     user <- ZIO.service[SidecarUserServiceTest]
@@ -76,12 +81,47 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
         } yield assert(records.nonEmpty)(equalTo(true))
       } @@ TestAspect.withLiveClock,
 
+//      test(" fail consume without retry policy") {
+//        for {
+//          //TODO: try to init sidecarUser for all tests scope
+//          fork <- sidecarUserServer.forkDaemon
+//          context <- ZIO.service[TestContext]
+//          sidecarUser <- ZIO.service[SidecarUserServiceTest]
+//          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+//          _ <- sidecarService.register(RegisterRequest(localHost, "9100"))
+//          request = StartConsumingRequest(Seq(
+//            Consumer("1", "group", context.topicName, RetryStrategy.NoRetry(NoRetry()))))
+//          _ <- sidecarService.startConsuming(request)
+//          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
+//          records <- sidecarUser.collectedRecords.get.delay(6.seconds)
+//          _ <- fork.interrupt
+//        } yield assert(records.isEmpty)(equalTo(true))
+//      },
+//
+//      test(" retry consume") {
+//        for {
+//          //TODO: try to init sidecarUser for all tests scope
+//          fork <- sidecarUserServer.forkDaemon
+//          context <- ZIO.service[TestContext]
+//          sidecarUser <- ZIO.service[SidecarUserServiceTest]
+//          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+//          _ <- sidecarService.register(RegisterRequest(localHost, "9100"))
+//          request = StartConsumingRequest(Seq(
+//            Consumer("1", "group", context.topicName, RetryStrategy.Blocking(BlockingRetry(100)))))
+//          _ <- sidecarService.startConsuming(request)
+//          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
+//          records <- sidecarUser.collectedRecords.get.delay(6.seconds)
+//          _ <- fork.interrupt
+//        } yield assert(records.nonEmpty)(equalTo(true))
+//      }
+
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
-      testContextLayer ++
-      ZLayer.succeed(zio.Scope.global) ++
-      sidecarUserLayer) @@
-      runKafka
+        testContextLayer ++
+        ZLayer.succeed(zio.Scope.global) ++
+        sidecarUserLayer
+        // failingOnceSidecarUserLayer
+    ) @@ runKafka
 }
 
 
