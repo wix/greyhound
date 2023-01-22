@@ -2,9 +2,9 @@ package support
 
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import greyhound.DebugMetrics
-import zio.{Fiber, ZIO, ZLayer}
+import zio.ZLayer
 import zio.test.TestAspect
-import zio.test.TestAspect.{afterAll, beforeAll}
+import zio.test.TestAspect.beforeAll
 
 trait KafkaTestSupport {
 
