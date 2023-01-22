@@ -15,13 +15,13 @@ trait SidecarTestSupport {
 
   object DefaultRegister extends Register {
 
-    private var db = HostDetails("", 0)
+    private var hostDetails = HostDetails("", 0)
 
     override def add(host: String, port: Int): Task[Unit] = {
-      db = db.copy(host, port)
+      hostDetails = hostDetails.copy(host, port)
       ZIO.unit
     }
 
-    override val get: UIO[HostDetails] = ZIO.succeed(db)
+    override val get: UIO[HostDetails] = ZIO.succeed(hostDetails)
   }
 }
