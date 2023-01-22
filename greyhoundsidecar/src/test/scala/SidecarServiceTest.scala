@@ -81,8 +81,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
       testContextLayer ++
       ZLayer.succeed(zio.Scope.global) ++
       sidecarUserLayer) @@
-      runKafka @@
-      closeKafka
+      runKafka
 }
 
 
