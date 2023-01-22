@@ -21,9 +21,11 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
     ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
   } yield new SidecarUserServiceTest(ref))
 
-  val failingOnceSidecarUserLayer: ZLayer[Any, Nothing, FailOneSidecarUserServiceTest] = ZLayer.fromZIO( for {
-    ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
-  } yield new FailOneSidecarUserServiceTest(ref))
+//  val failingOnceSidecarUserLayer: ZLayer[Any, Nothing, FailOneSidecarUserServiceTest] =
+//    ZLayer.fromZIO {
+//      Ref.make[Seq[HandleMessagesRequest]](Nil)
+//        .map(new FailOneSidecarUserServiceTest(_))
+//    }
 
   val sidecarUserServer: ZIO[Any with Scope with SidecarUserServiceTest, Throwable, Nothing] = for {
     user <- ZIO.service[SidecarUserServiceTest]
