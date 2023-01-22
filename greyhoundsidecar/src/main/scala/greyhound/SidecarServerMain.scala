@@ -15,7 +15,7 @@ object SidecarServerMain extends ServerMain {
   override def services: ServiceList[Any] = ServiceList.addScoped {
     for {
       kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(throw new RuntimeException("kafka address is not configured")))
-      dbRef        <- Ref.make(Database(HostDetails("localhost", Ports.RegisterPort)))
+      dbRef        <- Ref.make(HostDetails("localhost", Ports.RegisterPort))
       register     = RegisterLive(dbRef)
       _             = println("""   ____                _                           _
                     |  / ___|_ __ ___ _   _| |__   ___  _   _ _ __   __| |

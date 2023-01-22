@@ -39,15 +39,14 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
       test("register a sidecar user") {
         for {
           _ <- sidecarService.register(RegisterRequest(localhost, "4567"))
-          db <- DefaultRegister.get
-        } yield assert(db.host)(equalTo(HostDetails(localhost, 4567)))
+          hostDetails <- DefaultRegister.get
+        } yield assert(hostDetails)(equalTo(HostDetails(localhost, 4567)))
       },
 
       test("create new topic") {
         for {
           context <- ZIO.service[TestContext]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
-          db <- DefaultRegister.get
           adminClient <- AdminClient.make(AdminClientConfig(kafkaAddress))
           topicExist <- adminClient.topicExists(context.topicName)
         } yield assert(topicExist)(equalTo(true))

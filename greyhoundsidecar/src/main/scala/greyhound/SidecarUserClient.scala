@@ -13,7 +13,7 @@ object SidecarUserClient extends {
     // this val construction in needed for IntelliJ to understand the type - god knows why???
     val managedChannel: ZManagedChannel[Any] = ZManagedChannel[Any](
       ManagedChannelBuilder
-        .forAddress(db.host.host, db.host.port)
+        .forAddress(db.host, db.port)
         .usePlaintext()
     )
 
