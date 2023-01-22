@@ -1,0 +1,11 @@
+package(default_visibility = ["//visibility:public"])
+
+java_binary(
+    name = "test-agent",
+    testonly = 1,
+    srcs = [
+        "TestsJavaAgent.java",
+    ],
+    deploy_manifest_lines = ["Premain-Class: com.wixpress.agent.TestsJavaAgent"],
+    main_class = "com.wixpress.agent.ResourceJavaAgent",
+)
