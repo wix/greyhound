@@ -15,10 +15,8 @@ object SidecarServerMain extends ServerMain {
   override def services: ServiceList[Any] = ServiceList.addScoped {
     for {
       kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(throw new RuntimeException("kafka address is not configured")))
-      dbRef        <- Ref.make(Database(HostDetails("localhost", Ports.RegisterPort), ""))
+      dbRef        <- Ref.make(Database(HostDetails("localhost", Ports.RegisterPort)))
       register     = RegisterLive(dbRef)
-      _            <- register.updateKafkaAddress(kafkaAddress)
-      db           <- register.get
       _             = println("""   ____                _                           _
                     |  / ___|_ __ ___ _   _| |__   ___  _   _ _ __   __| |
                     | | |  _| '__/ _ \ | | | '_ \ / _ \| | | | '_ \ / _` |
@@ -29,8 +27,8 @@ object SidecarServerMain extends ServerMain {
                     |  ___) | | (_| |  __/ (_| (_| | |
                     | |____/|_|\__,_|\___|\___\__,_|_|
                     |""".stripMargin)
-      _             = println(s"~~~ INIT Sidecar Server with kafka address ${db.kafkaAddress}")
-    } yield new SidecarService(register)
+      _             = println(s"~~~ INIT Sidecar Server with kafka address ${kafkaAddress}")
+    } yield new SidecarService(register, kafkaAddress = kafkaAddress)
   }
 
   override def welcome: ZIO[Any, Throwable, Unit] = super.welcome *> zio.Console.printLine(s"SidecarServerMain with port $port")
