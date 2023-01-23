@@ -13,9 +13,8 @@ import scala.concurrent.duration.DurationInt
 
 object CreateBatchConsumer {
 
-  def apply(topic: String, group: String, retryStrategy: RetryStrategy) =
+  def apply(topic: String, group: String, retryStrategy: RetryStrategy, kafkaAddress: String) =
     for {
-      kafkaAddress  <- Register.get.map(_.kafkaAddress)
       managedClient <- SidecarUserClient.managed
       _             <- ZIO.scoped { // TODO: Fix scoped to be like CreateConsumer + add appropriate test
         managedClient

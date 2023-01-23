@@ -15,9 +15,8 @@ import scala.concurrent.duration.DurationInt
 
 object CreateConsumer {
 
-  def apply(topic: String, group: String, retryStrategy: RetryStrategy) =
+  def apply(topic: String, group: String, retryStrategy: RetryStrategy, kafkaAddress: String) =
     for {
-      kafkaAddress  <- Register.get.map(_.kafkaAddress)
       managedClient <- SidecarUserClient.managed
       _             <- managedClient
           .flatMap(client =>

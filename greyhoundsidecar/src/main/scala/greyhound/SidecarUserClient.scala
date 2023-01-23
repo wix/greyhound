@@ -9,11 +9,11 @@ import zio.{Scope, ZIO}
 object SidecarUserClient extends {
 
 
-  val channel: ZIO[Register, Nothing, ZManagedChannel[Any]] = Register.get.map { db =>
+  val channel: ZIO[Register, Nothing, ZManagedChannel[Any]] = Register.get.map { hostDetails =>
     // this val construction in needed for IntelliJ to understand the type - god knows why???
     val managedChannel: ZManagedChannel[Any] = ZManagedChannel[Any](
       ManagedChannelBuilder
-        .forAddress(db.host.host, db.host.port)
+        .forAddress(hostDetails.host, hostDetails.port)
         .usePlaintext()
     )
 
