@@ -24,4 +24,6 @@ package object core {
   case class GroupTopicPartition(group: String, topicPartition: TopicPartition) {
     override def toString = s"[$group, ${topicPartition.topic}, ${topicPartition.partition}]"
   }
+
+  trait GHThrowable extends Throwable
 }
