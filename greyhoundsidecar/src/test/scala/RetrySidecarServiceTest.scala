@@ -15,6 +15,7 @@ import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
 
+// TODO: merge this test suite with SidecarServiceTest when multi-tenancy is implemented
 object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
 
   override val kafkaPort: Int = 6669
