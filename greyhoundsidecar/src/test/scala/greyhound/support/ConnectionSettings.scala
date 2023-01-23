@@ -1,4 +1,4 @@
-package support
+package greyhound.support
 
 trait ConnectionSettings {
   val kafkaPort: Int

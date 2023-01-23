@@ -1,14 +1,15 @@
+package greyhound
 
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
-import greyhound.SidecarService
-import sidecaruser._
-import support.{ConnectionSettings, KafkaTestSupport, SidecarTestSupport, TestContext}
-import zio._
+import greyhound.sidecaruser.{TestServer, TestSidecarUser}
+import greyhound.support.{ConnectionSettings, KafkaTestSupport, SidecarTestSupport, TestContext}
 import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
-import zio.test._
 import zio.test.junit.JUnitRunnableSpec
+import zio.test.{Spec, TestAspect, TestEnvironment, assert}
+import zio.{Ref, Runtime, Scope, ZIO, ZLayer}
+import zio._
 
 object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
 
@@ -16,7 +17,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
   override val zooKeeperPort: Int = 2188
   override val sideCarUserGrpcPort: Int = 9108
 
-  val testSidecarUserLayer: ZLayer[Any, Nothing, TestSidecarUser] = ZLayer.fromZIO( for {
+  val testSidecarUserLayer: ZLayer[Any, Nothing, TestSidecarUser] = ZLayer.fromZIO(for {
     ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
   } yield new TestSidecarUser(ref))
 
