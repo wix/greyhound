@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
 import greyhound.SidecarService
 import sidecaruser._
-import support.{KafkaTestSupport, SidecarTestSupport, TestContext}
+import support.{ConnectionSettings, KafkaTestSupport, SidecarTestSupport, TestContext}
 import zio._
 import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
@@ -17,7 +17,11 @@ import zio.test.junit.JUnitRunnableSpec
 import java.util.concurrent.TimeUnit
 
 
-object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport {
+object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
+
+  override val kafkaPort: Int = 6669
+  override val zooKeeperPort: Int = 2189
+  override val sideCarUserGrpcPort: Int = 9109
 
   val sidecarUserLayer: ZLayer[Any, Nothing, FailOnceSidecarUserService] = ZLayer.fromZIO(for {
     messageSinkRef <- Ref.make[Seq[HandleMessagesRequest]](Nil)
@@ -87,11 +91,5 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
         ZLayer.succeed(zio.Scope.global) ++
         sidecarUserLayer ++
         sidecarServiceLayer ++
-        sidecarUserServerLayer) @@ TestAspect.withLiveClock @@ runKafka @@ sequential
+        sidecarUserServerLayer) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
 }
-
-
-
-
-
-

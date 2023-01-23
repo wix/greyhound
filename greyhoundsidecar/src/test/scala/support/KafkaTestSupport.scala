@@ -7,16 +7,11 @@ import zio.test.TestAspect
 import zio.test.TestAspect.beforeAll
 
 trait KafkaTestSupport {
+  def runKafka(kafkaPort: Int, zooKeeperPort: Int): TestAspect[Nothing, Any, Throwable, Any] = {
+    val kafkaConfig: ManagedKafkaConfig = ManagedKafkaConfig(kafkaPort, zooKeeperPort, Map.empty)
+    val managedKafka = ManagedKafka.make(kafkaConfig).interruptible.forkScoped
+      .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(zio.Scope.global))
 
-  val kafkaPort = 6667
-  val zooKeeperPort = 2181
-
-  val kafkaConfig: ManagedKafkaConfig = ManagedKafkaConfig(kafkaPort, zooKeeperPort, Map.empty)
-  val managedKafka = ManagedKafka.make(kafkaConfig).interruptible.forkScoped
-    .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(zio.Scope.global))
-
-
-  def runKafka: TestAspect[Nothing, Any, Throwable, Any] = {
     beforeAll(zio.Console.printLine("staring kafka!!!").ignore *> managedKafka)
   }
 }
