@@ -1,4 +1,4 @@
-package support
+package greyhound.support
 
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest.Target
 

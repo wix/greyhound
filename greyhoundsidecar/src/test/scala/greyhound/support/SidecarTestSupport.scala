@@ -1,4 +1,4 @@
-package support
+package greyhound.support
 
 import greyhound.{HostDetails, RegisterLive, SidecarService}
 import zio.{Ref, ULayer, ZLayer}

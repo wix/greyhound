@@ -1,4 +1,4 @@
-package support
+package greyhound.support
 
 import com.wixpress.dst.greyhound.testkit.{ManagedKafka, ManagedKafkaConfig}
 import greyhound.DebugMetrics
