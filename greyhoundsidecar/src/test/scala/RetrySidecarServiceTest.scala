@@ -14,8 +14,6 @@ import zio.test.TestAspect.sequential
 import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
-import java.util.concurrent.TimeUnit
-
 
 object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
 
@@ -38,20 +36,12 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
   }
   val sidecarServiceLayer = ZLayer.succeed(new SidecarService(DefaultRegister, onProduceListener, kafkaAddress))
 
-  private def log(message: String) = {
-    for {
-      time <- zio.Clock.currentTime(TimeUnit.MILLISECONDS)
-      _ <- zio.Console.printLine(s"Current time: ${time}, message: ${message}").orDie
-    } yield ()
-  }
-
   override def spec: Spec[TestEnvironment with Scope, Any] =
     suite("sidecar service")(
       test("fail when retry strategy is NoRetry") {
         for {
           context <- ZIO.service[TestContext]
           sidecarService <- ZIO.service[SidecarService]
-          _ <- ZIO.attempt(println(s"NoRetry topic name is ${context.topicName}"))
           failOnceSidecarUserService <- ZIO.service[FailOnceSidecarUserService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
           _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
@@ -59,7 +49,7 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
             Consumer("1", "group", context.topicName, RetryStrategy.NoRetry(NoRetry()))))
           _ <- sidecarService.startConsuming(request)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
-          records <- failOnceSidecarUserService.collectedRecords.get.delay(6.seconds)
+          records <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
         } yield assert(records.isEmpty)(equalTo(true))
       },
 
@@ -67,7 +57,6 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
         for {
           context <- ZIO.service[TestContext]
           sidecarService <- ZIO.service[SidecarService]
-          _ <- ZIO.attempt(println(s"BlockingRetry with interval topic name is ${context.topicName}"))
           failOnceSidecarUserService <- ZIO.service[FailOnceSidecarUserService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
           _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
@@ -75,13 +64,9 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
             Consumer("1", "group", context.topicName, RetryStrategy.Blocking(BlockingRetry(10000)))))
           _ <- sidecarService.startConsuming(request)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
-          _ <- log("Before recordsBeforeInterval")
-          recordsBeforeInterval <- failOnceSidecarUserService.collectedRecords.get.delay(6.seconds)
-          _ <- log("Before assert for recordsBeforeInterval")
+          recordsBeforeInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
           _ <- assert(recordsBeforeInterval.isEmpty)(equalTo(true))
-          _ <- log("Before recordsAfterInterval")
-          recordsAfterInterval <- failOnceSidecarUserService.collectedRecords.get.delay(10.seconds)
-          _ <- log("Before assert for recordsAfterInterval")
+          recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
         } yield assert(recordsAfterInterval.nonEmpty)(equalTo(true))
       }
 
@@ -92,4 +77,8 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
         sidecarUserLayer ++
         sidecarServiceLayer ++
         sidecarUserServerLayer) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+
+  private def getSuccessfullyHandledRecords(failOnceSidecarUserService: FailOnceSidecarUserService, delay: Int) = {
+    failOnceSidecarUserService.collectedRecords.get.delay(delay.seconds)
+  }
 }
