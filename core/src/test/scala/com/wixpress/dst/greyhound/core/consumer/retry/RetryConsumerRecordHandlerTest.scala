@@ -14,19 +14,22 @@ import com.wixpress.dst.greyhound.core.testkit._
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import org.specs2.specification.core.Fragment
 import zio._
-import zio.blocking.Blocking
-import zio.clock.Clock
-import zio.duration._
-import zio.random.{nextBytes, nextIntBounded, Random}
-import zio.test.environment.{TestClock, TestRandom}
+import zio.Clock
+import zio.Clock.ClockLive
+import zio.Random
+import zio.Random.{nextBytes, nextIntBounded}
+import zio.managed.UManaged
+import zio.test.TestClock
 
-class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blocking with TestRandom with TestClock with TestMetrics] {
+import scala.concurrent.TimeoutException
 
-  override def env =
+class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics] {
+
+  override def env: UManaged[ZEnvironment[TestClock with TestMetrics]] =
     for {
-      env         <- test.environment.testEnvironment.build
-      testMetrics <- TestMetrics.make
-    } yield env ++ testMetrics
+      testMetrics <- TestMetrics.makeManagedEnv
+      clock       <- testClock
+    } yield testMetrics ++ clock
 
   "withRetries" should {
     "produce a message to the retry topic after failure" in {
@@ -149,7 +152,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
                             _.contains(NoRetryOnNonRetryableFailure(tpartition, offset, cause))
                           )
         _              <- adjustTestClockFor(1.second)
-        handleCount    <- handleCountRef.get.delay(100.milliseconds).provideSomeLayer(Clock.live)
+        handleCount    <- handleCountRef.get.delay(100.milliseconds).withClock(ClockLive)
       } yield handleCount === 1
     }
 
@@ -365,10 +368,11 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
 
     "on blocking retry, if failing to produce, retry until successful" in {
       val produceRetryBackoff = 100.millis
+
       for {
         producerFails   <- Ref.make(true)
         producer        <-
-          FakeProducer.make(beforeComplete = r => ZIO.whenM(producerFails.get)(ZIO.fail(ProducerError.from(new RuntimeException))).as(r))
+          FakeProducer.make(beforeComplete = r => ZIO.whenZIO(producerFails.get)(ZIO.fail(ProducerError.from(new RuntimeException))).as(r))
         topic           <- randomTopicName
         blockingState   <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
         retryHandler     = RetryRecordHandler.withRetries(
@@ -383,116 +387,125 @@ class RetryConsumerRecordHandlerTest extends BaseTest[Random with Clock with Blo
         key             <- bytes
         value           <- bytes
         handling        <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)).forkDaemon
+        _               <- TestClock.adjust(201.millis)
         _               <- producer.records.takeN(3)
         _               <- producerFails.set(false)
+        _               <- TestClock.adjust(100.millis)
         _               <- handling.join.withTimeout(10.seconds)
         produceAttempts <- producer.producedCount
       } yield {
         produceAttempts === 4
       }
-    }.updateService[Clock.Service](_ => Clock.Service.live)
+    }
 
     "on consumer or worker shutdown, interrupt wait for non-blocking retry" in {
-      for {
-        producer      <- FakeProducer.make
-        topic         <- randomTopicName
-        blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        retryHelper    = alwaysBackOffRetryHelper(3.seconds)
-        handling      <- AwaitShutdown.makeManaged.use { awaitShutdown =>
-                           val retryHandler = RetryRecordHandler.withRetries(
-                             group,
-                             failingHandler,
-                             ZRetryConfig.nonBlockingRetry(1.second),
-                             producer,
-                             Topics(Set(topic)),
-                             blockingState,
-                             retryHelper,
-                             awaitShutdown = _ => UIO(awaitShutdown)
-                           )
-                           for {
-                             key      <- bytes
-                             value    <- bytes
-                             handling <- retryHandler
-                                           .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
-                                           .forkDaemon
-                           } yield handling
-                         }
-        // we expect for the backoff sleep to be interrupted
-        result        <- handling.join.resurrect.either.withTimeout(10.seconds)
-      } yield {
-        result must beLeft(beAnInstanceOf[InterruptedException])
-      }
+      ZIO
+        .scoped(for {
+          producer      <- FakeProducer.make
+          topic         <- randomTopicName
+          blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+          retryHelper    = alwaysBackOffRetryHelper(3.seconds)
+          handling      <- AwaitShutdown.makeManaged.flatMap { awaitShutdown =>
+                             val retryHandler = RetryRecordHandler.withRetries(
+                               group,
+                               failingHandler,
+                               ZRetryConfig.nonBlockingRetry(1.second),
+                               producer,
+                               Topics(Set(topic)),
+                               blockingState,
+                               retryHelper,
+                               awaitShutdown = _ => ZIO.succeed(awaitShutdown)
+                             )
+                             for {
+                               key      <- bytes
+                               value    <- bytes
+                               handling <- retryHandler
+                                             .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+                                             .forkDaemon
+                             } yield handling
+                           }
+          // we expect for the backoff sleep to be interrupted
+          result        <- handling.join.resurrect.withTimeout(2.seconds).either
+        } yield {
+          result must beLeft
+        })
+        .withClock(ClockLive)
     }
+
+    "on shutdown, interrupt wait on blocking backoff" in {
+      ZIO
+        .scoped(for {
+          producer       <- FakeProducer.make
+          topic          <- randomTopicName
+          handleCountRef <- Ref.make(0)
+          blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+          handling       <- AwaitShutdown.makeManaged.flatMap { awaitShutdown =>
+                              val retryHandler = RetryRecordHandler.withRetries(
+                                group,
+                                failingHandlerWith(handleCountRef),
+                                ZRetryConfig.finiteBlockingRetry(10.seconds),
+                                producer,
+                                Topics(Set(topic)),
+                                blockingState,
+                                FakeRetryHelper(topic),
+                                _ => ZIO.succeed(awaitShutdown)
+                              )
+                              for {
+                                key      <- bytes
+                                value    <- bytes
+                                handling <- retryHandler
+                                              .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+                                              .forkDaemon
+                              } yield handling
+                            }
+          // we expect for the backoff sleep to be interrupted
+          result         <- handling.join.resurrect.withTimeout(5.seconds).either
+          handlerCalled  <- handleCountRef.get
+        } yield {
+          result must beLeft
+          handlerCalled === 1
+        })
+        .withClock(ClockLive)
+    }
+
+    "on shutdown, not retry forever on failing producer" in {
+      ZIO
+        .scoped(for {
+          producer      <- FakeProducer.make.map(_.failing)
+          topic         <- randomTopicName
+          blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
+          handling      <- AwaitShutdown.makeManaged.flatMap { awaitShutdown =>
+                             val retryHandler = RetryRecordHandler.withRetries(
+                               group,
+                               failingHandler,
+                               ZRetryConfig.nonBlockingRetry(1.second),
+                               producer,
+                               Topics(Set(topic)),
+                               blockingState,
+                               FakeRetryHelper(topic),
+                               _ => ZIO.succeed(awaitShutdown)
+                             )
+                             for {
+                               key      <- bytes
+                               value    <- bytes
+                               handling <- retryHandler
+                                             .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+                                             .forkDaemon
+                             } yield handling
+                           }
+          // we expect produce retries to be interrupted
+          result        <- handling.join.resurrect.withTimeout(10.seconds).either
+        } yield {
+          result must beLeft
+        })
+        .withClock(ClockLive)
+    }
+
   }
-
-  "on shutdown, interrupt wait on blocking backoff" in {
-    for {
-      producer       <- FakeProducer.make
-      topic          <- randomTopicName
-      handleCountRef <- Ref.make(0)
-      blockingState  <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-      handling       <- AwaitShutdown.makeManaged.use { awaitShutdown =>
-                          val retryHandler = RetryRecordHandler.withRetries(
-                            group,
-                            failingHandlerWith(handleCountRef),
-                            ZRetryConfig.finiteBlockingRetry(10.seconds),
-                            producer,
-                            Topics(Set(topic)),
-                            blockingState,
-                            FakeRetryHelper(topic),
-                            _ => UIO(awaitShutdown.tapShutdown(_ => UIO(println("interrupting await shutdown"))))
-                          )
-                          for {
-                            key      <- bytes
-                            value    <- bytes
-                            handling <- retryHandler
-                                          .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
-                                          .forkDaemon
-                          } yield handling
-                        }
-      // we expect for the backoff sleep to be interrupted
-      result         <- handling.join.resurrect.either.withTimeout(5.seconds)
-      handlerCalled  <- handleCountRef.get
-    } yield {
-      result must beLeft(beAnInstanceOf[InterruptedException])
-      handlerCalled === 1
-    }
-  }.updateService[Clock.Service](_ => Clock.Service.live)
-
-  "on shutdown, not retry forever on failing producer" in {
-    for {
-      producer      <- FakeProducer.make.map(_.failing)
-      topic         <- randomTopicName
-      blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-      handling      <- AwaitShutdown.makeManaged.use { awaitShutdown =>
-                         val retryHandler = RetryRecordHandler.withRetries(
-                           group,
-                           failingHandler,
-                           ZRetryConfig.nonBlockingRetry(1.second),
-                           producer,
-                           Topics(Set(topic)),
-                           blockingState,
-                           FakeRetryHelper(topic),
-                           _ => UIO(awaitShutdown)
-                         )
-                         for {
-                           key      <- bytes
-                           value    <- bytes
-                           handling <- retryHandler
-                                         .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
-                                         .forkDaemon
-                         } yield handling
-                       }
-      // we expect produce retries to be interrupted
-      result        <- handling.join.resurrect.either.withTimeout(10.seconds)
-    } yield {
-      result must beLeft(beAnInstanceOf[InterruptedException])
-    }
-  }.updateService[Clock.Service](_ => Clock.Service.live)
 
   private def adjustTestClockFor(duration: Duration, durationMultiplier: Double = 1) = {
     val steps: Int = (10 * durationMultiplier).toInt
-    ZIO.foreach_(1 to steps)(_ => TestClock.adjust(duration.*(0.1)))
+    ZIO.foreachDiscard(1 to steps)(_ => TestClock.adjust(duration.*(0.1)))
   }
 }
 
@@ -513,7 +526,7 @@ object RetryConsumerRecordHandlerTest {
   def randomAlphaChar = {
     val low  = 'A'.toInt
     val high = 'z'.toInt + 1
-    random.nextIntBetween(low, high).map(_.toChar)
+    Random.nextIntBetween(low, high).map(_.toChar)
   }
 
   def randomStr = ZIO.collectAll(List.fill(6)(randomAlphaChar)).map(_.mkString)
@@ -524,8 +537,11 @@ object RetryConsumerRecordHandlerTest {
 
   def alwaysBackOffRetryHelper(backoff: Duration) = {
     new FakeNonBlockingRetryHelper {
-      override val topic: Topic                                                                                                = ""
-      override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = UIO(
+      override val topic: Topic = ""
+
+      override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
+        implicit trace: Trace
+      ): UIO[Option[RetryAttempt]] = ZIO.succeed(
         Some(RetryAttempt(topic, 1, Instant.now, backoff))
       )
     }

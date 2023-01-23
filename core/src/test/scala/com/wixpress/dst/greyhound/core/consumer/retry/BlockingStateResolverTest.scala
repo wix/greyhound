@@ -7,15 +7,15 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.{Headers, TopicPartition}
 import org.specs2.specification.core.Fragment
-import zio.test.environment.TestEnvironment
-import zio.{test, Ref, UIO}
+import zio.test.TestEnvironment
+import zio.{Ref, ZIO}
 
 class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundMetrics] {
 
   override def env =
     for {
-      env         <- test.environment.testEnvironment.build
-      testMetrics <- TestMetrics.make
+      env         <- testEnvironment
+      testMetrics <- TestMetrics.makeManagedEnv
     } yield env ++ testMetrics
 
   "BlockingStateResolver" should {
@@ -198,8 +198,8 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
         blockingState    <- Ref.make[Map[BlockingTarget, BlockingState]](Map(TopicPartitionTarget(tpartition) -> InternalBlocking))
 
         resolver = BlockingStateResolver(blockingState)
-        failed1 <- resolver.setBlockingState(IgnoreOnceFor(tpartition)).as(false).catchAll(_ => UIO(true))
-        failed2 <- resolver.setBlockingState(IgnoreOnceFor(anotherTPartition)).as(false).catchAll(_ => UIO(true))
+        failed1 <- resolver.setBlockingState(IgnoreOnceFor(tpartition)).as(false).catchAll(_ => ZIO.succeed(true))
+        failed2 <- resolver.setBlockingState(IgnoreOnceFor(anotherTPartition)).as(false).catchAll(_ => ZIO.succeed(true))
 
         updatedStateMap <- blockingState.get
         updatedState1    = updatedStateMap(TopicPartitionTarget(tpartition))

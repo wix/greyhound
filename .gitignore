@@ -7,5 +7,7 @@ bazel-*
 .ijwb
 .DS_Store
 .project/
-.bsp
-target
+.bsp/
+.metals/
+target/
+.vscode/

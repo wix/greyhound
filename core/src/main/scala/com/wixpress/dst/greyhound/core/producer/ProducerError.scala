@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.producer
 
 import org.apache.kafka.common.KafkaException
 import org.apache.kafka.common.errors._
-import zio.IO
+import zio.{IO, ZIO}
 
 sealed abstract class ProducerError(cause: Throwable) extends RuntimeException(s"${cause.getClass.getName}: ${cause.getMessage}", cause)
 
@@ -35,7 +35,7 @@ object ProducerError {
       case e                           => UnknownError(e)
     }
   }
-  def apply(exception: Throwable): IO[ProducerError, Nothing] = IO.fail(ProducerError.from(exception))
+  def apply(exception: Throwable): IO[ProducerError, Nothing] = ZIO.fail(ProducerError.from(exception))
 }
 
 case class ProducerClosed()            extends RuntimeException("Producer is closing, not accepting writes")

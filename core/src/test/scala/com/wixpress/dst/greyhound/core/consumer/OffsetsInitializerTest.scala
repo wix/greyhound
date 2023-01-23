@@ -123,7 +123,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       reported must contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
     }
 
-  abstract class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty) extends Scope {
+  class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty) extends Scope {
     private val metricsLogRef           = new AtomicReference(Seq.empty[GreyhoundMetric])
     def reported                        = metricsLogRef.get
     val timeout                         = Duration.ofMillis(123)
@@ -147,13 +147,13 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
 
     def randomOffsets(partitions: Set[TopicPartition]) = partitions.map(p => p -> randomInt.toLong).toMap
 
-    def givenCommittedOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration = timeout)(
+    def givenCommittedOffsets(partitions: Set[TopicPartition], timeout: zio.Duration = timeout)(
       result: Map[TopicPartition, Long]
     ) = {
       offsetOps.committed(partitions, timeout) returns result
     }
 
-    def givenEndOffsets(partitions: Set[TopicPartition], timeout: zio.duration.Duration = timeout)(result: Map[TopicPartition, Long]) = {
+    def givenEndOffsets(partitions: Set[TopicPartition], timeout: zio.Duration = timeout)(result: Map[TopicPartition, Long]) = {
       offsetOps.endOffsets(partitions, timeout) returns result
     }
 
@@ -166,7 +166,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       givenPositions(timeout, positions: _*)
     }
 
-    def givenPositions(timeout: zio.duration.Duration, positions: (TopicPartition, Long)*): Unit = {
+    def givenPositions(timeout: zio.Duration, positions: (TopicPartition, Long)*): Unit = {
       positions.foreach {
         case (tp, p) =>
           offsetOps.position(tp, timeout) returns p
