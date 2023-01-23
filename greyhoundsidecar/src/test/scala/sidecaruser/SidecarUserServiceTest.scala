@@ -10,8 +10,7 @@ class SidecarUserServiceTest(consumedTopics: Ref[Seq[HandleMessagesRequest]]) ex
   def collectedRecords: Ref[Seq[HandleMessagesRequest]] = consumedTopics
 
   override def handleMessages(request: HandleMessagesRequest): ZIO[Any, Status, HandleMessagesResponse] = {
-    zio.Console.printLine("!!!!!          consume          !!!!!").orElse(ZIO.fail(Status.RESOURCE_EXHAUSTED)) *> consumedTopics.update(_ :+ request) *>  ZIO.succeed(HandleMessagesResponse())
+    zio.Console.printLine("!!!!!          consume          !!!!!")
+      .orElseFail(Status.RESOURCE_EXHAUSTED) *> consumedTopics.update(_ :+ request) *>  ZIO.succeed(HandleMessagesResponse())
   }
-
-
 }
