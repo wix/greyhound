@@ -1,5 +1,4 @@
 load("@io_bazel_rules_scala//scala:scala.bzl", "setup_scala_testing_toolchain", "setup_scala_toolchain")
-load("@io_bazel_rules_scala//scala:providers.bzl", "declare_deps_provider")
 
 setup_scala_toolchain(
     name = "scala_toolchain",
@@ -52,57 +51,4 @@ setup_scala_testing_toolchain(
         "@maven//:org_specs2_specs2_junit_2_12",
     ],
     visibility = ["//visibility:public"],
-)
-
-declare_deps_provider(
-    name = "scala_compile_classpath_provider",
-    deps_id = "scala_compile_classpath",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@org_scala_lang_scala_compiler",
-        "@org_scala_lang_scala_library",
-        "@org_scala_lang_scala_reflect",
-    ],
-)
-
-declare_deps_provider(
-    name = "scala_library_classpath_provider",
-    deps_id = "scala_library_classpath",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@org_scala_lang_scala_library",
-        "@org_scala_lang_scala_reflect",
-    ],
-)
-
-declare_deps_provider(
-    name = "scala_macro_classpath_provider",
-    deps_id = "scala_macro_classpath",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@org_scala_lang_scala_library",
-        "@org_scala_lang_scala_reflect",
-    ],
-)
-
-
-declare_deps_provider(
-    name = "scala_xml_provider",
-    deps_id = "scala_xml",
-    visibility = ["//visibility:public"],
-    deps = ["@org_scala_lang_modules_scala_xml_2_12"],
-)
-
-declare_deps_provider(
-    name = "parser_combinators_provider",
-    deps_id = "parser_combinators",
-    visibility = ["//visibility:public"],
-    deps = ["@org_scala_lang_modules_scala_parser_combinators_2_12"],
-)
-
-config_setting(
-    name = "with_semanticdb",
-    define_values = {
-        "semanticdb": "on",
-    },
 )

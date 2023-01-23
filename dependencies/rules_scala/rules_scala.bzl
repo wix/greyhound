@@ -5,11 +5,11 @@ def rules_scala():
     if native.existing_rule("test_network_sandboxing") == None:
         download_network_sandboxing_according_to_os(name = "test_network_sandboxing")
 
-    rules_scala_version = "2ed3a13ed1c30bb097d124cb583752fddbfc2939"
+    rules_scala_version = "c96948c77825e3d5ce00b9711bff6c349477e37f"
 
     http_archive(
         name = "io_bazel_rules_scala",
-        sha256 = "e501289134b1ee6b36eadd466168f591c11499ea412f2af3d0ee16710474db21",
+        sha256 = "bd74d16491c79e9da1cbb2b07a35a0782dd7dfbe5acd8c749225db4e6a665944",
         strip_prefix = "rules_scala-%s" % rules_scala_version,
         type = "zip",
         url = "https://github.com/bazelbuild/rules_scala/archive/%s.zip" % rules_scala_version,
