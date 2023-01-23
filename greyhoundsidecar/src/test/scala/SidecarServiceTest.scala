@@ -10,6 +10,7 @@ import support.{KafkaTestSupport, SidecarTestSupport, TestContext}
 import zio._
 import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
+import zio.test.TestAspect.nonFlaky
 import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
@@ -73,7 +74,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           records <- sidecarUser.collectedRecords.get.delay(6.seconds)
           _ <- fork.interrupt
         } yield assert(records.nonEmpty)(equalTo(true))
-      } @@ TestAspect.withLiveClock,
+      } @@ TestAspect.withLiveClock @@ nonFlaky(10),
 
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
