@@ -1,5 +1,4 @@
 
-import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest.Target
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
@@ -14,7 +13,6 @@ import zio.test.TestAspect.sequential
 import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
-
 // TODO: merge this test suite with SidecarServiceTest when multi-tenancy is implemented
 object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
 
@@ -22,20 +20,15 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
   override val zooKeeperPort: Int = 2189
   override val sideCarUserGrpcPort: Int = 9109
 
-  val sidecarUserLayer: ZLayer[Any, Nothing, FailOnceSidecarUserService] = ZLayer.fromZIO(for {
+  val testSidecarUserLayer: ZLayer[Any, Nothing, FailOnceTestSidecarUser] = ZLayer.fromZIO(for {
     messageSinkRef <- Ref.make[Seq[HandleMessagesRequest]](Nil)
     shouldFailRef <- Ref.make[Boolean](true)
-  } yield new FailOnceSidecarUserService(messageSinkRef, shouldFailRef))
+  } yield new FailOnceTestSidecarUser(messageSinkRef, shouldFailRef))
 
-  val sidecarUserServerLayer = sidecarUserLayer >>> ZLayer.fromZIO(for {
-    user <- ZIO.service[FailOnceSidecarUserService]
-    _ <- new SidecarUserServiceTestServer(sideCarUserGrpcPort, user).myAppLogic.forkScoped
+  val sidecarUserServerLayer = testSidecarUserLayer >>> ZLayer.fromZIO(for {
+    user <- ZIO.service[FailOnceTestSidecarUser]
+    _ <- new TestServer(sideCarUserGrpcPort, user).myAppLogic.forkScoped
   } yield ())
-
-  val onProduceListener: ProducerRecord[Any, Any] => UIO[Unit] = (r: ProducerRecord[Any, Any]) => {
-    ZIO.log(s"produced record: $r")
-  }
-  val sidecarServiceLayer = ZLayer.succeed(new SidecarService(DefaultRegister, onProduceListener, kafkaAddress))
 
   override def spec: Spec[TestEnvironment with Scope, Any] =
     suite("sidecar service")(
@@ -43,13 +36,13 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
         for {
           context <- ZIO.service[TestContext]
           sidecarService <- ZIO.service[SidecarService]
-          failOnceSidecarUserService <- ZIO.service[FailOnceSidecarUserService]
-          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+          failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
           _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
           request = StartConsumingRequest(Seq(
-            Consumer("1", "group", context.topicName, RetryStrategy.NoRetry(NoRetry()))))
+            Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.NoRetry(NoRetry()))))
           _ <- sidecarService.startConsuming(request)
-          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           records <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
         } yield assert(records.isEmpty)(equalTo(true))
       },
@@ -58,13 +51,13 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
         for {
           context <- ZIO.service[TestContext]
           sidecarService <- ZIO.service[SidecarService]
-          failOnceSidecarUserService <- ZIO.service[FailOnceSidecarUserService]
-          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
+          failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
           _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
           request = StartConsumingRequest(Seq(
-            Consumer("1", "group", context.topicName, RetryStrategy.Blocking(BlockingRetry(10000)))))
+            Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.Blocking(BlockingRetry(10000)))))
           _ <- sidecarService.startConsuming(request)
-          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           recordsBeforeInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
           _ <- assert(recordsBeforeInterval.isEmpty)(equalTo(true))
           recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
@@ -75,11 +68,11 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
         testContextLayer ++
         ZLayer.succeed(zio.Scope.global) ++
-        sidecarUserLayer ++
-        sidecarServiceLayer ++
+        testSidecarUserLayer ++
+        sidecarServiceLayer(kafkaAddress) ++
         sidecarUserServerLayer) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
 
-  private def getSuccessfullyHandledRecords(failOnceSidecarUserService: FailOnceSidecarUserService, delay: Int) = {
-    failOnceSidecarUserService.collectedRecords.get.delay(delay.seconds)
+  private def getSuccessfullyHandledRecords(failOnceSidecarUserService: FailOnceTestSidecarUser, delay: Int) = {
+    failOnceSidecarUserService.collectedRecords.delay(delay.seconds)
   }
 }

@@ -28,3 +28,7 @@ case class RegisterLive(ref: Ref[HostDetails]) extends Register.Service {
 }
 
 case class HostDetails(host: String, port: Int)
+
+object HostDetails {
+  val Empty = HostDetails("", 0)
+}

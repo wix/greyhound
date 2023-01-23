@@ -1,21 +1,15 @@
 package support
 
-import greyhound.HostDetails
-import greyhound.Register.Register
-import zio.{Task, UIO, ULayer, ZIO, ZLayer}
+import greyhound.{HostDetails, RegisterLive, SidecarService}
+import zio.{Ref, ULayer, ZLayer}
 
 trait SidecarTestSupport {
   val testContextLayer: ULayer[TestContext] = ZLayer.succeed(TestContext.random)
 
-  object DefaultRegister extends Register {
-
-    private var hostDetails = HostDetails("", 0)
-
-    override def add(host: String, port: Int): Task[Unit] = {
-      hostDetails = hostDetails.copy(host, port)
-      ZIO.unit
-    }
-
-    override val get: UIO[HostDetails] = ZIO.succeed(hostDetails)
+  def sidecarServiceLayer(kafkaAddress: String) = ZLayer.fromZIO {
+    for {
+      ref <- Ref.make(HostDetails.Empty)
+      register = RegisterLive(ref)
+    } yield new SidecarService(register, kafkaAddress = kafkaAddress)
   }
 }
