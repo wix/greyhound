@@ -10,7 +10,7 @@ import support.{KafkaTestSupport, SidecarTestSupport, TestContext}
 import zio._
 import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
-import zio.test.TestAspect.{nonFlaky, sequential}
+import zio.test.TestAspect.sequential
 import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
