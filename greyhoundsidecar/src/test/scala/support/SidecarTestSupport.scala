@@ -5,14 +5,6 @@ import greyhound.Register.Register
 import zio.{Task, UIO, ULayer, ZIO, ZLayer}
 
 trait SidecarTestSupport {
-
-  val localhost = "localhost"
-
-  val kafkaAddress = "localhost:6667"
-
-  val sideCarUserGrpcPort = 9100
-
-
   val testContextLayer: ULayer[TestContext] = ZLayer.succeed(TestContext.random)
 
   object DefaultRegister extends Register {

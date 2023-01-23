@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
 import greyhound.{HostDetails, SidecarService}
 import sidecaruser._
-import support.{KafkaTestSupport, SidecarTestSupport, TestContext}
+import support.{ConnectionSettings, KafkaTestSupport, SidecarTestSupport, TestContext}
 import zio._
 import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
@@ -14,7 +14,11 @@ import zio.test._
 import zio.test.junit.JUnitRunnableSpec
 
 
-object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport {
+object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
+
+  override val kafkaPort: Int = 6668
+  override val zooKeeperPort: Int = 2188
+  override val sideCarUserGrpcPort: Int = 9108
 
   val sidecarUserLayer: ZLayer[Any, Nothing, SidecarUserServiceTest] = ZLayer.fromZIO( for {
     ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
@@ -22,7 +26,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
 
   val sidecarUserServer: ZIO[Any with Scope with SidecarUserServiceTest, Throwable, Nothing] = for {
     user <- ZIO.service[SidecarUserServiceTest]
-    userService <- new SidecarUserServiceTestServer(9100, user).myAppLogic
+    userService <- new SidecarUserServiceTestServer(sideCarUserGrpcPort, user).myAppLogic
   } yield userService
 
   var producedCalled = false
@@ -67,7 +71,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           context <- ZIO.service[TestContext]
           sidecarUser <- ZIO.service[SidecarUserServiceTest]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, Option(1)))))
-          _ <- sidecarService.register(RegisterRequest(localhost, "9100"))
+          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
           _ <- sidecarService.startConsuming(StartConsumingRequest(Seq(Consumer("1", "group", context.topicName))))
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.topicKey.map(Target.Key).getOrElse(Target.Empty)))
           records <- sidecarUser.collectedRecords.get.delay(6.seconds)
@@ -80,11 +84,5 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
       testContextLayer ++
       ZLayer.succeed(zio.Scope.global) ++
       sidecarUserLayer) @@
-      runKafka
+      runKafka(kafkaPort, zooKeeperPort)
 }
-
-
-
-
-
-
