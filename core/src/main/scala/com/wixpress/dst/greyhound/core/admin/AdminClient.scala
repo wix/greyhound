@@ -6,10 +6,10 @@ import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, Group, GroupTopicPartition, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GHThrowable, Group, GroupTopicPartition, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.clients.admin.{AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig, AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{InvalidTopicException, TopicExistsException, UnknownTopicOrPartitionException}
@@ -17,7 +17,6 @@ import zio.{IO, RIO, Scope, Trace, ZIO}
 import GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
 import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreated, TopicPartitionsIncreased}
-import com.wixpress.greyhound.visibilityfilter.GHThrowable
 import org.apache.kafka.common
 
 import scala.collection.JavaConverters._
@@ -107,7 +106,9 @@ object TopicPropertiesResult {
   def apply(topic: Topic, partitions: Int, configEntries: Seq[TopicConfigEntry], replications: Int): TopicProperties =
     TopicProperties(topic, partitions, configEntries, replications)
 
-  class TopicDoesnExistException(topic: String) extends RuntimeException(s"Failed to fetch properties for non existent topic: $topic") with GHThrowable
+  class TopicDoesnExistException(topic: String)
+      extends RuntimeException(s"Failed to fetch properties for non existent topic: $topic")
+      with GHThrowable
 }
 
 case class TopicConfigEntry(key: String, value: String, source: ConfigSource) {
