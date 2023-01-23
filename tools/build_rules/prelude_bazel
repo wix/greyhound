@@ -8,5 +8,5 @@ load(
 )
                            
 load("@io_bazel_rules_scala//scala:scala_import.bzl", "scala_import",)
-load("@wix_oss_infra//:tests.bzl", "specs2_unit_test", "specs2_ite2e_test", "specs2_mixed_test")
-load("@wix_oss_infra//:macros.bzl", "sources")
+load("//:tests.bzl", "specs2_unit_test", "specs2_ite2e_test", "specs2_mixed_test")
+load("//:macros.bzl", "sources")

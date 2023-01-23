@@ -3,7 +3,6 @@ workspace(name = "greyhound")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
-# TODO: move to wix_oss_infra
 skylib_version = "0.8.0"
 
 http_archive(
@@ -16,24 +15,6 @@ http_archive(
 load("//dependencies/google_protobuf:google_protobuf.bzl", "google_protobuf")
 
 google_protobuf()
-
-wix_oss_infra_version = "e1591c6fb45e665418225bbd034d3e5163278aa1"
-
-wix_oss_infra_version_sha256 = "399a68073420a3920069bd8220296df9c3c11f4cb983fd3f6f71e5e8efff8133"
-
-http_archive(
-    name = "wix_oss_infra",
-    sha256 = wix_oss_infra_version_sha256,
-    strip_prefix = "wix-oss-infra-%s" % wix_oss_infra_version,
-    url = "https://github.com/wix/wix-oss-infra/archive/%s.tar.gz" % wix_oss_infra_version,
-)
-
-load("@wix_oss_infra//test-agent/src/shared:tests_external_repository.bzl", "tests_external_repository")
-
-tests_external_repository(
-    name = "tests",
-    jdk_version = "11",
-)
 
 load("@greyhound//central-sync:dependencies.bzl", "graknlabs_bazel_distribution")
 

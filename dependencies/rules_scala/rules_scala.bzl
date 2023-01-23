@@ -1,9 +1,6 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-load("@wix_oss_infra//dependencies/test_network_sandboxing:download_network_sandboxing.bzl", "download_network_sandboxing_according_to_os")
 
 def rules_scala():
-    if native.existing_rule("test_network_sandboxing") == None:
-        download_network_sandboxing_according_to_os(name = "test_network_sandboxing")
 
     rules_scala_version = "c96948c77825e3d5ce00b9711bff6c349477e37f"
 
