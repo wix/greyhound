@@ -63,7 +63,7 @@ class SidecarService(register: Register.Service,
       CreateConsumer(consumer.topic, consumer.group, consumer.retryStrategy, kafkaAddress).forkDaemon
     } *>
       ZIO.foreach(request.batchConsumers) { consumer =>
-        CreateBatchConsumer(consumer.topic, consumer.group, consumer.retryStrategy, kafkaAddress).forkDaemon
+        CreateBatchConsumer(consumer.topic, consumer.group, consumer.retryStrategy, kafkaAddress, consumer.extraProperties).forkDaemon
       }
 
 }

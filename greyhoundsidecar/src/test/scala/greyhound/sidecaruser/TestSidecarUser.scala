@@ -7,7 +7,7 @@ import zio.{Ref, ZIO}
 
 class TestSidecarUser(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends RGreyhoundSidecarUser[Any] {
 
-  def collectedRecords = consumedTopics.get
+  def collectedRequests = consumedTopics.get
 
   override def handleMessages(request: HandleMessagesRequest): ZIO[Any, Status, HandleMessagesResponse] =
       consumedTopics.update(_ :+ request)

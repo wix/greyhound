@@ -38,7 +38,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
           _ <- sidecarService.startConsuming(StartConsumingRequest(Seq(Consumer(context.consumerId, context.group, context.topicName))))
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
-          records <- sidecarUser.collectedRecords.delay(6.seconds)
+          records <- sidecarUser.collectedRequests.delay(6.seconds)
         } yield assert(records.nonEmpty)(equalTo(true))
       },
       test("batch consume topic") {
@@ -48,10 +48,17 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
           _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
-          _ <- sidecarService.startConsuming(StartConsumingRequest(batchConsumers = Seq(BatchConsumer(context.consumerId, context.group, context.topicName))))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(batchConsumers = Seq(BatchConsumer(
+            id = context.consumerId, group = context.group, topic = context.topicName, extraProperties =
+              Map("fetch.min.bytes" -> 10000.toString, // This means the consumer will try to accumulate 10000 bytes
+                "fetch.max.wait.ms" -> 5000.toString   // If it doesn't get to 10000 bytes it will wait up to 5 seconds and then fetch what it has
+              )))))
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
-          records <- sidecarUser.collectedRecords.delay(6.seconds)
-        } yield assert(records.nonEmpty)(equalTo(true))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          requests <- sidecarUser.collectedRequests.delay(15.seconds)
+          _ <- zio.Console.printLine(requests).orDie
+          records = requests.head.records
+        } yield assert(records.size)(equalTo(2))
       },
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
