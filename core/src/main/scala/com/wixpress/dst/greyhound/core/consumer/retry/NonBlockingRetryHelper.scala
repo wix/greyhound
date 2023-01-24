@@ -11,24 +11,23 @@ import com.wixpress.dst.greyhound.core.consumer.retry.RetryDecision.{NoMoreRetri
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription}
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.{durationDeserializer, instantDeserializer, Group, Headers, Topic}
-import zio.clock.Clock
-import zio.duration.Duration
+import zio.Clock
+import zio.Duration
 import zio.{Chunk, UIO, URIO, _}
-import zio.duration._
 
 import scala.util.Try
 
 trait NonBlockingRetryHelper {
   def retryTopicsFor(originalTopic: Topic): Set[Topic]
 
-  def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]]
+  def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(implicit trace: Trace): UIO[Option[RetryAttempt]]
 
   def retryDecision[E](
     retryAttempt: Option[RetryAttempt],
     record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
     error: E,
     subscription: ConsumerSubscription
-  ): URIO[Clock, RetryDecision]
+  )(implicit trace: Trace): URIO[Any, RetryDecision]
 
   def retrySteps = retryTopicsFor("").size
 }
@@ -42,15 +41,18 @@ object NonBlockingRetryHelper {
     override def retryTopicsFor(topic: Topic): Set[Topic] =
       policy(topic).intervals.indices.foldLeft(Set.empty[String])((acc, attempt) => acc + s"$topic-$group-retry-$attempt")
 
-    override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription): UIO[Option[RetryAttempt]] = {
+    override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
+      implicit trace: Trace
+    ): UIO[Option[RetryAttempt]] = {
       (for {
         submitted     <- headers.get(RetryHeader.Submitted, instantDeserializer)
         backoff       <- headers.get(RetryHeader.Backoff, durationDeserializer)
         originalTopic <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
       } yield for {
-        TopicAttempt(originalTopic, attempt) <- topicAttempt(subscription, topic, originalTopic)
-        s                                    <- submitted
-        b                                    <- backoff
+        ta                                  <- topicAttempt(subscription, topic, originalTopic)
+        TopicAttempt(originalTopic, attempt) = ta
+        s                                   <- submitted
+        b                                   <- backoff
       } yield RetryAttempt(originalTopic, attempt, s, b))
         .catchAll(_ => ZIO.none)
     }
@@ -66,7 +68,7 @@ object NonBlockingRetryHelper {
       record: ConsumerRecord[Chunk[Byte], Chunk[Byte]],
       error: E,
       subscription: ConsumerSubscription
-    ): URIO[Clock, RetryDecision] = currentTime.map(now => {
+    )(implicit trace: Trace): URIO[Any, RetryDecision] = currentTime.map(now => {
       val nextRetryAttempt = retryAttempt.fold(0)(_.attempt + 1)
       val originalTopic    = retryAttempt.fold(record.topic)(_.originalTopic)
       val retryTopic       = subscription match {
@@ -154,16 +156,16 @@ object RetryHeader {
 
 case class RetryAttempt(originalTopic: Topic, attempt: RetryAttemptNumber, submittedAt: Instant, backoff: Duration) {
 
-  def sleep: URIO[Clock, Unit] =
+  def sleep(implicit trace: Trace): URIO[Any, Unit] =
     RetryUtil.sleep(submittedAt, backoff)
 }
 
 object RetryUtil {
-  def sleep(submittedAt: Instant, backoff: Duration): URIO[Clock, Unit] =
+  def sleep(submittedAt: Instant, backoff: Duration)(implicit trace: Trace): URIO[Any, Unit] =
     currentTime.flatMap { now =>
       val expiresAt = submittedAt.plus(backoff.asJava)
       val sleep     = JavaDuration.between(now, expiresAt)
-      clock.sleep(Duration.fromJava(sleep))
+      ZIO.sleep(Duration.fromJava(sleep))
     }
 
 }
@@ -172,8 +174,7 @@ private case class TopicAttempt(originalTopic: Topic, attempt: Int)
 
 object RetryAttempt {
   type RetryAttemptNumber = Int
-
-  val currentTime = clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
+  val currentTime = Clock.currentTime(MILLISECONDS).map(Instant.ofEpochMilli)
 }
 
 sealed trait RetryDecision

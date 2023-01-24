@@ -2,10 +2,11 @@ package com.wixpress.dst.greyhound.future
 
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription
 import com.wixpress.dst.greyhound.core.consumer.{OffsetReset, RecordConsumer, RecordConsumerConfig}
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.{ClientId, Group, NonEmptySet, Topic}
 import com.wixpress.dst.greyhound.future.GreyhoundConsumer.Handler
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
-import zio.{Exit, ZIO, ZManaged}
+import zio._
 
 import scala.concurrent.Future
 
@@ -31,8 +32,8 @@ case class GreyhoundConsumersBuilder(
 
   def build: Future[GreyhoundConsumers] = config.runtime.unsafeRunToFuture {
     for {
-      runtime     <- ZIO.runtime[Env]
-      makeConsumer = ZManaged.foreach(handlers.toSeq) {
+      consumers <- ZIO
+                     .foreach(handlers.toSeq) {
                        case ((group, clientId), (offsetReset, initialTopics, handler, mutateConsumerConfig)) =>
                          RecordConsumer.make(
                            handler = handler,
@@ -47,20 +48,19 @@ case class GreyhoundConsumersBuilder(
                            )
                          )
                      }
-      reservation <- makeConsumer.reserve
-      consumers   <- reservation.acquire
+                     .provideSomeEnvironment[GreyhoundMetrics](_.add(zio.Scope.global))
     } yield new GreyhoundConsumers {
       override def pause: Future[Unit] =
-        runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.pause).unit)
+        config.runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.pause).unit)
 
       override def resume: Future[Unit] =
-        runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.resume).unit)
+        config.runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.resume).unit)
 
       override def isAlive: Future[Boolean] =
-        runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.isAlive).map(_.forall(_ == true)))
+        config.runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.isAlive).map(_.forall(_ == true)))
 
       override def shutdown: Future[Unit] =
-        runtime.unsafeRunToFuture(reservation.release(Exit.Success(())).unit)
+        config.runtime.unsafeRunToFuture(ZIO.foreach(consumers)(_.shutdown()).unit)
     }
   }
 

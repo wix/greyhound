@@ -1,38 +1,28 @@
 package com.wixpress.dst.greyhound.future
 
-import java.util.concurrent.Executors
-
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
-import zio.blocking.Blocking
-import zio.clock.Clock
-import zio.console.Console
-import zio.internal.Platform
-import zio.random.Random
-import zio.system.System
-import zio.{Has, Runtime}
+import zio.{Console, RIO, Random, System, Unsafe, ZEnvironment}
 
-import scala.concurrent.ExecutionContext
+import java.util.concurrent.Executors
+import scala.concurrent.{ExecutionContext, Future}
 
-trait GreyhoundRuntime extends Runtime[GreyhoundRuntime.Env] {
-  override val platform: Platform = Platform.default
+trait GreyhoundRuntime /*extends Runtime[GreyhoundRuntime.Env] */ {
+  protected val env: ZEnvironment[GreyhoundRuntime.Env]
+  lazy val runtime = zio.Runtime.default.withEnvironment(env)
+
+  def unsafeRun[A](zio: RIO[GreyhoundRuntime.Env, A]): A =
+    Unsafe.unsafe { implicit us => runtime.unsafe.run(zio).getOrThrowFiberFailure() }
+
+  def unsafeRunToFuture[A](zio: RIO[GreyhoundRuntime.Env, A]): Future[A] =
+    Unsafe.unsafe { implicit us => runtime.unsafe.runToFuture(zio) }
 }
 
 object GreyhoundRuntime {
   implicit val executionContext = ExecutionContext.fromExecutor(Executors.newCachedThreadPool())
 
-  type ZEnv = Clock with Console with System with Random with Blocking
+  type Env = GreyhoundMetrics
 
-  val zenv = Has.allOf(
-    Clock.Service.live,
-    Console.Service.live,
-    System.Service.live,
-    Random.Service.live,
-    Blocking.Service.live
-  )
-
-  type Env = ZEnv with GreyhoundMetrics
-
-  val Live = GreyhoundRuntimeBuilder().build
+  lazy val Live = GreyhoundRuntimeBuilder().build
 }
 
 case class GreyhoundRuntimeBuilder(metricsReporter: GreyhoundMetrics.Service = GreyhoundMetrics.Service.Live) {
@@ -41,6 +31,6 @@ case class GreyhoundRuntimeBuilder(metricsReporter: GreyhoundMetrics.Service = G
 
   def build: GreyhoundRuntime =
     new GreyhoundRuntime {
-      override val environment = GreyhoundRuntime.zenv ++ Has(metricsReporter)
+      override val env = ZEnvironment(metricsReporter)
     }
 }

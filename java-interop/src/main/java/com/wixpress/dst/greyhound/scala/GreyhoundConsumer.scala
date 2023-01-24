@@ -1,7 +1,6 @@
 package com.wixpress.dst.greyhound.java
 
 import java.util.concurrent.{CompletableFuture, Executor}
-
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord => CoreConsumerRecord, RecordHandler => CoreRecordHandler, SerializationError}
 import com.wixpress.dst.greyhound.core.{Deserializer => CoreDeserializer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
@@ -58,23 +57,27 @@ case class GreyhoundConsumer[K >: AnyRef, V] private (
     copy(retryConfig = Option(retryConfig))
 
   private[greyhound] def recordHandler(executor: Executor, runtime: zio.Runtime[GreyhoundRuntime.Env]) = {
-    val baseHandler = runtime.unsafeRun(Semaphore.make(parallelism).map { semaphore =>
-      CoreRecordHandler { record: CoreConsumerRecord[K, V] =>
-        semaphore.withPermit {
-          ZIO.effectAsync[Any, Throwable, Unit] { cb =>
-            val kafkaRecord =
-              new ConsumerRecord(record.topic, record.partition, record.offset, record.key.orNull, record.value) // TODO headers
+    val baseHandler = zio.Unsafe.unsafe { implicit u =>
+      runtime.unsafe
+        .run(Semaphore.make(parallelism).map { semaphore =>
+          CoreRecordHandler { record: CoreConsumerRecord[K, V] =>
+            semaphore.withPermit {
+              ZIO.async[Any, Throwable, Unit] { cb =>
+                val kafkaRecord =
+                  new ConsumerRecord(record.topic, record.partition, record.offset, record.key.orNull, record.value) // TODO headers
 
-            handler
-              .handle(kafkaRecord, executor)
-              .handle[Unit] { (_, error) =>
-                if (error != null) cb(ZIO.fail(error))
-                else cb(ZIO.unit)
+                handler
+                  .handle(kafkaRecord, executor)
+                  .handle[Unit] { (_, error) =>
+                    if (error != null) cb(ZIO.fail(error))
+                    else cb(ZIO.unit)
+                  }
               }
+            }
           }
-        }
-      }
-    })
+        })
+        .getOrThrowFiberFailure()
+    }
 
     baseHandler
       .withErrorHandler {

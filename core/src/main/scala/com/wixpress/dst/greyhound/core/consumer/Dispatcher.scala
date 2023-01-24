@@ -12,24 +12,25 @@ import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Topic, TopicPartition}
 import zio._
-import zio.clock.Clock
-import zio.duration.{Duration, _}
+import zio.Clock
 import zio.stm.{STM, TRef}
+
+import java.lang.System.currentTimeMillis
 
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R with Env, SubmitResult]
 
-  def resumeablePartitions(paused: Set[TopicPartition]): URIO[Clock, Set[TopicPartition]]
+  def resumeablePartitions(paused: Set[TopicPartition]): URIO[Any, Set[TopicPartition]]
 
-  def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics with ZEnv, Unit]
+  def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit]
 
   def pause: URIO[GreyhoundMetrics, Unit]
 
   def resume: URIO[GreyhoundMetrics, Unit]
 
-  def shutdown: URIO[GreyhoundMetrics with ZEnv, Unit]
+  def shutdown: URIO[GreyhoundMetrics, Unit]
 
-  def expose: URIO[Clock, DispatcherExposedState]
+  def expose: URIO[Any, DispatcherExposedState]
 
   def waitForCurrentRecordsCompletion: UIO[Unit]
 }
@@ -48,7 +49,7 @@ object Dispatcher {
     consumerAttributes: Map[String, String] = Map.empty,
     workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]],
     startPaused: Boolean = false
-  ): UIO[Dispatcher[R]] =
+  )(implicit trace: Trace): UIO[Dispatcher[R]] =
     for {
       p       <- Promise.make[Nothing, Unit]
       state   <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
@@ -62,7 +63,7 @@ object Dispatcher {
           submitted <- worker.submit(record)
         } yield if (submitted) Submitted else Rejected
 
-      override def resumeablePartitions(paused: Set[TopicPartition]): URIO[Clock, Set[TopicPartition]] =
+      override def resumeablePartitions(paused: Set[TopicPartition]): URIO[Any, Set[TopicPartition]] =
         workers.get.flatMap { workers =>
           ZIO.foldLeft(paused)(Set.empty[TopicPartition]) { (acc, partition) =>
             workers.get(partition) match {
@@ -79,7 +80,7 @@ object Dispatcher {
           }
         }
 
-      override def expose: URIO[Clock, DispatcherExposedState] =
+      override def expose: URIO[Any, DispatcherExposedState] =
         for {
           dispatcherState <- state.get
           workers         <- workers.get
@@ -89,7 +90,7 @@ object Dispatcher {
       override def waitForCurrentRecordsCompletion: UIO[Unit] =
         workers.get.flatMap(workers => ZIO.foreach(workers.values)(_.waitForCurrentExecutionCompletion)).unit
 
-      override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics with ZEnv, Unit] =
+      override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] =
         workers
           .modify { workers =>
             partitions.foldLeft((List.empty[(TopicPartition, Worker)], workers)) {
@@ -115,11 +116,11 @@ object Dispatcher {
         case state                          => (ZIO.unit, state)
       }.flatten
 
-      override def shutdown: URIO[GreyhoundMetrics with ZEnv, Unit] =
+      override def shutdown: URIO[GreyhoundMetrics, Unit] =
         state.modify(state => (state, DispatcherState.ShuttingDown)).flatMap {
           case DispatcherState.Paused(resume) => resume.succeed(()).unit
           case _                              => ZIO.unit
-        } *> workers.get.flatMap(shutdownWorkers)
+        } *> workers.get.flatMap(shutdownWorkers).ignore
 
       /**
        * This implementation is not fiber-safe. Since the worker is used per partition, and all operations performed on a single partition
@@ -141,21 +142,24 @@ object Dispatcher {
         }
 
       private def handleWithMetrics(record: Record) =
-        report(HandlingRecord(group, clientId, record, System.currentTimeMillis() - record.pollTime, consumerAttributes)) *>
+        report(HandlingRecord(group, clientId, record, currentTimeMillis() - record.pollTime, consumerAttributes)) *>
           handle(record).timed.flatMap {
             case (duration, _) =>
               report(RecordHandled(group, clientId, record, duration, consumerAttributes))
           }
 
       private def shutdownWorkers(workers: Iterable[(TopicPartition, Worker)]) =
-        ZIO.foreachPar_(workers) {
-          case (partition, worker) =>
-            report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
-              workersShutdownRef.get.flatMap(_.get(partition).fold(UIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
-              worker.shutdown.timed
-                .map(_._1)
-                .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
-        }
+        ZIO
+          .foreachParDiscard(workers) {
+            case (partition, worker) =>
+              report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
+                workersShutdownRef.get.flatMap(_.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
+                worker.shutdown.timed
+                  .map(_._1)
+                  .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
+          }
+          .resurrect
+          .ignore
     }
 
   sealed trait DispatcherState
@@ -173,11 +177,11 @@ object Dispatcher {
   case class Task(record: Record, complete: UIO[Unit])
 
   trait Worker {
-    def submit(record: Record): URIO[Clock, Boolean]
+    def submit(record: Record): URIO[Any, Boolean]
 
-    def expose: URIO[Clock, WorkerExposedState]
+    def expose: URIO[Any, WorkerExposedState]
 
-    def shutdown: URIO[Clock, Unit]
+    def shutdown: URIO[Any, Unit]
 
     def clearPausedPartitionDuration: UIO[Unit]
 
@@ -194,7 +198,7 @@ object Dispatcher {
       partition: TopicPartition,
       drainTimeout: Duration,
       consumerAttributes: Map[String, String]
-    ): URIO[R with Env, Worker] = for {
+    )(implicit trace: Trace): URIO[R with Env, Worker] = for {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber         <-
@@ -202,12 +206,12 @@ object Dispatcher {
           .repeatWhile(_ == true)
           .forkDaemon
     } yield new Worker {
-      override def submit(record: Record): URIO[Clock, Boolean] =
+      override def submit(record: Record): URIO[Any, Boolean] =
         queue
           .offer(record)
           .tap(submitted =>
             ZIO.when(!submitted) {
-              clock
+              Clock
                 .currentTime(TimeUnit.MILLISECONDS)
                 .flatMap(now =>
                   internalState.update(s => if (s.reachedHighWatermarkSince.nonEmpty) s else s.reachedHighWatermark(now)).commit
@@ -215,10 +219,10 @@ object Dispatcher {
             }
           )
 
-      override def expose: URIO[Clock, WorkerExposedState] = (queue.size zip internalState.get.commit)
+      override def expose: URIO[Any, WorkerExposedState] = (queue.size zip internalState.get.commit)
         .flatMap {
           case (queued, state) =>
-            clock
+            Clock
               .currentTime(TimeUnit.MILLISECONDS)
               .map(currentTime =>
                 WorkerExposedState(
@@ -229,10 +233,10 @@ object Dispatcher {
               )
         }
 
-      override def shutdown: URIO[Clock, Unit] =
+      override def shutdown: URIO[Any, Unit] =
         for {
           _       <- internalState.update(_.shutdown).commit
-          timeout <- fiber.join.resurrect.ignore.disconnect.timeout(drainTimeout)
+          timeout <- fiber.join.ignore.disconnect.timeout(drainTimeout)
           _       <- ZIO.when(timeout.isEmpty)(fiber.interruptFork)
         } yield ()
 
@@ -251,25 +255,25 @@ object Dispatcher {
       clientId: ClientId,
       partition: TopicPartition,
       consumerAttributes: Map[String, String]
-    ): URIO[R with Env, Boolean] =
+    )(implicit trace: Trace): URIO[R with Env, Boolean] =
       internalState.update(s => s.cleared).commit *>
         state.get.flatMap {
           case DispatcherState.Running        =>
             queue.poll.flatMap {
               case Some(record) =>
                 report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *> internalState.update(_.started).commit *>
-                  handle(record).interruptible *> isActive(internalState)
+                  handle(record).interruptible.ignore *> isActive(internalState)
               case None         => isActive(internalState).delay(5.millis)
             }
           case DispatcherState.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes)) *> resume.await.timeout(30.seconds) *>
               isActive(internalState)
           case DispatcherState.ShuttingDown   =>
-            UIO(false)
+            ZIO.succeed(false)
         }
   }
 
-  private def isActive[R](internalState: TRef[WorkerInternalState]) =
+  private def isActive[R](internalState: TRef[WorkerInternalState])(implicit trace: Trace) =
     internalState.get.map(_.shuttingDown).commit.negate
 }
 
@@ -280,7 +284,7 @@ case class WorkerInternalState(
 ) {
   def cleared = copy(currentExecutionStarted = None)
 
-  def started = copy(currentExecutionStarted = Some(System.currentTimeMillis()))
+  def started = copy(currentExecutionStarted = Some(currentTimeMillis()))
 
   def reachedHighWatermark(nowMs: Long): WorkerInternalState = copy(reachedHighWatermarkSince = Some(nowMs))
 

@@ -17,6 +17,7 @@ def dependency(coordinates,exclusions=None):
 scala_version = "2.12.12"
 
 deps = [
+    dependency("com.google.protobuf:protobuf-java:3.21.10"),
     dependency("ch.qos.logback:logback-classic:1.1.11"),
     dependency("com.fasterxml.jackson.core:jackson-annotations:2.9.0"),
     dependency("com.fasterxml.jackson.core:jackson-core:2.9.6"),
@@ -32,11 +33,12 @@ deps = [
     dependency("com.typesafe.scala-logging:scala-logging_2.12:3.8.0"),
     dependency("com.yammer.metrics:metrics-core:2.2.0"),
     dependency("commons-cli:commons-cli:1.4"),
-    dependency("dev.zio:zio_2.12:1.0.9"),
-    dependency("dev.zio:zio-stacktracer_2.12:1.0.9"),
-    dependency("dev.zio:zio-streams_2.12:1.0.9"),
-    dependency("dev.zio:zio-test_2.12:1.0.9"),
-    dependency("dev.zio:zio-test-junit_2.12:1.0.9"),
+    dependency("dev.zio:zio_2.12:2.0.2"),
+    dependency("dev.zio:zio-stacktracer_2.12:2.0.2"),
+    dependency("dev.zio:zio-streams_2.12:2.0.2"),
+    dependency("dev.zio:zio-managed_2.12:2.0.2"),
+    dependency("dev.zio:zio-test_2.12:2.0.2"),
+    dependency("dev.zio:zio-test-junit_2.12:2.0.2"),
     dependency("junit:junit:4.13"),
     dependency("net.sf.jopt-simple:jopt-simple:5.0.4"),
     dependency("org.apache.curator:curator-test:2.12.0"),

@@ -1,0 +1,80 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_proto//proto:defs.bzl", "proto_lang_toolchain")
+
+[
+    alias(
+        name = target,
+        actual = select({
+             ":linux-x86_64": "@com_google_protobuf_protoc_linux_x86_64//:" + target,
+             ":macos-x86_64": "@com_google_protobuf_protoc_macos_x86_64//:" + target,
+             ":macos-arm64": "@com_google_protobuf_protoc_macos_arm64//:" + target,
+         }),
+    )
+    for target in [
+        "protoc",
+        "any_proto",
+        "api_proto",
+        "compiler_plugin_proto",
+        "descriptor_proto",
+        "duration_proto",
+        "empty_proto",
+        "field_mask_proto",
+        "source_context_proto",
+        "struct_proto",
+        "timestamp_proto",
+        "type_proto",
+        "wrappers_proto",
+    ]
+]
+
+alias(
+    name = "protobuf_java",
+    actual = "@com_google_protobuf_protobuf_java//jar",
+)
+
+alias(
+    name = "protobuf_java_util",
+    actual = "@com_google_protobuf_protobuf_java_util//jar",
+)
+
+alias(
+    name = "protobuf_javalite",
+    actual = "@com_google_protobuf_protobuf_javalite//jar",
+)
+
+proto_lang_toolchain(
+    name = "java_toolchain",
+    command_line = "--java_out=$(OUT)",
+    runtime = ":protobuf_java",
+)
+
+proto_lang_toolchain(
+    name = "javalite_toolchain",
+    command_line = "--java_out=lite:$(OUT)",
+    runtime = ":protobuf_javalite",
+)
+
+config_setting(
+    name = "linux-x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "macos-x86_64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "macos-arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:arm64",
+    ],
+)
