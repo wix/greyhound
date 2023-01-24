@@ -55,18 +55,20 @@ class SidecarService(register: Register.Service,
   override def startConsuming(request: StartConsumingRequest): IO[Status, StartConsumingResponse] =
     for {
       _ <- register.get(request.registrationId).flatMap {
-        case Some(_) =>
-          startConsuming0(request.registrationId, request.consumers, request.batchConsumers)
-            .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
+        case Some(hostDetails) =>
+          startConsuming0(hostDetails, request.consumers, request.batchConsumers)
+            .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
 
         case None => ZIO.fail(Status.NOT_FOUND)
       }
     } yield StartConsumingResponse()
 
-  private def startConsuming0(tenantId: String,  consumers: Seq[Consumer], batchConsumers: Seq[BatchConsumer]) =
+  private def startConsuming0(hostDetails: HostDetails,
+                              consumers: Seq[Consumer],
+                              batchConsumers: Seq[BatchConsumer]) =
     ZIO.foreachPar(consumers) { consumer =>
       CreateConsumer(
-        tenantId = tenantId,
+        hostDetails = hostDetails,
         topic = consumer.topic,
         group = consumer.group,
         retryStrategy = consumer.retryStrategy,
@@ -75,7 +77,7 @@ class SidecarService(register: Register.Service,
     } &>
       ZIO.foreachPar(batchConsumers) { consumer =>
         CreateBatchConsumer(
-          tenantId = tenantId,
+          hostDetails = hostDetails,
           topic = consumer.topic,
           group = consumer.group,
           retryStrategy = consumer.retryStrategy,
