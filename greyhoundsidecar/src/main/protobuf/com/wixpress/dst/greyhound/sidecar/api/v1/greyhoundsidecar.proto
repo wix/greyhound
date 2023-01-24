@@ -30,6 +30,7 @@ message RegisterResponse {
 message StartConsumingRequest {
   repeated Consumer consumers = 1;
   repeated BatchConsumer batch_consumers = 2;
+  string registration_id = 3;
 }
 
 message Consumer {

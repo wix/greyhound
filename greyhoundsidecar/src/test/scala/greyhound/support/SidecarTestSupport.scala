@@ -8,7 +8,7 @@ trait SidecarTestSupport {
 
   def sidecarServiceLayer(kafkaAddress: String) = ZLayer.fromZIO {
     for {
-      ref <- Ref.make(HostDetails.Empty)
+      ref <- Ref.make(Map.empty[String, HostDetails])
       register = RegisterLive(ref)
     } yield new SidecarService(register, kafkaAddress = kafkaAddress)
   }

@@ -5,30 +5,26 @@ import zio.{RIO, Ref, Task, UIO, URIO, ZIO}
 object Register {
 
   trait Service {
-    def add(host: String, port: Int): Task[Unit]
+    def add(tenantId: String, host: String, port: Int): Task[Unit]
 
-    val get: UIO[HostDetails]
+    def get(tenantId: String): UIO[Option[HostDetails]]
   }
 
   type Register = Register.Service
 
-  def add(host: String, port: Int): RIO[Register, Unit] =
-    ZIO.serviceWithZIO[Register.Service](_.add(host, port))
+  def add(tenantId: String, host: String, port: Int): RIO[Register, Unit] =
+    ZIO.serviceWithZIO[Register.Service](_.add(tenantId, host, port))
 
-  val get: URIO[Register, HostDetails] =
-    ZIO.serviceWithZIO[Register.Service](_.get)
+  def get(tenantId: String): URIO[Register, Option[HostDetails]] =
+    ZIO.serviceWithZIO[Register.Service](_.get(tenantId))
 }
 
-case class RegisterLive(ref: Ref[HostDetails]) extends Register.Service {
+case class RegisterLive(ref: Ref[Map[String, HostDetails]]) extends Register.Service {
 
-  override def add(host: String, port: Int): Task[Unit] =
-    ref.update(_.copy(host, port))
+  override def add(tenantId: String, host: String, port: Int): Task[Unit] =
+    ref.update(_.updated(tenantId, HostDetails(host, port)))
 
-  override val get: UIO[HostDetails] = ref.get
+  override def get(tenantId: String): UIO[Option[HostDetails]] = ref.get.map(_.get(tenantId))
 }
 
 case class HostDetails(host: String, port: Int)
-
-object HostDetails {
-  val Empty = HostDetails("", 0)
-}

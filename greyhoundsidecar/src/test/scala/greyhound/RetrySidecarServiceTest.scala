@@ -37,9 +37,11 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           sidecarService <- ZIO.service[SidecarService]
           failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
-          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
-          request = StartConsumingRequest(Seq(
-            Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.NoRetry(NoRetry()))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          request = StartConsumingRequest(
+            registrationId = registrationId,
+            consumers = Seq(
+              Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.NoRetry(NoRetry()))))
           _ <- sidecarService.startConsuming(request)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           records <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
@@ -52,9 +54,11 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           sidecarService <- ZIO.service[SidecarService]
           failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
-          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
-          request = StartConsumingRequest(Seq(
-            Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.Blocking(BlockingRetry(10000)))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          request = StartConsumingRequest(
+            registrationId = registrationId,
+            consumers = Seq(
+              Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.Blocking(BlockingRetry(10000)))))
           _ <- sidecarService.startConsuming(request)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           recordsBeforeInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
@@ -69,9 +73,11 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           sidecarService <- ZIO.service[SidecarService]
           failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
-          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
-          request = StartConsumingRequest(Seq(
-            Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.NonBlocking(NonBlockingRetry(intervals = Seq(5000), partitions = Some(1))))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          request = StartConsumingRequest(
+            registrationId = registrationId,
+            consumers = Seq(
+              Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.NonBlocking(NonBlockingRetry(intervals = Seq(5000), partitions = Some(1))))))
           _ <- sidecarService.startConsuming(request)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
@@ -84,9 +90,11 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           sidecarService <- ZIO.service[SidecarService]
           failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
-          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
-          request = StartConsumingRequest(batchConsumers = Seq(
-            BatchConsumer(context.consumerId, context.group, context.topicName, BatchConsumer.RetryStrategy.NoRetry(NoRetry()))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          request = StartConsumingRequest(
+            registrationId = registrationId,
+            batchConsumers = Seq(
+              BatchConsumer(context.consumerId, context.group, context.topicName, BatchConsumer.RetryStrategy.NoRetry(NoRetry()))))
           _ <- sidecarService.startConsuming(request)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           records <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
@@ -99,9 +107,11 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           sidecarService <- ZIO.service[SidecarService]
           failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
-          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
-          request = StartConsumingRequest(batchConsumers = Seq(
-            BatchConsumer(context.consumerId, context.group, context.topicName, BatchConsumer.RetryStrategy.Blocking(BlockingRetry(10000)))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          request = StartConsumingRequest(
+            registrationId = registrationId,
+            batchConsumers = Seq(
+              BatchConsumer(context.consumerId, context.group, context.topicName, BatchConsumer.RetryStrategy.Blocking(BlockingRetry(10000)))))
           _ <- sidecarService.startConsuming(request)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           recordsBeforeInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
