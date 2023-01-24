@@ -6,6 +6,7 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsi
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
 import zio.{IO, Scope, UIO, ZIO, ZLayer}
+import java.util.UUID
 
 class SidecarService(register: Register.Service,
                      onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit,
@@ -20,14 +21,14 @@ class SidecarService(register: Register.Service,
 
   private def register0(request: RegisterRequest) = for {
     port <- ZIO.attempt(request.port.toInt)
-    _ <- register.add(request.host, port)
-  } yield RegisterResponse()
+    tenantId = UUID.randomUUID().toString
+    _ <- register.add(tenantId, request.host, port)
+  } yield RegisterResponse(registrationId = tenantId)
 
   override def produce(request: ProduceRequest): IO[Status, ProduceResponse] =
     ZIO.scoped {
       produce0(request)
-        .mapError(Status.fromThrowable)
-        .as(ProduceResponse())
+        .mapBoth(Status.fromThrowable, _ => ProduceResponse())
     }
 
   private def produce0(request: ProduceRequest) =
@@ -38,8 +39,7 @@ class SidecarService(register: Register.Service,
 
   override def createTopics(request: CreateTopicsRequest): IO[Status, CreateTopicsResponse] =
     createTopics0(request)
-      .mapError(Status.fromThrowable)
-      .as(CreateTopicsResponse())
+      .mapBoth(Status.fromThrowable, _ => CreateTopicsResponse())
 
 
   private def createTopics0(request: CreateTopicsRequest) = ZIO.scoped {
@@ -52,18 +52,36 @@ class SidecarService(register: Register.Service,
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
-  override def startConsuming(request: StartConsumingRequest): IO[Status with Scope, StartConsumingResponse] = {
-    startConsuming0(request)
-      .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
-      .as(StartConsumingResponse())
-  }
+  override def startConsuming(request: StartConsumingRequest): IO[Status, StartConsumingResponse] =
+    for {
+      _ <- register.get(request.registrationId).flatMap {
+        case Some(_) =>
+          startConsuming0(request.registrationId, request.consumers, request.batchConsumers)
+            .provideSomeLayer(ZLayer.succeed(register) ++ DebugMetrics.layer)
 
-  private def startConsuming0(request: StartConsumingRequest) =
-    ZIO.foreach(request.consumers) { consumer =>
-      CreateConsumer(consumer.topic, consumer.group, consumer.retryStrategy, kafkaAddress).forkDaemon
-    } *>
-      ZIO.foreach(request.batchConsumers) { consumer =>
-        CreateBatchConsumer(consumer.topic, consumer.group, consumer.retryStrategy, kafkaAddress, consumer.extraProperties).forkDaemon
+        case None => ZIO.fail(Status.NOT_FOUND)
+      }
+    } yield StartConsumingResponse()
+
+  private def startConsuming0(tenantId: String,  consumers: Seq[Consumer], batchConsumers: Seq[BatchConsumer]) =
+    ZIO.foreachPar(consumers) { consumer =>
+      CreateConsumer(
+        tenantId = tenantId,
+        topic = consumer.topic,
+        group = consumer.group,
+        retryStrategy = consumer.retryStrategy,
+        kafkaAddress = kafkaAddress
+      ).forkDaemon
+    } &>
+      ZIO.foreachPar(batchConsumers) { consumer =>
+        CreateBatchConsumer(
+          tenantId = tenantId,
+          topic = consumer.topic,
+          group = consumer.group,
+          retryStrategy = consumer.retryStrategy,
+          kafkaAddress = kafkaAddress,
+          extraProperties = consumer.extraProperties
+        ).forkDaemon
       }
 
 }

@@ -15,10 +15,10 @@ import scala.concurrent.duration.DurationInt
 
 object CreateBatchConsumer {
 
-  def apply(topic: String, group: String, retryStrategy: RetryStrategy,
+  def apply(tenantId: String, topic: String, group: String, retryStrategy: RetryStrategy,
             kafkaAddress: String, extraProperties: Map[String, String]) =
     for {
-      managedClient <- SidecarUserClient.managed
+      managedClient <- SidecarUserClient.managed(tenantId)
       _ <- managedClient.flatMap(client =>
         BatchConsumer.make(
           config = BatchConsumerConfig(
