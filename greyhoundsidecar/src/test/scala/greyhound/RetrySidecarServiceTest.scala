@@ -62,6 +62,21 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
         } yield assert(recordsAfterInterval.nonEmpty)(equalTo(true))
       },
+
+      test("consume when retry strategy is NonBlockingRetry") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarService <- ZIO.service[SidecarService]
+          failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
+          request = StartConsumingRequest(Seq(
+            Consumer(context.consumerId, context.group, context.topicName, RetryStrategy.NonBlocking(NonBlockingRetry(intervals = Seq(5000), partitions = Some(1))))))
+          _ <- sidecarService.startConsuming(request)
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
+        } yield assert(recordsAfterInterval.nonEmpty)(equalTo(true))
+      },
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
         testContextLayer ++
