@@ -21,8 +21,8 @@ object TestContext {
     topicName = s"topic-$nextInt",
     payload = Some(nextString(10)),
     topicKey = Some(nextString(5)),
-    consumerId = nextString(10),
+    consumerId = s"id-$nextInt",
     partition = Some(1),
-    group = nextString(10))
+    group = s"group-$nextInt")
 
 }
