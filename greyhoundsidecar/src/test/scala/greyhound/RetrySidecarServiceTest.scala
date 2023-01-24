@@ -77,6 +77,39 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
         } yield assert(recordsAfterInterval.nonEmpty)(equalTo(true))
       },
+
+      test("fail batch consume when retry strategy is NoRetry") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarService <- ZIO.service[SidecarService]
+          failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
+          request = StartConsumingRequest(batchConsumers = Seq(
+            BatchConsumer(context.consumerId, context.group, context.topicName, BatchConsumer.RetryStrategy.NoRetry(NoRetry()))))
+          _ <- sidecarService.startConsuming(request)
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
+        } yield assert(records.isEmpty)(equalTo(true))
+      },
+
+      test("batch consume when retry strategy is BlockingRetry with interval") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarService <- ZIO.service[SidecarService]
+          failOnceSidecarUserService <- ZIO.service[FailOnceTestSidecarUser]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
+          request = StartConsumingRequest(batchConsumers = Seq(
+            BatchConsumer(context.consumerId, context.group, context.topicName, BatchConsumer.RetryStrategy.Blocking(BlockingRetry(10000)))))
+          _ <- sidecarService.startConsuming(request)
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          recordsBeforeInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 6)
+          _ <- assert(recordsBeforeInterval.isEmpty)(equalTo(true))
+          recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
+        } yield assert(recordsAfterInterval.nonEmpty)(equalTo(true))
+      },
+
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
         testContextLayer ++

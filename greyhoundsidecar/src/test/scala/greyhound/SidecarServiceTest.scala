@@ -10,6 +10,7 @@ import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert}
 import zio.{Ref, Runtime, Scope, ZIO, ZLayer}
 import zio._
+import zio.test.TestAspect.sequential
 
 object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
 
@@ -28,7 +29,6 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
 
   override def spec: Spec[TestEnvironment with Scope, Any] =
     suite("sidecar service")(
-
       test("consume topic") {
         for {
           context <- ZIO.service[TestContext]
@@ -40,8 +40,19 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           records <- sidecarUser.collectedRecords.delay(6.seconds)
         } yield assert(records.nonEmpty)(equalTo(true))
-      }
-
+      },
+      test("batch consume topic") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(batchConsumers = Seq(BatchConsumer(context.consumerId, context.group, context.topicName))))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records <- sidecarUser.collectedRecords.delay(6.seconds)
+        } yield assert(records.nonEmpty)(equalTo(true))
+      },
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
         testContextLayer ++
@@ -49,5 +60,5 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
         testSidecarUserLayer ++
         sidecarUserServerLayer ++
         sidecarServiceLayer(kafkaAddress)) @@ TestAspect.withLiveClock @@
-      runKafka(kafkaPort, zooKeeperPort)
+      runKafka(kafkaPort, zooKeeperPort) @@ sequential
 }
