@@ -1,38 +1,37 @@
 package greyhound
 
 import com.wixpress.dst.greyhound.core.Serdes
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain._
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy.{Blocking, NoRetry, NonBlocking}
-import greyhound.Register.Register
 import greyhound.RetryStrategyMapper.asRetryConfig
-import zio.{Scope, ZLayer}
+import zio.{Scope, ZIO}
 
 import scala.concurrent.duration.DurationInt
 
 object CreateConsumer {
 
-  def apply(tenantId: String, topic: String, group: String, retryStrategy: RetryStrategy, kafkaAddress: String) =
+  def apply(hostDetails: HostDetails,
+            topic: String,
+            group: String,
+            retryStrategy: RetryStrategy,
+            kafkaAddress: String): ZIO[Scope with GreyhoundMetrics, Throwable, Unit] =
     for {
-      managedClient <- SidecarUserClient.managed(tenantId)
-      _             <- managedClient
-          .flatMap(client =>
-            RecordConsumer.make(
-              config = RecordConsumerConfig(
-                bootstrapServers = kafkaAddress,
-                group = group,
-                offsetReset = OffsetReset.Earliest,
-                initialSubscription = ConsumerSubscription.Topics(Set(topic)),
-                retryConfig = asRetryConfig(retryStrategy)
-              ),
-              handler = ConsumerHandler(topic, group, client)
-                .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)
-            )
-          ).provideSomeLayer[GreyhoundMetrics with Register](ZLayer.succeed(Scope.global))
-
+      client <- SidecarUserClient(hostDetails)
+      _ <- RecordConsumer.make(
+        config = RecordConsumerConfig(
+          bootstrapServers = kafkaAddress,
+          group = group,
+          offsetReset = OffsetReset.Earliest,
+          initialSubscription = ConsumerSubscription.Topics(Set(topic)),
+          retryConfig = asRetryConfig(retryStrategy)
+        ),
+        handler = ConsumerHandler(topic, group, client)
+          .withDeserializers(Serdes.StringSerde, Serdes.StringSerde))
     } yield ()
 
 }
