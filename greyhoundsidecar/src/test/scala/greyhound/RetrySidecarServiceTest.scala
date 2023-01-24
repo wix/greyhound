@@ -10,8 +10,7 @@ import zio.test.Assertion.equalTo
 import zio.test.TestAspect.sequential
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert}
-import zio.{Ref, Runtime, Scope, ZIO, ZLayer}
-import zio._
+import zio.{Ref, Runtime, Scope, ZIO, ZLayer, _}
 
 // TODO: merge this test suite with SidecarServiceTest when multi-tenancy is implemented
 object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
@@ -62,8 +61,7 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
           _ <- assert(recordsBeforeInterval.isEmpty)(equalTo(true))
           recordsAfterInterval <- getSuccessfullyHandledRecords(failOnceSidecarUserService, delay = 10)
         } yield assert(recordsAfterInterval.nonEmpty)(equalTo(true))
-      }
-
+      },
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
         testContextLayer ++

@@ -1,10 +1,7 @@
 package greyhound
 
-import com.wixpress.dst.greyhound
-import com.wixpress.dst.greyhound.core
-import com.wixpress.dst.greyhound.core.metrics
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-import zio.{RLayer, Scope, Trace, UIO, ULayer, ZIO, ZLayer}
+import zio.{Trace, UIO, ZIO, ZLayer}
 
 
 object DebugMetrics {

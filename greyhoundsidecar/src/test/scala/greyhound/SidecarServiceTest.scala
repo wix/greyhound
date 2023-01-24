@@ -40,7 +40,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           records <- sidecarUser.collectedRecords.delay(6.seconds)
         } yield assert(records.nonEmpty)(equalTo(true))
-      } @@ TestAspect.withLiveClock,
+      }
 
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
@@ -48,6 +48,6 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
         ZLayer.succeed(zio.Scope.global) ++
         testSidecarUserLayer ++
         sidecarUserServerLayer ++
-        sidecarServiceLayer(kafkaAddress)) @@
+        sidecarServiceLayer(kafkaAddress)) @@ TestAspect.withLiveClock @@
       runKafka(kafkaPort, zooKeeperPort)
 }
