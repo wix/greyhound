@@ -76,7 +76,7 @@ object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with Ka
           result <- sidecarService.startConsuming(StartConsumingRequest(
             registrationId = nextString(10),
             consumers = Seq.empty)).either
-        } yield assertTrue(result.left.get == Status.NOT_FOUND)
+        } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode)
       }
     ).provideLayer(
       Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++

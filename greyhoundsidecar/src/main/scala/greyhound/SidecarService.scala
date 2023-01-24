@@ -59,7 +59,7 @@ class SidecarService(register: Register.Service,
           startConsuming0(hostDetails, request.consumers, request.batchConsumers)
             .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
 
-        case None => ZIO.fail(Status.NOT_FOUND)
+        case None => ZIO.fail(Status.NOT_FOUND.withDescription(s"registrationId ${request.registrationId} not found"))
       }
     } yield StartConsumingResponse()
 
