@@ -15,7 +15,8 @@ import scala.concurrent.duration.DurationInt
 
 object CreateBatchConsumer {
 
-  def apply(topic: String, group: String, retryStrategy: RetryStrategy, kafkaAddress: String) =
+  def apply(topic: String, group: String, retryStrategy: RetryStrategy,
+            kafkaAddress: String, extraProperties: Map[String, String]) =
     for {
       managedClient <- SidecarUserClient.managed
       _ <- managedClient.flatMap(client =>
@@ -25,7 +26,8 @@ object CreateBatchConsumer {
             groupId = group,
             offsetReset = OffsetReset.Earliest,
             initialSubscription = ConsumerSubscription.Topics(Set(topic)),
-            retryConfig = asRetryConfig(retryStrategy)
+            retryConfig = asRetryConfig(retryStrategy),
+            extraProperties = extraProperties
           ),
           handler = BatchConsumerHandler(topic, group, client)
             .withDeserializers(Serdes.StringSerde, Serdes.StringSerde)

@@ -51,6 +51,7 @@ message BatchConsumer {
     NoRetry no_retry = 4;
     BlockingRetry blocking = 5;
   }
+  map<string, string> extraProperties = 6;
 }
 
 message NoRetry {
