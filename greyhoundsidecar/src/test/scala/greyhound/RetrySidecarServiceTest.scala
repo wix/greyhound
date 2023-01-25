@@ -4,12 +4,11 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.Retry
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import greyhound.sidecaruser.{FailOnceTestSidecarUser, TestServer}
 import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
-import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
 import zio.test.TestAspect.sequential
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert}
-import zio.{Ref, Runtime, Scope, ZIO, ZLayer, _}
+import zio.{Scope, ZIO, ZLayer, _}
 
 // TODO: merge this test suite with SidecarServiceTest when multi-tenancy is implemented
 object RetrySidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with ConnectionSettings {
@@ -115,8 +114,6 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport w
       },
 
     ).provide(
-      Runtime.removeDefaultLoggers,
-      SLF4J.slf4j,
       TestContext.layer,
       ZLayer.succeed(zio.Scope.global),
       FailOnceTestSidecarUser.layer,

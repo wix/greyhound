@@ -7,7 +7,7 @@ import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert}
-import zio.{Runtime, Scope, ZIO, ZLayer}
+import zio.{Scope, ZIO, ZLayer}
 import zio._
 import zio.test.TestAspect.sequential
 

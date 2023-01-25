@@ -5,11 +5,10 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMess
 import greyhound.sidecaruser.{TestServer, TestSidecarUser}
 import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
 import io.grpc.Status
-import zio.logging.backend.SLF4J
 import zio.test.TestAspect.sequential
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assertTrue}
-import zio.{Ref, Runtime, Scope, ZIO, ZLayer, _}
+import zio.{Ref, Scope, ZIO, ZLayer, _}
 
 import scala.util.Random.nextString
 
@@ -80,8 +79,6 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode)
       }
     ).provide(
-      Runtime.removeDefaultLoggers,
-      SLF4J.slf4j,
       ZLayer.succeed(zio.Scope.global),
       testSidecarUser1Layer,
       sidecarUserServer1Layer,
