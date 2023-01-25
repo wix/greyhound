@@ -1,12 +1,12 @@
 package greyhound.sidecaruser
 
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.ZioGreyhoundsidecaruser.RGreyhoundSidecarUser
+import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.ZioGreyhoundsidecaruser.RCGreyhoundSidecarUser
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.{HandleMessagesRequest, HandleMessagesResponse}
 import io.grpc.Status
 import zio.{Ref, ZIO}
 
 class FailOnceTestSidecarUser(consumedTopics: Ref[Seq[HandleMessagesRequest]],
-                              shouldFailRef: Ref[Boolean]) extends RGreyhoundSidecarUser[Any] {
+                              shouldFailRef: Ref[Boolean]) extends RCGreyhoundSidecarUser {
 
   def collectedRecords = consumedTopics.get
 

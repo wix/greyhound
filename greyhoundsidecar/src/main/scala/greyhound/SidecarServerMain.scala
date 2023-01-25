@@ -30,7 +30,7 @@ object SidecarServerMain extends ServerMain {
   }
 
 
-  override def services: ServiceList[Any] = ServiceList.addScoped {
+  override def services: ServiceList[Any] = ServiceList.addZIO {
     for {
       kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(throw new RuntimeException("kafka address is not configured")))
       hostDetailsRef <- Ref.make(Map.empty[String, HostDetails])
@@ -48,7 +48,7 @@ object SidecarServerMain extends ServerMain {
           |""".stripMargin)
       _ = println(s"~~~ INIT Sidecar Server with kafka address ${kafkaAddress}")
     } yield new SidecarService(register, kafkaAddress = kafkaAddress)
-      .transform[Any, RequestContext](new LoggingTransform[Any])
+      .transform[RequestContext](new LoggingTransform)
   }
 
   override def welcome: ZIO[Any, Throwable, Unit] = super.welcome *> zio.Console.printLine(s"SidecarServerMain with port $port")
