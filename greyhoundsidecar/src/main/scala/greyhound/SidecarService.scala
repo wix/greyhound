@@ -2,7 +2,7 @@ package greyhound
 
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RGreyhoundSidecar
+import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RCGreyhoundSidecar
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
 import zio.{IO, Scope, UIO, ZIO, ZLayer}
@@ -11,7 +11,7 @@ import java.util.UUID
 class SidecarService(register: Register.Service,
                      onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit,
                      kafkaAddress: String
-                    ) extends RGreyhoundSidecar[Any] {
+                    ) extends RCGreyhoundSidecar {
 
   private val producer = Producer.make(ProducerConfig(kafkaAddress, onProduceListener = onProduceListener))
 

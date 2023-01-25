@@ -7,7 +7,7 @@ import io.grpc.Status
 import zio.ZIO
 
 object ConsumerHandler {
-  def apply(topic: String, group: String, client: GreyhoundSidecarUserClient.ZService[Any, Any]): Handler =
+  def apply(topic: String, group: String, client: GreyhoundSidecarUserClient.ZService[Any]): Handler =
     RecordHandler { record: ConsumerRecord[String, String] =>
       val request = HandleMessagesRequest(
         topic = topic,

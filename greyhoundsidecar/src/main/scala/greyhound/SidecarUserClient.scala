@@ -8,11 +8,11 @@ import zio.{Scope, ZIO}
 
 object SidecarUserClient {
 
-  def apply(hostDetails: HostDetails): ZIO[Scope, Throwable, GreyhoundSidecarUserClient.ZService[Any, Any]] =
-    GreyhoundSidecarUserClient.scoped(channel(hostDetails))
+  def apply(hostDetails: HostDetails): ZIO[Scope, Throwable, GreyhoundSidecarUserClient.ZService[Any]] =
+     GreyhoundSidecarUserClient.scoped(channel(hostDetails))
 
-  private def channel(hostDetails: HostDetails): ZManagedChannel[Any] =
-    ZManagedChannel[Any](
+  private def channel(hostDetails: HostDetails): ZManagedChannel=
+    ZManagedChannel(
       ManagedChannelBuilder
         .forAddress(hostDetails.host, hostDetails.port)
         .usePlaintext())
