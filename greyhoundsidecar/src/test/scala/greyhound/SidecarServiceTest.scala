@@ -3,7 +3,6 @@ package greyhound
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import greyhound.sidecaruser.{TestServer, TestSidecarUser}
 import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
-import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert}
@@ -61,13 +60,11 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
       },
     ).provide(
       TestSidecarUser.layer,
-      Runtime.removeDefaultLoggers,
-      SLF4J.slf4j,
       TestContext.layer,
       ZLayer.succeed(zio.Scope.global),
       sidecarUserServerLayer,
       TestKafkaInfo.layer,
       RegisterLive.layer,
       SidecarService.layer,
-    ).provideLayer(Runtime.removeDefaultLoggers >>> SLF4J.slf4j) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+    ) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
 }

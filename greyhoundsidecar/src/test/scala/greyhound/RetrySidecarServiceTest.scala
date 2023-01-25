@@ -4,7 +4,6 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.Retry
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import greyhound.sidecaruser.{FailOnceTestSidecarUser, TestServer}
 import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
-import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
 import zio.test.TestAspect.sequential
 import zio.test.junit.JUnitRunnableSpec
@@ -122,7 +121,7 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport w
       SidecarService.layer,
       RegisterLive.layer,
       TestKafkaInfo.layer,
-    ).provideLayer(Runtime.removeDefaultLoggers >>> SLF4J.slf4j) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+    ) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
 
   private def getSuccessfullyHandledRecords(failOnceSidecarUserService: FailOnceTestSidecarUser, delay: Int) = {
     failOnceSidecarUserService.collectedRecords.delay(delay.seconds)
