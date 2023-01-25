@@ -13,25 +13,7 @@ object SidecarServerMain extends ServerMain {
 
   override def port: Int = Ports.SidecarGrpcPort
 
-  class LoggingTransform[R] extends ZTransform[R, Status, R with RequestContext] {
-
-    def logCause(cause: Cause[Status]): URIO[RequestContext, Unit] = ZIO.logCause(cause)
-
-    def accessLog: URIO[RequestContext, Unit] = for {
-      context <- ZIO.service[RequestContext]
-      _ <- zio.Console.printLine(s"Request method: ${context.methodDescriptor.getBareMethodName}, attributes: ${context.attributes}").orDie
-    } yield ()
-
-    override def effect[A](io: ZIO[R, Status, A]): ZIO[R with RequestContext, Status, A] =
-      io.zipLeft(accessLog).tapErrorCause(logCause)
-
-    override def stream[A](io: ZStream[R, Status, A]): ZStream[R with RequestContext, Status, A] = (io ++ ZStream.fromZIO(accessLog).drain)
-      .onError(logCause)
-  }
-
-
-  override def services: ServiceList[Any] =
-    ServiceList.addZIO(initSidecarService)
+  override def services: ServiceList[Any] = ServiceList.addZIO(initSidecarService)
 
   override def welcome: ZIO[Any, Throwable, Unit] =
     super.welcome *>
@@ -59,4 +41,20 @@ object SidecarServerMain extends ServerMain {
     RegisterLive.layer,
     KafkaInfoLive.layer)
 
+}
+
+class LoggingTransform[R] extends ZTransform[R, Status, R with RequestContext] {
+
+  def logCause(cause: Cause[Status]): URIO[RequestContext, Unit] = ZIO.logCause(cause)
+
+  def accessLog: URIO[RequestContext, Unit] = for {
+    context <- ZIO.service[RequestContext]
+    _ <- zio.Console.printLine(s"Request method: ${context.methodDescriptor.getBareMethodName}, attributes: ${context.attributes}").orDie
+  } yield ()
+
+  override def effect[A](io: ZIO[R, Status, A]): ZIO[R with RequestContext, Status, A] =
+    io.zipLeft(accessLog).tapErrorCause(logCause)
+
+  override def stream[A](io: ZStream[R, Status, A]): ZStream[R with RequestContext, Status, A] = (io ++ ZStream.fromZIO(accessLog).drain)
+    .onError(logCause)
 }
