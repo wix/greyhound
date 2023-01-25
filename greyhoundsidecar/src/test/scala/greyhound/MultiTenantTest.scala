@@ -5,6 +5,7 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMess
 import greyhound.sidecaruser.{TestServer, TestSidecarUser}
 import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
 import io.grpc.Status
+import zio.logging.backend.SLF4J
 import zio.test.TestAspect.sequential
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assertTrue}
@@ -108,5 +109,5 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
       TestKafkaInfo.layer,
       RegisterLive.layer,
       SidecarService.layer,
-    ) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+    ).provideLayer(Runtime.removeDefaultLoggers >>> SLF4J.slf4j) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
 }

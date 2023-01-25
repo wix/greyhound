@@ -69,5 +69,5 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
       TestKafkaInfo.layer,
       RegisterLive.layer,
       SidecarService.layer,
-    ) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+    ).provideLayer(Runtime.removeDefaultLoggers >>> SLF4J.slf4j) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
 }
