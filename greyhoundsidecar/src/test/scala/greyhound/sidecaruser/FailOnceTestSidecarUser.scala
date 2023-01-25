@@ -3,7 +3,7 @@ package greyhound.sidecaruser
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.ZioGreyhoundsidecaruser.RCGreyhoundSidecarUser
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.{HandleMessagesRequest, HandleMessagesResponse}
 import io.grpc.Status
-import zio.{Ref, ZIO}
+import zio.{Ref, ZIO, ZLayer}
 
 class FailOnceTestSidecarUser(consumedTopics: Ref[Seq[HandleMessagesRequest]],
                               shouldFailRef: Ref[Boolean]) extends RCGreyhoundSidecarUser {
@@ -19,5 +19,14 @@ class FailOnceTestSidecarUser(consumedTopics: Ref[Seq[HandleMessagesRequest]],
         consumedTopics.update(_ :+ request)
       }
     } yield HandleMessagesResponse()
+  }
+}
+
+object FailOnceTestSidecarUser {
+  val layer: ZLayer[Any, Nothing, FailOnceTestSidecarUser] = ZLayer {
+    for {
+      messageSinkRef <- Ref.make[Seq[HandleMessagesRequest]](Nil)
+      shouldFailRef <- Ref.make[Boolean](true)
+    } yield new FailOnceTestSidecarUser(messageSinkRef, shouldFailRef)
   }
 }

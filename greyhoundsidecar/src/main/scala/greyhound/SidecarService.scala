@@ -6,9 +6,10 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsi
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
 import zio.{IO, Scope, UIO, ZIO, ZLayer}
+
 import java.util.UUID
 
-class SidecarService(register: Register.Service,
+class SidecarService(register: Register,
                      onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit,
                      kafkaAddress: String
                     ) extends RCGreyhoundSidecar {
@@ -86,6 +87,15 @@ class SidecarService(register: Register.Service,
         ).forkDaemon
       }
 
+}
+
+object SidecarService {
+  val layer: ZLayer[Register with KafkaInfo, Nothing, SidecarService] = ZLayer.fromZIO {
+    for {
+      kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
+      register <- ZIO.service[Register]
+    } yield new SidecarService(register, kafkaAddress = kafkaAddress)
+  }
 }
 
 

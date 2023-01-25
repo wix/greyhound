@@ -1,28 +1,23 @@
 package greyhound
 
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
 import greyhound.sidecaruser.{TestServer, TestSidecarUser}
-import greyhound.support.{ConnectionSettings, KafkaTestSupport, SidecarTestSupport, TestContext}
+import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
 import zio.logging.backend.SLF4J
 import zio.test.Assertion.equalTo
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert}
-import zio.{Ref, Runtime, Scope, ZIO, ZLayer}
+import zio.{Runtime, Scope, ZIO, ZLayer}
 import zio._
 import zio.test.TestAspect.sequential
 
-object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
+object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with ConnectionSettings {
 
   override val kafkaPort: Int = 6668
   override val zooKeeperPort: Int = 2188
   override val sideCarUserGrpcPort: Int = 9108
 
-  val testSidecarUserLayer: ZLayer[Any, Nothing, TestSidecarUser] = ZLayer.fromZIO(for {
-    ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
-  } yield new TestSidecarUser(ref))
-
-  val sidecarUserServerLayer = testSidecarUserLayer >>> ZLayer.fromZIO(for {
+  val sidecarUserServerLayer = ZLayer.fromZIO(for {
     user <- ZIO.service[TestSidecarUser]
     _ <- new TestServer(sideCarUserGrpcPort, user).myAppLogic.forkScoped
   } yield ())
@@ -64,12 +59,15 @@ object SidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with
           records = requests.head.records
         } yield assert(records.size)(equalTo(2))
       },
-    ).provideLayer(
-      Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
-        testContextLayer ++
-        ZLayer.succeed(zio.Scope.global) ++
-        testSidecarUserLayer ++
-        sidecarUserServerLayer ++
-        sidecarServiceLayer(kafkaAddress)) @@ TestAspect.withLiveClock @@
-      runKafka(kafkaPort, zooKeeperPort) @@ sequential
+    ).provide(
+      TestSidecarUser.layer,
+      Runtime.removeDefaultLoggers,
+      SLF4J.slf4j,
+      TestContext.layer,
+      ZLayer.succeed(zio.Scope.global),
+      sidecarUserServerLayer,
+      TestKafkaInfo.layer,
+      RegisterLive.layer,
+      SidecarService.layer,
+    ) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
 }
