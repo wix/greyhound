@@ -1,8 +1,10 @@
 package greyhound
 
-import scalapb.zio_grpc.{ServerMain, ServiceList}
+import io.grpc.Status
+import scalapb.zio_grpc.{RequestContext, ServerMain, ServiceList, ZTransform}
 import zio.logging.backend.SLF4J
-import zio.{Ref, Runtime, ZIO}
+import zio.stream.ZStream
+import zio.{Cause, Ref, Runtime, URIO, ZIO}
 
 object SidecarServerMain extends ServerMain {
 
@@ -10,6 +12,22 @@ object SidecarServerMain extends ServerMain {
   override val bootstrap = Runtime.removeDefaultLoggers >>> SLF4J.slf4j
 
   override def port: Int = Ports.SidecarGrpcPort
+
+  class LoggingTransform[R] extends ZTransform[R, Status, R with RequestContext] {
+
+    def logCause(cause: Cause[Status]): URIO[RequestContext, Unit] = ZIO.logCause(cause)
+
+    def accessLog: URIO[RequestContext, Unit] = for {
+      context <- ZIO.service[RequestContext]
+      _ <- zio.Console.printLine(s"Request method: ${context.methodDescriptor.getBareMethodName}, attributes: ${context.attributes}").orDie
+    } yield ()
+
+    override def effect[A](io: ZIO[R, Status, A]): ZIO[R with RequestContext, Status, A] =
+      io.zipLeft(accessLog).tapErrorCause(logCause)
+
+    override def stream[A](io: ZStream[R, Status, A]): ZStream[R with RequestContext, Status, A] = (io ++ ZStream.fromZIO(accessLog).drain)
+      .onError(logCause)
+  }
 
 
   override def services: ServiceList[Any] = ServiceList.addScoped {
@@ -30,6 +48,7 @@ object SidecarServerMain extends ServerMain {
           |""".stripMargin)
       _ = println(s"~~~ INIT Sidecar Server with kafka address ${kafkaAddress}")
     } yield new SidecarService(register, kafkaAddress = kafkaAddress)
+      .transform[Any, RequestContext](new LoggingTransform[Any])
   }
 
   override def welcome: ZIO[Any, Throwable, Unit] = super.welcome *> zio.Console.printLine(s"SidecarServerMain with port $port")
