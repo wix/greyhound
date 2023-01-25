@@ -263,17 +263,6 @@ class RebalanceIT extends BaseTestWithSharedEnv[Env, TestResources] {
     }
   }
 
-  private def recordCount(m: PolledRecords) = {
-    m.records.foldLeft(0) {
-      case (acc, (_, seq)) =>
-        acc +
-          seq.foldLeft(0) {
-            case (acc, (_, seq)) =>
-              acc + seq.size
-          }
-    }
-  }
-
   private def verifyGroupCommitted(topic: Topic, group: Group, partitions: Int) =
     ZIO.scoped(for {
       r                             <- getShared
