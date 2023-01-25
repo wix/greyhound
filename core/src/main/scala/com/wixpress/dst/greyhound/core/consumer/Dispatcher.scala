@@ -206,9 +206,9 @@ object Dispatcher {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber         <-
-      (pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
-        .repeatWhile(_ == true) raceFirst
-        reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId)).forkDaemon
+      (reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId).forkDaemon *>
+        pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
+          .repeatWhile(_ == true)).forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
         queue
