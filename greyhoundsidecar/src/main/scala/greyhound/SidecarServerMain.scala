@@ -30,11 +30,13 @@ object SidecarServerMain extends ServerMain {
   }
 
 
-  override def services: ServiceList[Any] = ServiceList.addZIO {
-    for {
-      service <- sidecarService
-      kafkaAddress <- ZIO.service[KafkaInfo].map(_.address).provide(KafkaInfoLive.layer)
-      _ = println(
+  override def services: ServiceList[Any] =
+    ServiceList.addZIO(initSidecarService)
+
+  override def welcome: ZIO[Any, Throwable, Unit] =
+    super.welcome *>
+      zio.Console.printLine(s"SidecarServerMain with port $port") *>
+      zio.Console.printLine(
         """   ____                _                           _
           |  / ___|_ __ ___ _   _| |__   ___  _   _ _ __   __| |
           | | |  _| '__/ _ \ | | | '_ \ / _ \| | | | '_ \ / _` |
@@ -45,16 +47,16 @@ object SidecarServerMain extends ServerMain {
           |  ___) | | (_| |  __/ (_| (_| | |
           | |____/|_|\__,_|\___|\___\__,_|_|
           |""".stripMargin)
-      _ = println(s"~~~ INIT Sidecar Server with kafka address $kafkaAddress")
-    } yield service.transform[RequestContext](new LoggingTransform)
-  }
 
-  override def welcome: ZIO[Any, Throwable, Unit] = super.welcome *> zio.Console.printLine(s"SidecarServerMain with port $port")
+  val sidecarService = for {
+    service <- ZIO.service[SidecarService]
+    kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
+    _ <- zio.Console.printLine(s"~~~ INIT Sidecar Service with kafka address $kafkaAddress").orDie
+  } yield service.transform[RequestContext](new LoggingTransform)
 
-  val sidecarService: UIO[SidecarService] = ZIO.service[SidecarService]
-    .provide(
-      SidecarService.layer,
-      RegisterLive.layer,
-      KafkaInfoLive.layer)
+  val initSidecarService = sidecarService.provide(
+    SidecarService.layer,
+    RegisterLive.layer,
+    KafkaInfoLive.layer)
 
 }
