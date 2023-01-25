@@ -15,7 +15,7 @@ It can communicate with various client SDKs, and gives easy access to produce an
 
 ## Sidecar APIs
 
-- **Create Topics**
+### Create Topics
 
   Create Kafka Topics without any boilerplate - simply pass the topic name. Multiple topics can be created in a single API call
 ```
@@ -29,7 +29,7 @@ message TopicToCreate {
 }
 ```
 
-- **Register Endpoint**
+### Register Endpoint
 
   In order to be able to receive notifications to consume, Sidecar needs to know where to send consumed messages to. Pass gRPC host and port
 ```
@@ -38,8 +38,16 @@ message RegisterRequest {
  string port = 2;
 }
 ```
-  
-- **Produce Messages**
+
+In the response you receive a `registration_id`, you will need it to consume messages later.
+
+```scala
+message RegisterResponse {
+  string registration_id = 1;
+}
+```
+
+### Produce Messages
 
 ```
 message ProduceRequest {
@@ -51,26 +59,78 @@ message ProduceRequest {
   map<string, string> custom_headers = 4;
 }
 ```
-  
 
-- **Start Consuming**
 
-  This API will create kafka consumers
+### Start Consuming
+
+This API will create kafka consumers:
+* Use the `registraion_id` you got from `Register`
+* Consumer - Handles one message per request
+* BatchConsumer - Handles batch of messages per request
+
 ```
 message StartConsumingRequest {
-  repeated Consumer consumers = 2;
+  repeated Consumer consumers = 1;
+  repeated BatchConsumer batch_consumers = 2;
+  string registration_id = 3;
 }
 
 message Consumer {
   string id = 1;
   string group = 2;
   string topic = 3;
+  oneof RetryStrategy {
+    NoRetry no_retry = 4;
+    BlockingRetry blocking = 5;
+    NonBlockingRetry non_blocking = 6;
+  }
+}
+
+message BatchConsumer {
+  string id = 1;
+  string group = 2;
+  string topic = 3;
+  oneof RetryStrategy {
+    NoRetry no_retry = 4;
+    BlockingRetry blocking = 5;
+  }
+  map<string, string> extraProperties = 6;
+}
+```
+
+### Retry policies
+
+#### NoRetry
+  * Don't retry failed messages
+```
+message NoRetry {
+}
+```
+
+#### BlockingRetry
+  * Will not proceed with the next message until the current is successful.
+  * For use cases where events must be processed successfully in-order in all circumstances, set consumer to retry indefinitely.
+  * Interval in milliseconds.
+```
+message BlockingRetry {
+  int32 interval = 1;
+}
+```
+#### NonBlockingRetry
+  * Retry topic will be created for each interval (Intervals in milliseconds)
+  * Partitions set the number of partitions per retry topic.
+  * Messages that throw exceptions will still be committed to Kafka, and they are resent to a dedicated topic which is comprised from the original topic name, the consumer group id and the retry attempt.
+  * Processing order is lost when using this retry mechanism.
+```
+message NonBlockingRetry {
+  repeated int32 intervals = 1;
+  google.protobuf.Int32Value partitions = 2;
 }
 ```
 
 ## Sidecar User API
 
-- **Handle Messages**
+### Handle Messages
 
   Sidecar app will send below gRPC request to the endpoint that was set in `Register` API 
 ```

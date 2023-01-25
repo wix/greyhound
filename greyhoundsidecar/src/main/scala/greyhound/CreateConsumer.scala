@@ -1,7 +1,6 @@
 package greyhound
 
 import com.wixpress.dst.greyhound.core.Serdes
-import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain._
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfig
