@@ -15,6 +15,7 @@ import scala.util.Random.nextString
 
 
 class TestSidecarUser1(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends TestSidecarUser(consumedTopics)
+
 class TestSidecarUser2(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends TestSidecarUser(consumedTopics)
 
 object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
@@ -68,6 +69,26 @@ object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with Ka
           recordsUser2 <- sidecarUser2.collectedRequests
         } yield assertTrue(recordsUser1.head.records.head.payload == contextForUser1.payload) &&
           assertTrue(recordsUser2.head.records.head.payload == contextForUser2.payload)
+      },
+
+      test("consume from two topics with regular and batch consumer") {
+        val contextForTopic1 = TestContext.random
+        val contextForTopic2 = TestContext.random
+        for {
+          sidecarUser1 <- ZIO.service[TestSidecarUser1]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic1.topicName, contextForTopic1.partition))))
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic2.topicName, contextForTopic2.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          _ <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            consumers = Seq(Consumer(contextForTopic1.consumerId, contextForTopic1.group, contextForTopic1.topicName)),
+            batchConsumers = Seq(BatchConsumer(contextForTopic2.consumerId, contextForTopic2.group, contextForTopic2.topicName))
+          ))
+          _ <- sidecarService.produce(ProduceRequest(contextForTopic1.topicName, contextForTopic1.payload, contextForTopic1.target))
+          _ <- sidecarService.produce(ProduceRequest(contextForTopic2.topicName, contextForTopic2.payload, contextForTopic2.target))
+          recordsUser1 <- sidecarUser1.collectedRequests.delay(6.seconds)
+        } yield assertTrue(recordsUser1.flatMap(_.records).map(_.payload) == Seq(contextForTopic1.payload, contextForTopic2.payload))
       },
 
       test("fail start consuming for non existing tenant") {
