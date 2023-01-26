@@ -492,9 +492,6 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   private def configFor(kafka: ManagedKafka, group: Group, pattern: Pattern) =
     RecordConsumerConfig(kafka.bootstrapServers, group, TopicPattern(pattern), extraProperties = fastConsumerMetadataFetching)
 
-  private def errorMsg(offsets: Map[Partition, Seq[Offset]], expected: Map[Partition, Seq[Offset]]) =
-    s"expected $expected, got $offsets"
-
   private def fastConsumerMetadataFetching =
     Map("metadata.max.age.ms" -> "0")
 
