@@ -113,15 +113,15 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport w
         } yield assert(recordsAfterInterval.nonEmpty)(equalTo(true))
       },
 
-    ).provide(
-      TestContext.layer,
-      ZLayer.succeed(zio.Scope.global),
-      FailOnceTestSidecarUser.layer,
-      sidecarUserServerLayer,
-      SidecarService.layer,
-      RegisterLive.layer,
-      TestKafkaInfo.layer,
-    ) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+    ).provideLayer(
+      TestContext.layer ++
+        ZLayer.succeed(zio.Scope.global) ++
+        FailOnceTestSidecarUser.layer ++
+        (FailOnceTestSidecarUser.layer >>> sidecarUserServerLayer) ++
+        ((RegisterLive.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer))@@
+      TestAspect.withLiveClock @@
+      runKafka(kafkaPort, zooKeeperPort) @@
+      sequential
 
   private def getSuccessfullyHandledRecords(failOnceSidecarUserService: FailOnceTestSidecarUser, delay: Int) = {
     failOnceSidecarUserService.collectedRecords.delay(delay.seconds)

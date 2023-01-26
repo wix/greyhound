@@ -99,14 +99,15 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
             consumers = Seq.empty)).either
         } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode)
       }
-    ).provide(
-      ZLayer.succeed(zio.Scope.global),
-      testSidecarUser1Layer,
-      sidecarUserServer1Layer,
-      testSidecarUser2Layer,
-      sidecarUserServer2Layer,
-      TestKafkaInfo.layer,
-      RegisterLive.layer,
-      SidecarService.layer,
-    ) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+    ).provideLayer(
+      TestContext.layer ++
+        ZLayer.succeed(zio.Scope.global) ++
+        testSidecarUser1Layer ++
+        (testSidecarUser1Layer >>> sidecarUserServer1Layer) ++
+        testSidecarUser2Layer ++
+        (testSidecarUser2Layer >>> sidecarUserServer2Layer) ++
+        ((RegisterLive.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer)) @@
+      TestAspect.withLiveClock @@
+      runKafka(kafkaPort, zooKeeperPort) @@
+      sequential
 }
