@@ -16,9 +16,21 @@ load("//dependencies/google_protobuf:google_protobuf.bzl", "google_protobuf")
 
 google_protobuf()
 
-load("@greyhound//central-sync:dependencies.bzl", "graknlabs_bazel_distribution")
+load("@greyhound//central-sync:dependencies.bzl", "rules_jvm_external", "rules_kotlin", "vaticle_bazel_distribution")
 
-graknlabs_bazel_distribution()
+rules_kotlin()
+
+rules_jvm_external()
+
+load("@io_bazel_rules_kotlin//kotlin:kotlin.bzl", "kotlin_repositories", "kt_register_toolchains")
+
+kotlin_repositories()
+
+kt_register_toolchains()
+
+vaticle_bazel_distribution()
+
+load("@vaticle_bazel_distribution//maven:deps.bzl", "maven_artifacts_with_versions")
 
 RULES_JVM_EXTERNAL_TAG = "3.1"
 
