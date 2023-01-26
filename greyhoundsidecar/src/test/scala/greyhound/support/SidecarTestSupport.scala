@@ -1,6 +1,6 @@
 package greyhound.support
 
-import greyhound.{HostDetails, RegisterLive, SidecarService}
+import greyhound.{ConsumerInfo, ConsumerRegistryLive, HostDetails, RegisterLive, SidecarService}
 import zio.{Ref, ULayer, ZLayer}
 
 trait SidecarTestSupport {
@@ -8,8 +8,10 @@ trait SidecarTestSupport {
 
   def sidecarServiceLayer(kafkaAddress: String) = ZLayer.fromZIO {
     for {
-      ref <- Ref.make(Map.empty[String, HostDetails])
-      register = RegisterLive(ref)
-    } yield new SidecarService(register, kafkaAddress = kafkaAddress)
+      registerRef <- Ref.make(Map.empty[String, HostDetails])
+      register = RegisterLive(registerRef)
+      consumerRegistryRef <- Ref.make(Map.empty[(String, String), ConsumerInfo])
+      consumerRegistry = ConsumerRegistryLive(consumerRegistryRef)
+    } yield new SidecarService(register, consumerRegistry, kafkaAddress = kafkaAddress)
   }
 }
