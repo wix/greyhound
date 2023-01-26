@@ -3,13 +3,12 @@ package greyhound
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
 import greyhound.sidecaruser.{TestServer, TestSidecarUser}
-import greyhound.support.{ConnectionSettings, KafkaTestSupport, SidecarTestSupport, TestContext}
+import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
 import io.grpc.Status
-import zio.logging.backend.SLF4J
 import zio.test.TestAspect.sequential
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assertTrue}
-import zio.{Ref, Runtime, Scope, ZIO, ZLayer, _}
+import zio.{Ref, Scope, ZIO, ZLayer, _}
 
 import scala.util.Random.nextString
 
@@ -18,7 +17,7 @@ class TestSidecarUser1(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends 
 
 class TestSidecarUser2(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends TestSidecarUser(consumedTopics)
 
-object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
+object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with ConnectionSettings {
 
   override val kafkaPort: Int = 6667
   override val zooKeeperPort: Int = 2187
@@ -30,7 +29,7 @@ object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with Ka
     ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
   } yield new TestSidecarUser1(ref))
 
-  val sidecarUserServer1Layer = testSidecarUser1Layer >>> ZLayer.fromZIO(for {
+  val sidecarUserServer1Layer = ZLayer.fromZIO(for {
     user <- ZIO.service[TestSidecarUser1]
     _ <- new TestServer(sideCarUser1GrpcPort, user).myAppLogic.forkScoped
   } yield ())
@@ -39,7 +38,7 @@ object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with Ka
     ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
   } yield new TestSidecarUser2(ref))
 
-  val sidecarUserServer2Layer = testSidecarUser2Layer >>> ZLayer.fromZIO(for {
+  val sidecarUserServer2Layer = ZLayer.fromZIO(for {
     user <- ZIO.service[TestSidecarUser2]
     _ <- new TestServer(sideCarUser2GrpcPort, user).myAppLogic.forkScoped
   } yield ())
@@ -49,6 +48,7 @@ object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with Ka
       test("two sidecar users") {
         val contextForUser1 = TestContext.random
         val contextForUser2 = TestContext.random
+
         for {
           sidecarUser1 <- ZIO.service[TestSidecarUser1]
           sidecarUser2 <- ZIO.service[TestSidecarUser2]
@@ -213,13 +213,14 @@ object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with Ka
         } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode)
       }
     ).provideLayer(
-      Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
-        testContextLayer ++
+      TestContext.layer ++
         ZLayer.succeed(zio.Scope.global) ++
         testSidecarUser1Layer ++
-        sidecarUserServer1Layer ++
+        (testSidecarUser1Layer >>> sidecarUserServer1Layer) ++
         testSidecarUser2Layer ++
-        sidecarUserServer2Layer ++
-        sidecarServiceLayer(kafkaAddress)) @@ TestAspect.withLiveClock @@
-      runKafka(kafkaPort, zooKeeperPort) @@ sequential
+        (testSidecarUser2Layer >>> sidecarUserServer2Layer) ++
+        ((ConsumerRegistryLive.layer ++ RegisterLive.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer)) @@
+      TestAspect.withLiveClock @@
+      runKafka(kafkaPort, zooKeeperPort) @@
+      sequential
 }
