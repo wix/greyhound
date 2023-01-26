@@ -2,29 +2,22 @@ package greyhound
 
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
-import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecaruser.HandleMessagesRequest
 import greyhound.sidecaruser.{FailOnceTestSidecarUser, TestServer}
-import greyhound.support.{ConnectionSettings, KafkaTestSupport, SidecarTestSupport, TestContext}
-import zio.logging.backend.SLF4J
+import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
 import zio.test.Assertion.equalTo
 import zio.test.TestAspect.sequential
 import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert}
-import zio.{Ref, Runtime, Scope, ZIO, ZLayer, _}
+import zio.{Scope, ZIO, ZLayer, _}
 
 // TODO: merge this test suite with SidecarServiceTest when multi-tenancy is implemented
-object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport with KafkaTestSupport with ConnectionSettings {
+object RetrySidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with ConnectionSettings {
 
   override val kafkaPort: Int = 6669
   override val zooKeeperPort: Int = 2189
   override val sideCarUserGrpcPort: Int = 9109
 
-  val testSidecarUserLayer: ZLayer[Any, Nothing, FailOnceTestSidecarUser] = ZLayer.fromZIO(for {
-    messageSinkRef <- Ref.make[Seq[HandleMessagesRequest]](Nil)
-    shouldFailRef <- Ref.make[Boolean](true)
-  } yield new FailOnceTestSidecarUser(messageSinkRef, shouldFailRef))
-
-  val sidecarUserServerLayer = testSidecarUserLayer >>> ZLayer.fromZIO(for {
+  val sidecarUserServerLayer = ZLayer.fromZIO(for {
     user <- ZIO.service[FailOnceTestSidecarUser]
     _ <- new TestServer(sideCarUserGrpcPort, user).myAppLogic.forkScoped
   } yield ())
@@ -121,12 +114,14 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with SidecarTestSupport
       },
 
     ).provideLayer(
-      Runtime.removeDefaultLoggers >>> SLF4J.slf4j ++
-        testContextLayer ++
+      TestContext.layer ++
         ZLayer.succeed(zio.Scope.global) ++
-        testSidecarUserLayer ++
-        sidecarServiceLayer(kafkaAddress) ++
-        sidecarUserServerLayer) @@ TestAspect.withLiveClock @@ runKafka(kafkaPort, zooKeeperPort) @@ sequential
+        FailOnceTestSidecarUser.layer ++
+        (FailOnceTestSidecarUser.layer >>> sidecarUserServerLayer) ++
+        ((ConsumerRegistryLive.layer ++RegisterLive.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer))@@
+      TestAspect.withLiveClock @@
+      runKafka(kafkaPort, zooKeeperPort) @@
+      sequential
 
   private def getSuccessfullyHandledRecords(failOnceSidecarUserService: FailOnceTestSidecarUser, delay: Int) = {
     failOnceSidecarUserService.collectedRecords.delay(delay.seconds)

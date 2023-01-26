@@ -1,6 +1,7 @@
 package greyhound.support
 
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ProduceRequest.Target
+import zio.ZLayer
 
 import scala.util.Random.{nextInt, nextString}
 case class TestContext(topicName: String,
@@ -16,6 +17,8 @@ case class TestContext(topicName: String,
 }
 
 object TestContext {
+
+  val layer = ZLayer.succeed(TestContext.random)
 
   def random: TestContext = TestContext(
     topicName = s"topic-$nextInt",

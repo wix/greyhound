@@ -1,30 +1,25 @@
 package greyhound
 
-import zio.{RIO, Ref, Task, UIO, URIO, ZIO}
+import zio.{Ref, Task, UIO, ZLayer}
 
-object Register {
+trait Register {
+  def add(tenantId: String, host: String, port: Int): Task[Unit]
 
-  trait Service {
-    def add(tenantId: String, host: String, port: Int): Task[Unit]
-
-    def get(tenantId: String): UIO[Option[HostDetails]]
-  }
-
-  type Register = Register.Service
-
-  def add(tenantId: String, host: String, port: Int): RIO[Register, Unit] =
-    ZIO.serviceWithZIO[Register.Service](_.add(tenantId, host, port))
-
-  def get(tenantId: String): URIO[Register, Option[HostDetails]] =
-    ZIO.serviceWithZIO[Register.Service](_.get(tenantId))
+  def get(tenantId: String): UIO[Option[HostDetails]]
 }
 
-case class RegisterLive(ref: Ref[Map[String, HostDetails]]) extends Register.Service {
-
+case class RegisterLive(ref: Ref[Map[String, HostDetails]]) extends Register {
   override def add(tenantId: String, host: String, port: Int): Task[Unit] =
     ref.update(_.updated(tenantId, HostDetails(host, port)))
 
   override def get(tenantId: String): UIO[Option[HostDetails]] = ref.get.map(_.get(tenantId))
+}
+
+object RegisterLive {
+  val layer: ZLayer[Any, Nothing, RegisterLive] = ZLayer.fromZIO {
+    Ref.make(Map.empty[String, HostDetails])
+      .map(RegisterLive(_))
+  }
 }
 
 case class HostDetails(host: String, port: Int)

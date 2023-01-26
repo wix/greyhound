@@ -9,8 +9,8 @@ import zio.{IO, Scope, UIO, ZIO, ZLayer}
 
 import java.util.UUID
 
-class SidecarService(register: Register.Service,
-                     consumerRegistry: ConsumerRegistry.Service,
+class SidecarService(register: Register,
+                     consumerRegistry: ConsumerRegistry,
                      onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit,
                      kafkaAddress: String
                     ) extends RCGreyhoundSidecar {
@@ -109,6 +109,16 @@ class SidecarService(register: Register.Service,
         } yield fiber
       }
 
+}
+
+object SidecarService {
+  val layer: ZLayer[Register with ConsumerRegistry with KafkaInfo, Nothing, SidecarService] = ZLayer.fromZIO {
+    for {
+      kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
+      register <- ZIO.service[Register]
+      consumerRegistry <- ZIO.service[ConsumerRegistry]
+    } yield new SidecarService(register, consumerRegistry, kafkaAddress = kafkaAddress)
+  }
 }
 
 
