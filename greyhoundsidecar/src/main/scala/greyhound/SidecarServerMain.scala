@@ -34,6 +34,8 @@ object SidecarServerMain extends ServerMain {
     for {
       kafkaAddress <- EnvArgs.kafkaAddress.map(_.getOrElse(throw new RuntimeException("kafka address is not configured")))
       hostDetailsRef <- Ref.make(Map.empty[String, HostDetails])
+      consumerRegistryRef <- Ref.make(Map.empty[(String, String), ConsumerInfo])
+      consumerRegistry = ConsumerRegistryLive(consumerRegistryRef)
       register = RegisterLive(hostDetailsRef)
       _ = println(
         """   ____                _                           _
@@ -47,7 +49,7 @@ object SidecarServerMain extends ServerMain {
           | |____/|_|\__,_|\___|\___\__,_|_|
           |""".stripMargin)
       _ = println(s"~~~ INIT Sidecar Server with kafka address ${kafkaAddress}")
-    } yield new SidecarService(register, kafkaAddress = kafkaAddress)
+    } yield new SidecarService(register, consumerRegistry, kafkaAddress = kafkaAddress)
       .transform[RequestContext](new LoggingTransform)
   }
 
