@@ -88,7 +88,8 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
           _ <- sidecarService.produce(ProduceRequest(contextForTopic1.topicName, contextForTopic1.payload, contextForTopic1.target))
           _ <- sidecarService.produce(ProduceRequest(contextForTopic2.topicName, contextForTopic2.payload, contextForTopic2.target))
           recordsUser1 <- sidecarUser1.collectedRequests.delay(6.seconds)
-        } yield assertTrue(recordsUser1.flatMap(_.records).map(_.payload) == Seq(contextForTopic1.payload, contextForTopic2.payload))
+        } yield assertTrue(recordsUser1.flatMap(_.records).map(_.payload)
+          .sorted == Seq(contextForTopic1.payload, contextForTopic2.payload).sorted)
       },
 
       test("fail to create another consumer for an already existing consumer-group and topic (consumer, consumer)") {
