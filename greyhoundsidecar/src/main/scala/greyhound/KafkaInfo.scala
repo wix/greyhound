@@ -11,8 +11,11 @@ case class KafkaInfoLive(address: String) extends KafkaInfo
 object KafkaInfoLive {
 
   val layer: ZLayer[Any, Nothing, KafkaInfoLive] = ZLayer.fromZIO {
-    ZIO.attempt(scala.util.Properties.envOrElse("KAFKA_ADDRESS", "kafka:29092"))
+    ZIO.attempt(scala.util.Properties.envOrNone("KAFKA_ADDRESS"))
+      .flatMap {
+        case Some(kafkaAddress) => ZIO.succeed(KafkaInfoLive(kafkaAddress))
+        case None => ZIO.fail(new RuntimeException("kafka address not found"))
+      }
       .orDie
-      .map(KafkaInfoLive(_))
   }
 }
