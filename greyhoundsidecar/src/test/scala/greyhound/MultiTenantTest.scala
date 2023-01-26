@@ -91,6 +91,119 @@ object MultiTenantTest extends JUnitRunnableSpec with SidecarTestSupport with Ka
         } yield assertTrue(recordsUser1.flatMap(_.records).map(_.payload) == Seq(contextForTopic1.payload, contextForTopic2.payload))
       },
 
+      test("fail to create another consumer for an already existing consumer-group and topic (consumer, consumer)") {
+        val contextForTopic = TestContext.random
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
+          _ <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
+          result <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user2TenantId,
+            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+        } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
+      },
+
+      test("fail to create another consumer for an already existing consumer-group and topic (consumer, batch consumer)") {
+        val contextForTopic = TestContext.random
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
+          _ <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
+          result <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user2TenantId,
+            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+        } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
+      },
+
+      test("fail to create another consumer for an already existing consumer-group and topic (batch consumer, consumer)") {
+        val contextForTopic = TestContext.random
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
+          _ <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
+          result <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user2TenantId,
+            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+        } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
+      },
+
+      test("fail to create another consumer for an already existing consumer-group and topic (batch consumer, batch consumer)") {
+        val contextForTopic = TestContext.random
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
+          _ <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
+          result <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user2TenantId,
+            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+        } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
+      },
+
+      test("fail to create multiple consumers for the same consumer-group and topic (consumer, consumer)") {
+        val contextForTopic = TestContext.random
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          result <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            consumers = Seq(
+              Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName),
+              Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)
+            ))).either
+        } yield assertTrue(result.left.get.getCode == Status.INVALID_ARGUMENT.getCode)
+      },
+
+      test("fail to create multiple consumers for the same consumer-group and topic (consumer, batch consumer)") {
+        val contextForTopic = TestContext.random
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          result <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            batchConsumers = Seq(
+              BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)
+            ),
+            consumers = Seq(
+              Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)
+            )
+          )).either
+        } yield assertTrue(result.left.get.getCode == Status.INVALID_ARGUMENT.getCode)
+      },
+
+      test("fail to create multiple consumers for the same consumer-group and topic (batch consumer, batch consumer)") {
+        val contextForTopic = TestContext.random
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          result <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = user1TenantId,
+            batchConsumers = Seq(
+              BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName),
+              BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)
+            )
+          )).either
+        } yield assertTrue(result.left.get.getCode == Status.INVALID_ARGUMENT.getCode)
+      },
+
       test("fail start consuming for non existing tenant") {
         for {
           sidecarService <- ZIO.service[SidecarService]
