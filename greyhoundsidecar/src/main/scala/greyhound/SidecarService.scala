@@ -5,7 +5,7 @@ import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RCGreyhoundSidecar
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
-import zio.{IO, Scope, UIO, ZIO, ZLayer}
+import zio.{IO, Scope, UIO, ZIO, ZLayer, durationInt}
 
 import java.util.UUID
 
@@ -54,6 +54,12 @@ class SidecarService(register: Register,
   private def mapTopic(topic: TopicToCreate): TopicConfig =
     TopicConfig(name = topic.name, partitions = topic.partitions.getOrElse(1), replicationFactor = 1, cleanupPolicy = CleanupPolicy.Compact)
 
+  override def stopConsuming(request: StopConsumingRequest): IO[Status, StopConsumingResponse] =
+    for {
+      _ <- validateStopConsumingRequest(request)
+      _ <- stopConsuming0(request)
+    } yield StopConsumingResponse()
+
   override def startConsuming(request: StartConsumingRequest): IO[Status, StartConsumingResponse] =
     for {
       _ <- validateStartConsumingRequest(request)
@@ -67,12 +73,35 @@ class SidecarService(register: Register,
       }
     } yield StartConsumingResponse()
 
+  private def validateStopConsumingRequest(request: StopConsumingRequest) =
+    for {
+      maybeConsumerInfo <- consumerRegistry.get(topic = request.topic, consumerGroup = request.group)
+      _ <- maybeConsumerInfo match {
+        case Some(consumerInfo) if consumerInfo.registrationId == request.registrationId => ZIO.succeed()
+        case _ => ZIO.fail(Status.NOT_FOUND)
+      }
+    } yield ()
+
+  private def stopConsuming0(request: StopConsumingRequest): ZIO[Any, Status, Unit] =
+    for {
+      maybeConsumerInfo <- consumerRegistry.get(topic = request.topic, consumerGroup = request.group)
+      _ <- maybeConsumerInfo match {
+        case Some(consumerInfo) =>
+          for {
+            _ <- consumerInfo.fiber.interrupt.delay(4.seconds)
+            result <- consumerRegistry.remove(consumerInfo.topic, consumerInfo.consumerGroup).mapError(Status.fromThrowable)
+          } yield result
+        case _ =>
+          ZIO.fail(Status.NOT_FOUND)
+      }
+    } yield ()
+
   private def validateStartConsumingRequest(request: StartConsumingRequest) = {
-    val candidateConsumers = request.consumers.map(consumer => ConsumerInfo(consumer.topic, consumer.group)) ++
-      request.batchConsumers.map(consumer => ConsumerInfo(consumer.topic, consumer.group))
+    val candidateConsumers = request.consumers.map(consumer => (consumer.topic, consumer.group)) ++
+      request.batchConsumers.map(consumer => (consumer.topic, consumer.group))
     if (candidateConsumers.size == candidateConsumers.toSet.size) {
       ZIO.forall(candidateConsumers) { candidateConsumer =>
-        consumerRegistry.get(candidateConsumer.topic, candidateConsumer.consumerGroup).map(_.isEmpty)
+        consumerRegistry.get(candidateConsumer._1, candidateConsumer._2).map(_.isEmpty)
       }.flatMap { success => if (success) ZIO.succeed() else ZIO.fail(Status.ALREADY_EXISTS) }
     } else
       ZIO.fail(Status.INVALID_ARGUMENT
@@ -91,8 +120,8 @@ class SidecarService(register: Register,
           group = consumer.group,
           retryStrategy = consumer.retryStrategy,
           kafkaAddress = kafkaAddress
-        ).forkDaemon
-        _ <- consumerRegistry.add(consumer.topic, consumer.group, Some(registrationId), Some(fiber.id))
+        ).interruptible.forkDaemon
+        _ <- consumerRegistry.add(consumer.topic, consumer.group, registrationId, fiber)
       } yield fiber
     } &>
       ZIO.foreachPar(batchConsumers) { consumer =>
@@ -104,8 +133,8 @@ class SidecarService(register: Register,
             retryStrategy = consumer.retryStrategy,
             kafkaAddress = kafkaAddress,
             extraProperties = consumer.extraProperties
-          ).forkDaemon
-          _ <- consumerRegistry.add(consumer.topic, consumer.group, Some(registrationId), Some(fiber.id))
+          ).interruptible.forkDaemon
+          _ <- consumerRegistry.add(consumer.topic, consumer.group, registrationId, fiber)
         } yield fiber
       }
 
