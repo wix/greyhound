@@ -58,12 +58,15 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           records = requests.head.records
         } yield assert(records.size)(equalTo(2))
       },
-    ).provideLayer(
-      TestContext.layer ++
-        ZLayer.succeed(zio.Scope.global) ++
-        TestSidecarUser.layer ++
-        (TestSidecarUser.layer >>> sidecarUserServerLayer) ++
-        ((ConsumerRegistryLive.layer ++ RegisterLive.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer)) @@
+    ).provide(
+      TestContext.layer,
+      ZLayer.succeed(zio.Scope.global),
+      TestSidecarUser.layer,
+      sidecarUserServerLayer,
+      ConsumerRegistryLive.layer,
+      RegisterLive.layer,
+      TestKafkaInfo.layer,
+      SidecarService.layer) @@
       TestAspect.withLiveClock @@
       runKafka(kafkaPort, zooKeeperPort) @@
       sequential
