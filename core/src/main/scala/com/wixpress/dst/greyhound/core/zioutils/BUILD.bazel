@@ -9,11 +9,11 @@ scala_library(
         ":sources",
     ],
     deps = [
-        "@dev_zio_zio_stacktracer_2_12",
+        "@dev_zio_zio_stacktracer_{}".format(scala_version_dependency),
         "//core/src/main/scala/com/wixpress/dst/greyhound/core",
-        # "@dev_zio_izumi_reflect_2_12",
-        "@dev_zio_zio_2_12",
-        "@dev_zio_zio_managed_2_12",
+        # "@dev_zio_izumi_reflect_{}".format(scala_version_dependency),
+        "@dev_zio_zio_{}".format(scala_version_dependency),
+        "@dev_zio_zio_managed_{}".format(scala_version_dependency),
         "@org_apache_kafka_kafka_clients",
     ],
 )

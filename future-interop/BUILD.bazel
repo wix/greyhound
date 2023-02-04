@@ -14,9 +14,9 @@ scala_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core:greyhound-core",
-        "@dev_zio_izumi_reflect_2_12",
-        "@dev_zio_zio_2_12",
-        "@dev_zio_zio_stacktracer_2_12",
+        "@dev_zio_izumi_reflect_{}".format(scala_version_dependency),
+        "@dev_zio_zio_{}".format(scala_version_dependency),
+        "@dev_zio_zio_stacktracer_{}".format(scala_version_dependency),
     ],
 )
 
