@@ -58,12 +58,28 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           records = requests.head.records
         } yield assert(records.size)(equalTo(2))
       },
+      test("stop consume topic"){
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          consumers = Seq(Consumer(context.consumerId, context.group, context.topicName))
+          consumersDetails = consumers.map(consumer => ConsumerDetails(topic = consumer.topic, group = consumer.group))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(registrationId = registrationId, consumers = consumers))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          _ <- sidecarService.stopConsuming(StopConsumingRequest(consumerDetails = consumersDetails, registrationId = registrationId))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records <- sidecarUser.collectedRequests.delay(6.seconds)
+        } yield assert(records.size)(equalTo(1))
+      },
     ).provideLayer(
       TestContext.layer ++
         ZLayer.succeed(zio.Scope.global) ++
         TestSidecarUser.layer ++
         (TestSidecarUser.layer >>> sidecarUserServerLayer) ++
-        ((ConsumerRegistryLive.layer ++ RegisterLive.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer)) @@
+        ((ConsumerRegistryLive.layer ++ RegisterLive.layer ++ TestKafkaInfo.layer ++ (ConsumerRegistryLive.layer >>> ConsumerCreatorImpl.layer)) >>> SidecarService.layer)) @@
       TestAspect.withLiveClock @@
       runKafka(kafkaPort, zooKeeperPort) @@
       sequential

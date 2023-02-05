@@ -4,7 +4,7 @@ import io.grpc.Status
 import scalapb.zio_grpc.{RequestContext, ServerMain, ServiceList, ZTransform}
 import zio.logging.backend.SLF4J
 import zio.stream.ZStream
-import zio.{Cause, Ref, Runtime, URIO, ZIO}
+import zio.{Cause, Runtime, URIO, ZIO}
 
 object SidecarServerMain extends ServerMain {
 
@@ -56,7 +56,8 @@ object SidecarServerMain extends ServerMain {
     SidecarService.layer,
     RegisterLive.layer,
     ConsumerRegistryLive.layer,
-    KafkaInfoLive.layer)
+    KafkaInfoLive.layer,
+    ConsumerCreatorImpl.layer)
 
 }
 

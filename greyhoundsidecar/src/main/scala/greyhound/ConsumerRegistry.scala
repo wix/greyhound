@@ -1,19 +1,36 @@
 package greyhound
 
-import zio.{FiberId, Ref, Task, UIO, ZLayer}
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
+import com.wixpress.dst.greyhound.core.consumer.batched.BatchConsumer
+import zio.{Ref, Task, UIO, ZLayer}
 
 trait ConsumerRegistry {
-  def add(topic: String, consumerGroup: String, registrationId: Option[String], fiberId: Option[FiberId.Runtime]): Task[Unit]
+  def add(topic: String,
+          consumerGroup: String,
+          registrationId: String,
+          recordConsumer: Either[BatchConsumer[Any], RecordConsumer[Any with Env]]
+         ): Task[Unit]
+
   def get(topic: String, consumerGroup: String): UIO[Option[ConsumerInfo]]
+
+  def remove(topic: String, consumerGroup: String): Task[Unit]
 }
 
 case class ConsumerRegistryLive(ref: Ref[Map[(String, String), ConsumerInfo]]) extends ConsumerRegistry {
 
-  override def add(topic: String, consumerGroup: String, registrationId: Option[String], fiberId: Option[FiberId.Runtime]): Task[Unit] =
-    ref.update(_.updated((topic, consumerGroup), ConsumerInfo(topic, consumerGroup, registrationId, fiberId)))
+  override def add(topic: String,
+                   consumerGroup: String,
+                   registrationId: String,
+                   recordConsumer: Either[BatchConsumer[Any], RecordConsumer[Any with Env]],
+                  ): Task[Unit] =
+    ref.update(_.updated((topic, consumerGroup), ConsumerInfo(topic, consumerGroup, registrationId, recordConsumer)))
 
   override def get(topic: String, consumerGroup: String): UIO[Option[ConsumerInfo]] =
     ref.get.map(_.get((topic, consumerGroup)))
+
+  override def remove(topic: String, consumerGroup: String): Task[Unit] =
+    ref.update(_ - ((topic, consumerGroup)))
 }
 
 object ConsumerRegistryLive {
@@ -27,5 +44,6 @@ object ConsumerRegistryLive {
 
 case class ConsumerInfo(topic: String,
                         consumerGroup: String,
-                        registrationId: Option[String] = None,
-                        fiberId: Option[FiberId.Runtime] = None)
+                        registrationId: String,
+                        recordConsumer: Either[BatchConsumer[Any], RecordConsumer[Any with Env]]
+                       )
