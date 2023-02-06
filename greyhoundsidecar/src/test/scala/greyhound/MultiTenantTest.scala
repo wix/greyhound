@@ -104,7 +104,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
             consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
             registrationId = user2TenantId,
-            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either.delay(1.second)
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
 
@@ -120,7 +120,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
             consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
             registrationId = user2TenantId,
-            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either.delay(1.second)
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
 
@@ -136,7 +136,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
             batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
             registrationId = user2TenantId,
-            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either.delay(1.second)
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
 
@@ -152,7 +152,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
             batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
             registrationId = user2TenantId,
-            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
+            batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either.delay(1.second)
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
 

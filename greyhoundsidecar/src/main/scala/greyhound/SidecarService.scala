@@ -131,20 +131,6 @@ class SidecarService(register: Register,
       }
     } yield StopConsumingResponse()
   }
-
-//  private def stopConsuming0(topic: String, group: String): ZIO[Any, Status, Unit] =
-//    for {
-//      maybeConsumerInfo <- consumerRegistry.get(topic = topic, consumerGroup = group)
-//      _ <- maybeConsumerInfo match {
-//        case Some(consumerInfo) =>
-//          for {
-//            _ <- consumerInfo.fiber.interrupt.delay(4.seconds)
-//            result <- consumerRegistry.remove(consumerInfo.topic, consumerInfo.consumerGroup).mapError(Status.fromThrowable)
-//          } yield result
-//        case _ =>
-//          ZIO.fail(Status.NOT_FOUND)
-//      }
-//    } yield ()
 }
 
 object SidecarService {
