@@ -92,11 +92,9 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
           .sorted == Seq(contextForTopic1.payload, contextForTopic2.payload).sorted)
       },
 
-      test("create another consumer for an already existing consumer-group and topic for different tenant") {
+      test("fail to create another consumer for an already existing consumer-group and topic (consumer, consumer)") {
         val contextForTopic = TestContext.random
         for {
-          sidecarUser1 <- ZIO.service[TestSidecarUser1]
-          sidecarUser2 <- ZIO.service[TestSidecarUser2]
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
           user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
@@ -104,26 +102,8 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
           _ <- sidecarService.startConsuming(StartConsumingRequest(
             registrationId = user1TenantId,
             consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
-          _ <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = user2TenantId,
-            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
-          _ <- sidecarService.produce(ProduceRequest(contextForTopic.topicName, contextForTopic.payload, contextForTopic.target)).delay(1.second)
-          recordsUser1 <- sidecarUser1.collectedRequests.delay(6.seconds)
-          recordsUser2 <- sidecarUser2.collectedRequests.delay(6.seconds)
-        } yield assertTrue(recordsUser1.nonEmpty && recordsUser2.nonEmpty)
-      },
-
-      test("fail to create another consumer for an already existing consumer-group and topic (consumer, consumer)") {
-        val contextForTopic = TestContext.random
-        for {
-          sidecarService <- ZIO.service[SidecarService]
-          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
-          userTenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
-          _ <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
-            consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user2TenantId,
             consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
@@ -133,12 +113,13 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         for {
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
-          userTenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
           _ <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user1TenantId,
             consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user2TenantId,
             batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
@@ -148,12 +129,13 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         for {
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
-          userTenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
           _ <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user1TenantId,
             batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user2TenantId,
             consumers = Seq(Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
@@ -163,12 +145,13 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         for {
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
-          userTenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
           _ <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user1TenantId,
             batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName))))
           result <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user2TenantId,
             batchConsumers = Seq(BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)))).either
         } yield assertTrue(result.left.get.getCode == Status.ALREADY_EXISTS.getCode)
       },
@@ -178,9 +161,9 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         for {
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
-          userTenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
           result <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user1TenantId,
             consumers = Seq(
               Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName),
               Consumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)
@@ -193,9 +176,9 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         for {
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
-          userTenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
           result <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user1TenantId,
             batchConsumers = Seq(
               BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)
             ),
@@ -211,9 +194,9 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         for {
           sidecarService <- ZIO.service[SidecarService]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
-          userTenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
+          user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
           result <- sidecarService.startConsuming(StartConsumingRequest(
-            registrationId = userTenantId,
+            registrationId = user1TenantId,
             batchConsumers = Seq(
               BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName),
               BatchConsumer(contextForTopic.consumerId, contextForTopic.group, contextForTopic.topicName)

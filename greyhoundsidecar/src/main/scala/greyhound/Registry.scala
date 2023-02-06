@@ -17,6 +17,8 @@ trait Registry {
   def removeConsumer(tenantId: String, topic: String, consumerGroup: String): Task[Unit]
 
   def getConsumer(tenantId: String, topic: String, consumerGroup: String): UIO[Option[TenantConsumerInfo]]
+
+  def isUniqueConsumer(topic: String, consumerGroup: String): UIO[Boolean]
 }
 case class TenantRegistry(ref: Ref[Map[String, TenantInfo]]) extends Registry {
   override def addTenant(tenantId: String, host: String, port: Int): Task[Unit] =
@@ -53,6 +55,9 @@ case class TenantRegistry(ref: Ref[Map[String, TenantInfo]]) extends Registry {
 
   override def tenantExists(tenantId: String): Task[Boolean] =
     ref.get.map(_.contains(tenantId))
+
+  override def isUniqueConsumer(topic: String, consumerGroup: String): UIO[Boolean] =
+    ref.get.map(!_.values.exists(_.consumers.contains((topic, consumerGroup))))
 }
 
 object TenantRegistry {

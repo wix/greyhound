@@ -68,16 +68,12 @@ class SidecarService(tenantRegistry: TenantRegistry,
     } yield StartConsumingResponse()
 
   private def validateStartConsumingRequest(request: StartConsumingRequest): ZIO[Any, Status, Unit] = {
-    val candidateConsumers = request.consumers.map(consumer => ConsumerInfo(consumer.topic, consumer.group)) ++
-      request.batchConsumers.map(consumer => ConsumerInfo(consumer.topic, consumer.group))
+    val candidateConsumers = request.consumers.map(consumer => TenantConsumerInfo(consumer.topic, consumer.group)) ++
+      request.batchConsumers.map(consumer => TenantConsumerInfo(consumer.topic, consumer.group))
     if (candidateConsumers.size == candidateConsumers.toSet.size) {
       ZIO.forall(candidateConsumers) { candidateConsumer =>
-        tenantRegistry.getConsumer(
-          tenantId = request.registrationId,
-          topic = candidateConsumer.topic,
-          consumerGroup = candidateConsumer.consumerGroup
-        ).map(_.isEmpty)
-      }.flatMap { success => if (success) ZIO.succeed() else ZIO.fail(Status.ALREADY_EXISTS) }
+        tenantRegistry.isUniqueConsumer(candidateConsumer.topic, candidateConsumer.consumerGroup)
+      }.flatMap { isUnique => if (isUnique) ZIO.succeed() else ZIO.fail(Status.ALREADY_EXISTS) }
     } else
       ZIO.fail(Status.INVALID_ARGUMENT
         .withDescription(s"Creating multiple consumers for the same topic + group is not allowed"))
