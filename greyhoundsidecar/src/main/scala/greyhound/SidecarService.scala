@@ -113,24 +113,37 @@ class SidecarService(register: Register,
 
   override def stopConsuming(request: StopConsumingRequest): IO[Status, StopConsumingResponse] = {
     for {
-      _ <- ZIO.foreachPar(request.consumerDetails) {consumerDetails =>
-        for {
-          maybeConsumerInfo <- consumerRegistry.get(topic = consumerDetails.topic, consumerGroup = consumerDetails.group)
-          _ <- maybeConsumerInfo match {
-            case Some(consumerInfo) =>
-              for {
-                _ <- consumerInfo.shutdown
-                  .mapError(Status.fromThrowable)
-                  .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
-                result <- consumerRegistry.remove(consumerInfo.topic, consumerInfo.consumerGroup).mapError(Status.fromThrowable)
-              } yield result
-            case _ =>
-              ZIO.fail(Status.NOT_FOUND)
-          }
-        } yield ()
-      }
+      _ <- validateConsumersExist(request.consumersDetails)
+      _ <- stopConsuming0(request)
     } yield StopConsumingResponse()
   }
+
+  private def stopConsuming0(request: StopConsumingRequest): ZIO[Any, Status, Seq[Unit]] = {
+    ZIO.foreachPar(request.consumersDetails) { consumerDetails =>
+      for {
+        maybeConsumerInfo <- consumerRegistry.get(topic = consumerDetails.topic, consumerGroup = consumerDetails.group)
+        _ <- maybeConsumerInfo match {
+          case Some(consumerInfo) =>
+            for {
+              _ <- consumerInfo.shutdown
+                .mapError(Status.fromThrowable)
+                .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
+              result <- consumerRegistry.remove(consumerInfo.topic, consumerInfo.consumerGroup).mapError(Status.fromThrowable)
+            } yield result
+          case None =>
+            ZIO.fail(Status.NOT_FOUND)
+        }
+      } yield ()
+    }
+  }
+
+  private def validateConsumersExist(consumers: Seq[ConsumerDetails]): ZIO[Any, Status, Unit] =
+    ZIO.foreachPar(consumers) { consumer =>
+      consumerRegistry.get(consumer.topic, consumer.group).flatMap {
+        case Some(_) => ZIO.succeed(())
+        case None => ZIO.fail(Status.NOT_FOUND)
+      }
+    }.map(_ => ())
 }
 
 object SidecarService {

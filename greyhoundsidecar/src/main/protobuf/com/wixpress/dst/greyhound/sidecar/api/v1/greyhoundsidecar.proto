@@ -39,7 +39,7 @@ message StartConsumingResponse {
 }
 
 message StopConsumingRequest {
-  repeated ConsumerDetails consumer_details = 1;
+  repeated ConsumerDetails consumers_details = 1;
   string registration_id = 2;
 }
 
