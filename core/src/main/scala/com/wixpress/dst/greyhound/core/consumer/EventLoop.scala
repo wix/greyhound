@@ -56,14 +56,14 @@ object EventLoop {
       partitionsAssigned  <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
       rebalanceListener    = listener(pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
-      _ <- report(SubscribingToInitialSubAndRebalanceListener(clientId, group, consumerAttributes))
+      _                   <- report(SubscribingToInitialSubAndRebalanceListener(clientId, group, consumerAttributes))
       _                   <- subscribe(initialSubscription, rebalanceListener)(consumer)
       running             <- Ref.make[EventLoopState](Running)
-      _ <- report(CreatingPollOnceFiber(clientId, group, consumerAttributes))
+      _                   <- report(CreatingPollOnceFiber(clientId, group, consumerAttributes))
       fiber               <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, positionsRef, offsets, config, clientId, group)
                                .repeatWhile(_ == true)
                                .forkDaemon
-      _ <- report(AwaitingPartitionsAssignment(clientId, group, consumerAttributes))
+      _                   <- report(AwaitingPartitionsAssignment(clientId, group, consumerAttributes))
       _                   <- partitionsAssigned.await
       env                 <- ZIO.environment[Env]
     } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provideEnvironment(env))
@@ -303,9 +303,11 @@ object EventLoopMetric {
 
   case class FailedToUpdatePositions(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
-  case class CreatingDispatcher(clientId: ClientId, group: Group, attributes: Map[String, String], startPaused: Boolean) extends EventLoopMetric
+  case class CreatingDispatcher(clientId: ClientId, group: Group, attributes: Map[String, String], startPaused: Boolean)
+      extends EventLoopMetric
 
-  case class SubscribingToInitialSubAndRebalanceListener(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
+  case class SubscribingToInitialSubAndRebalanceListener(clientId: ClientId, group: Group, attributes: Map[String, String])
+      extends EventLoopMetric
 
   case class CreatingPollOnceFiber(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
 
