@@ -10,7 +10,7 @@ import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.{BaseTestWithSharedEnv, TestMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
 import com.wixpress.dst.greyhound.testenv.ITEnv
-import com.wixpress.dst.greyhound.testenv.ITEnv.{Env, TestResources, testResources}
+import com.wixpress.dst.greyhound.testenv.ITEnv.{testResources, Env, TestResources}
 import org.apache.kafka.common.config.TopicConfig.{DELETE_RETENTION_MS_CONFIG, MAX_MESSAGE_BYTES_CONFIG, RETENTION_MS_CONFIG}
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.specs2.specification.core.Fragments
@@ -83,7 +83,7 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
       }
     }
 
-    //todo uncomment this after https://github.com/wix-private/core-server-build-tools/pull/13043 is merged
+    // todo uncomment this after https://github.com/wix-private/core-server-build-tools/pull/13043 is merged
 //    "reflect errors" in {
 //      val topic1 = aTopicConfig()
 //      val topic2 = aTopicConfig("x" * 250)
@@ -104,7 +104,7 @@ class AdminClientIT extends BaseTestWithSharedEnv[Env, TestResources] {
 //        created === Map(badTopic.name -> None)
 //      }
 //    }
-    //todo uncomment this after https://github.com/wix-private/core-server-build-tools/pull/13043 is merged
+    // todo uncomment this after https://github.com/wix-private/core-server-build-tools/pull/13043 is merged
 // =================================================================================================================================
     "ignore TopicExistsException by default" in {
       val topic = aTopicConfig()
