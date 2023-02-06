@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RCGreyhoundSidecar
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
-import zio.{Fiber, IO, Scope, UIO, ZIO, ZLayer, durationInt}
+import zio.{Fiber, IO, Scope, UIO, ZIO, ZLayer}
 
 import java.util.UUID
 
@@ -113,7 +113,7 @@ class SidecarService(register: Register,
 
   override def stopConsuming(request: StopConsumingRequest): IO[Status, StopConsumingResponse] = {
     for {
-      _ <- validateConsumersExist(request.consumersDetails)
+      _ <- validateConsumersExist(request.consumersDetails, request.registrationId)
       _ <- stopConsuming0(request)
     } yield StopConsumingResponse()
   }
@@ -137,11 +137,11 @@ class SidecarService(register: Register,
     }
   }
 
-  private def validateConsumersExist(consumers: Seq[ConsumerDetails]): ZIO[Any, Status, Unit] =
+  private def validateConsumersExist(consumers: Seq[ConsumerDetails], registrationId: String): ZIO[Any, Status, Unit] =
     ZIO.foreachPar(consumers) { consumer =>
       consumerRegistry.get(consumer.topic, consumer.group).flatMap {
-        case Some(_) => ZIO.succeed(())
-        case None => ZIO.fail(Status.NOT_FOUND)
+        case Some(existingConsumer) if existingConsumer.registrationId == registrationId => ZIO.succeed(())
+        case _ => ZIO.fail(Status.NOT_FOUND)
       }
     }.map(_ => ())
 }

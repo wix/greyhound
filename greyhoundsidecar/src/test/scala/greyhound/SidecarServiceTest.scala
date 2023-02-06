@@ -89,6 +89,20 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           records <- sidecarUser.collectedRequests.delay(1.seconds)
         } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode && records.nonEmpty)
       },
+      test("throw exception when stop request's registrationId doesn't match existing customer") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          consumersDetails = Seq(ConsumerDetails(topic = context.topicName, group = context.group))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(registrationId = registrationId, consumers = Seq(Consumer(context.consumerId, context.group, context.topicName))))
+          result <- sidecarService.stopConsuming(StopConsumingRequest(registrationId = "registrationId", consumersDetails = consumersDetails)).delay(1.second).either
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records <- sidecarUser.collectedRequests.delay(1.seconds)
+        } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode && records.nonEmpty)
+      },
     ).provideLayer(
       TestContext.layer ++
         ZLayer.succeed(zio.Scope.global) ++
