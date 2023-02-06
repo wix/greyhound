@@ -1,16 +1,16 @@
 package greyhound
 
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.{Producer, ProducerConfig, ProducerRecord}
 import com.wixpress.dst.greyhound.core.{CleanupPolicy, TopicConfig}
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar.RCGreyhoundSidecar
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import io.grpc.Status
-import zio.{IO, Scope, UIO, ZIO, ZLayer}
+import zio.{Fiber, IO, Scope, UIO, ZIO, ZLayer}
 
 import java.util.UUID
 
-class SidecarService(register: Register,
-                     consumerRegistry: ConsumerRegistry,
+class SidecarService(tenantRegistry: TenantRegistry,
                      onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit,
                      kafkaAddress: String
                     ) extends RCGreyhoundSidecar {
@@ -24,7 +24,7 @@ class SidecarService(register: Register,
   private def register0(request: RegisterRequest) = for {
     port <- ZIO.attempt(request.port.toInt)
     tenantId = UUID.randomUUID().toString
-    _ <- register.add(tenantId, request.host, port)
+    _ <- tenantRegistry.addTenant(tenantId = tenantId, host = request.host, port = port)
   } yield RegisterResponse(registrationId = tenantId)
 
   override def produce(request: ProduceRequest): IO[Status, ProduceResponse] =
@@ -57,9 +57,9 @@ class SidecarService(register: Register,
   override def startConsuming(request: StartConsumingRequest): IO[Status, StartConsumingResponse] =
     for {
       _ <- validateStartConsumingRequest(request)
-      _ <- register.get(request.registrationId).flatMap {
-        case Some(hostDetails) =>
-          startConsuming0(hostDetails, request.consumers, request.batchConsumers, request.registrationId)
+      _ <- tenantRegistry.getTenant(tenantId = request.registrationId).flatMap {
+        case Some(tenantInfo) =>
+          startConsuming0(tenantInfo.hostDetails, request.consumers, request.batchConsumers, request.registrationId)
             .mapError(Status.fromThrowable)
             .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
 
@@ -67,22 +67,26 @@ class SidecarService(register: Register,
       }
     } yield StartConsumingResponse()
 
-  private def validateStartConsumingRequest(request: StartConsumingRequest) = {
+  private def validateStartConsumingRequest(request: StartConsumingRequest): ZIO[Any, Status, Unit] = {
     val candidateConsumers = request.consumers.map(consumer => ConsumerInfo(consumer.topic, consumer.group)) ++
       request.batchConsumers.map(consumer => ConsumerInfo(consumer.topic, consumer.group))
     if (candidateConsumers.size == candidateConsumers.toSet.size) {
       ZIO.forall(candidateConsumers) { candidateConsumer =>
-        consumerRegistry.get(candidateConsumer.topic, candidateConsumer.consumerGroup).map(_.isEmpty)
+        tenantRegistry.getConsumer(
+          tenantId = request.registrationId,
+          topic = candidateConsumer.topic,
+          consumerGroup = candidateConsumer.consumerGroup
+        ).map(_.isEmpty)
       }.flatMap { success => if (success) ZIO.succeed() else ZIO.fail(Status.ALREADY_EXISTS) }
     } else
       ZIO.fail(Status.INVALID_ARGUMENT
         .withDescription(s"Creating multiple consumers for the same topic + group is not allowed"))
   }
 
-  private def startConsuming0(hostDetails: HostDetails,
+  private def startConsuming0(hostDetails: TenantHostDetails,
                               consumers: Seq[Consumer],
                               batchConsumers: Seq[BatchConsumer],
-                              registrationId: String) =
+                              registrationId: String): ZIO[GreyhoundMetrics with Scope, Throwable, Seq[Fiber.Runtime[Throwable, Unit]]] =
     ZIO.foreachPar(consumers) { consumer =>
       for {
         fiber <- CreateConsumer(
@@ -92,7 +96,11 @@ class SidecarService(register: Register,
           retryStrategy = consumer.retryStrategy,
           kafkaAddress = kafkaAddress
         ).forkDaemon
-        _ <- consumerRegistry.add(consumer.topic, consumer.group, Some(registrationId), Some(fiber.id))
+        _ <- tenantRegistry.addConsumer(
+          tenantId = registrationId,
+          topic = consumer.topic,
+          consumerGroup = consumer.group
+        )
       } yield fiber
     } &>
       ZIO.foreachPar(batchConsumers) { consumer =>
@@ -105,19 +113,22 @@ class SidecarService(register: Register,
             kafkaAddress = kafkaAddress,
             extraProperties = consumer.extraProperties
           ).forkDaemon
-          _ <- consumerRegistry.add(consumer.topic, consumer.group, Some(registrationId), Some(fiber.id))
+          _ <- tenantRegistry.addConsumer(
+            tenantId = registrationId,
+            topic = consumer.topic,
+            consumerGroup = consumer.group
+          )
         } yield fiber
       }
 
 }
 
 object SidecarService {
-  val layer: ZLayer[Register with ConsumerRegistry with KafkaInfo, Nothing, SidecarService] = ZLayer.fromZIO {
+  val layer: ZLayer[TenantRegistry with KafkaInfo, Nothing, SidecarService] = ZLayer.fromZIO {
     for {
       kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
-      register <- ZIO.service[Register]
-      consumerRegistry <- ZIO.service[ConsumerRegistry]
-    } yield new SidecarService(register, consumerRegistry, kafkaAddress = kafkaAddress)
+      tenantRegistry <- ZIO.service[TenantRegistry]
+    } yield new SidecarService(tenantRegistry = tenantRegistry, kafkaAddress = kafkaAddress)
   }
 }
 

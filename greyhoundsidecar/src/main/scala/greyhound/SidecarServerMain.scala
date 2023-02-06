@@ -54,8 +54,7 @@ object SidecarServerMain extends ServerMain {
 
   val initSidecarService = sidecarService.provide(
     SidecarService.layer,
-    RegisterLive.layer,
-    ConsumerRegistryLive.layer,
+    TenantRegistry.layer,
     KafkaInfoLive.layer)
 
 }
