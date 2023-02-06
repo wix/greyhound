@@ -49,14 +49,17 @@ private[retry] object NonBlockingRetryRecordHandler {
       }
 
       private def delayRetry(record: ConsumerRecord[_, _], awaitShutdown: TopicPartition => UIO[AwaitShutdown])(
-        retryAttempt: RetryAttempt) =
+        retryAttempt: RetryAttempt
+      ) =
         zio.Random.nextInt.flatMap(correlationId =>
           report(
             WaitingBeforeRetry(record.topic, retryAttempt, record.partition, record.offset, correlationId)
           ) *>
             awaitShutdown(record.topicPartition)
               .flatMap(_.interruptOnShutdown(retryAttempt.sleep))
-              .reporting(r => DoneWaitingBeforeRetry(record.topic, record.partition, record.offset, retryAttempt, r.duration, r.failed, correlationId))
+              .reporting(r =>
+                DoneWaitingBeforeRetry(record.topic, record.partition, record.offset, retryAttempt, r.duration, r.failed, correlationId)
+              )
         )
 
       override def isHandlingRetryTopicMessage(group: Group, record: ConsumerRecord[K, V]): Boolean = {
