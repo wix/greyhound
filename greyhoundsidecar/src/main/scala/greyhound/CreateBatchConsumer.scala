@@ -15,7 +15,7 @@ import scala.concurrent.duration.DurationInt
 
 object CreateBatchConsumer {
 
-  def apply(hostDetails: HostDetails,
+  def apply(hostDetails: TenantHostDetails,
             topic: String,
             group: String,
             retryStrategy: RetryStrategy,

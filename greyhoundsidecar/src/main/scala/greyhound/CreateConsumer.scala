@@ -14,7 +14,7 @@ import scala.concurrent.duration.DurationInt
 
 object CreateConsumer {
 
-  def apply(hostDetails: HostDetails,
+  def apply(hostDetails: TenantHostDetails,
             topic: String,
             group: String,
             retryStrategy: RetryStrategy,

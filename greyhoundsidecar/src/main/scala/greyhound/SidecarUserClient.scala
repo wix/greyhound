@@ -7,10 +7,10 @@ import zio.{Scope, ZIO}
 
 object SidecarUserClient {
 
-  def apply(hostDetails: HostDetails): ZIO[Scope, Throwable, GreyhoundSidecarUserClient.ZService[Any]] =
+  def apply(hostDetails: TenantHostDetails): ZIO[Scope, Throwable, GreyhoundSidecarUserClient.ZService[Any]] =
      GreyhoundSidecarUserClient.scoped(channel(hostDetails))
 
-  private def channel(hostDetails: HostDetails): ZManagedChannel=
+  private def channel(hostDetails: TenantHostDetails): ZManagedChannel=
     ZManagedChannel(
       ManagedChannelBuilder
         .forAddress(hostDetails.host, hostDetails.port)
