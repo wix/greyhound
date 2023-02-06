@@ -382,7 +382,10 @@ object UnsafeOffsetOperations {
     }
 
     override def offsetsForTimes(partitions: Set[TopicPartition], timeEpoch: Long, timeout: Duration): Map[TopicPartition, Option[Long]] =
-      consumer.offsetsForTimes(partitions.map(_.asKafka).map(tp => (tp, new lang.Long(timeEpoch))).toMap.asJava, timeout)
-        .asScala.toMap.map { case (tp, of) => TopicPartition(tp) -> (Option(of).map(_.offset())) }
+      consumer
+        .offsetsForTimes(partitions.map(_.asKafka).map(tp => (tp, new lang.Long(timeEpoch))).toMap.asJava, timeout)
+        .asScala
+        .toMap
+        .map { case (tp, of) => TopicPartition(tp) -> (Option(of).map(_.offset())) }
   }
 }

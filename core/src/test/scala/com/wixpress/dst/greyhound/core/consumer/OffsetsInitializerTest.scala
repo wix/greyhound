@@ -16,7 +16,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
   private val Seq(p1, p2, p3)     = Seq("t1" -> 1, "t2" -> 2, "t3" -> 3).map(tp => TopicPartition(tp._1, tp._2))
   private val partitions          = Set(p1, p2, p3)
   private val p1Pos, p2Pos, p3Pos = randomInt.toLong
-  val epochTimeToRewind = 1000L
+  val epochTimeToRewind           = 1000L
 
   "do nothing if no missing offsets" in
     new ctx {
@@ -124,71 +124,73 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       reported must contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
     }
 
-  "rewind uncommitted offsets" in new ctx {
-    givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
-    givenPositions(p2 -> p2Pos, p3 -> p3Pos)
-    givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2 -> 1L)
+  "rewind uncommitted offsets" in
+    new ctx {
+      givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
+      givenPositions(p2                          -> p2Pos, p3 -> p3Pos)
+      givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2    -> 1L)
 
-    committer.initializeOffsets(partitions)
+      committer.initializeOffsets(partitions)
 
-    val missingOffsets = Map(
-      p1 -> p1Pos,
-      p3 -> p3Pos
-    )
-
-    val rewindedOffsets = Map(
-      p1 -> 0L,
-    )
-
-    there was
-      one(offsetOps).commit(
-        missingOffsets ++ rewindedOffsets,
-        timeout
+      val missingOffsets = Map(
+        p1 -> p1Pos,
+        p3 -> p3Pos
       )
-  }
 
-  "rewind to endOffsets for uncommitted partitions when offsetsForTimes return null offsets " in new ctx {
-    givenCommittedOffsets(partitions)(Map(p2 -> randomInt, p3 -> randomInt))
-    givenPositions(p3 -> p3Pos)
-    givenEndOffsets(partitions, timeout)(Map(p1 -> p1Pos))
-    givenOffsetsForTimes(Set(p1))(p1 -> None /*kafka SDK returned null*/)
-
-    committer.initializeOffsets(partitions)
-
-    val committedOffsets = Map(
-      p1 -> p1Pos,
-    )
-
-    there was
-      one(offsetOps).commit(
-        committedOffsets,
-        timeout
+      val rewindedOffsets = Map(
+        p1 -> 0L
       )
-  }
 
-  "not rewind uncommitted offsets when offset reset is earliest" in new ctx(offsetReset = OffsetReset.Earliest) {
-    givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
-    givenPositions(p2 -> p2Pos, p3 -> p3Pos)
-    givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2 -> 1L)
+      there was
+        one(offsetOps).commit(
+          missingOffsets ++ rewindedOffsets,
+          timeout
+        )
+    }
 
-    committer.initializeOffsets(partitions)
+  "rewind to endOffsets for uncommitted partitions when offsetsForTimes return null offsets " in
+    new ctx {
+      givenCommittedOffsets(partitions)(Map(p2 -> randomInt, p3 -> randomInt))
+      givenPositions(p3                -> p3Pos)
+      givenEndOffsets(partitions, timeout)(Map(p1 -> p1Pos))
+      givenOffsetsForTimes(Set(p1))(p1 -> None /*kafka SDK returned null*/ )
 
-    val missingOffsets = Map(
-      p1 -> p1Pos,
-      p3 -> p3Pos
-    )
+      committer.initializeOffsets(partitions)
 
-    val rewindedOffsets = Map(
-      p1 -> 0L,
-    )
-
-    there was
-      one(offsetOps).commit(
-        missingOffsets ++ rewindedOffsets,
-        timeout
+      val committedOffsets = Map(
+        p1 -> p1Pos
       )
-  }
 
+      there was
+        one(offsetOps).commit(
+          committedOffsets,
+          timeout
+        )
+    }
+
+  "not rewind uncommitted offsets when offset reset is earliest" in
+    new ctx(offsetReset = OffsetReset.Earliest) {
+      givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
+      givenPositions(p2                          -> p2Pos, p3 -> p3Pos)
+      givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2    -> 1L)
+
+      committer.initializeOffsets(partitions)
+
+      val missingOffsets = Map(
+        p1 -> p1Pos,
+        p3 -> p3Pos
+      )
+
+      val rewindedOffsets = Map(
+        p1 -> 0L
+      )
+
+      there was
+        one(offsetOps).commit(
+          missingOffsets ++ rewindedOffsets,
+          timeout
+        )
+    }
 
   class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty, offsetReset: OffsetReset = OffsetReset.Latest) extends Scope {
     private val metricsLogRef           = new AtomicReference(Seq.empty[GreyhoundMetric])
