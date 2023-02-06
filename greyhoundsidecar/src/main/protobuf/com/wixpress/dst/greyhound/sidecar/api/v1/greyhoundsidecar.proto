@@ -49,7 +49,6 @@ message ConsumerDetails {
 }
 
 message StopConsumingResponse {
-
 }
 
 message Consumer {

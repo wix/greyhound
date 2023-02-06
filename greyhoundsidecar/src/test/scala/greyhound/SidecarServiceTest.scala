@@ -69,7 +69,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           consumersDetails = consumers.map(consumer => ConsumerDetails(topic = consumer.topic, group = consumer.group))
           _ <- sidecarService.startConsuming(StartConsumingRequest(registrationId = registrationId, consumers = consumers))
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
-          _ <- sidecarService.stopConsuming(StopConsumingRequest(consumerDetails = consumersDetails, registrationId = registrationId))
+          _ <- sidecarService.stopConsuming(StopConsumingRequest(registrationId = registrationId, consumerDetails = consumersDetails)).delay(1.second)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
           records <- sidecarUser.collectedRequests.delay(6.seconds)
         } yield assert(records.size)(equalTo(1))

@@ -119,11 +119,9 @@ class SidecarService(register: Register,
           _ <- maybeConsumerInfo match {
             case Some(consumerInfo) =>
               for {
-                _ <- consumerInfo.recordConsumer match {
-                  case Right(recordConsumer) => recordConsumer.shutdown().mapError(Status.fromThrowable)
-                    .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
-                  case Left(recordBatchConsumer) => recordBatchConsumer.shutdown(3.second).mapError(Status.fromThrowable)
-                }
+                _ <- consumerInfo.shutdown
+                  .mapError(Status.fromThrowable)
+                  .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
                 result <- consumerRegistry.remove(consumerInfo.topic, consumerInfo.consumerGroup).mapError(Status.fromThrowable)
               } yield result
             case _ =>

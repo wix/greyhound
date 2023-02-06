@@ -220,7 +220,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         (testSidecarUser1Layer >>> sidecarUserServer1Layer) ++
         testSidecarUser2Layer ++
         (testSidecarUser2Layer >>> sidecarUserServer2Layer) ++
-        ((ConsumerRegistryLive.layer ++ RegisterLive.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer)) @@
+        ((ConsumerRegistryLive.layer ++ RegisterLive.layer ++ TestKafkaInfo.layer  ++ (ConsumerRegistryLive.layer >>> ConsumerCreatorImpl.layer)) >>> SidecarService.layer)) @@
       TestAspect.withLiveClock @@
       runKafka(kafkaPort, zooKeeperPort) @@
       sequential

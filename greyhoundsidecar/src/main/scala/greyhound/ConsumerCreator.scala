@@ -1,6 +1,7 @@
 package greyhound
 
 import com.wixpress.dst.greyhound.core.Serdes
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.batched._
 import com.wixpress.dst.greyhound.core.consumer.domain._
@@ -11,8 +12,9 @@ import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.BatchConsumer.
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.Consumer.RetryStrategy.{Blocking, NoRetry, NonBlocking}
 import greyhound.ConsumerCreatorImpl.{asBatchRetryConfig, asRetryConfig}
-import zio.{Scope, ZIO, ZLayer}
+import zio.{RIO, Scope, ZIO, ZLayer}
 
+import java.time.Duration
 import scala.concurrent.duration.DurationInt
 trait ConsumerCreator {
   def createConsumer(hostDetails: HostDetails,
@@ -51,7 +53,7 @@ class ConsumerCreatorImpl(consumerRegistry: ConsumerRegistry) extends ConsumerCr
         ),
         handler = ConsumerHandler(topic, group, client)
           .withDeserializers(Serdes.StringSerde, Serdes.StringSerde))
-      _ <- consumerRegistry.add(topic, group, registrationId, Right(recordConsumer))
+      _ <- consumerRegistry.add(topic, group, registrationId, recordConsumer.shutdown())
     } yield ()
   }
 
@@ -76,7 +78,7 @@ class ConsumerCreatorImpl(consumerRegistry: ConsumerRegistry) extends ConsumerCr
         ),
         handler = BatchConsumerHandler(topic, group, client)
           .withDeserializers(Serdes.StringSerde, Serdes.StringSerde))
-      _ <- consumerRegistry.add(topic, group, registrationId, Left(batchConsumer))
+      _ <- consumerRegistry.add(topic, group, registrationId, batchConsumer.shutdown(Duration.ofSeconds(5L)))
     } yield ()
   }
 }
