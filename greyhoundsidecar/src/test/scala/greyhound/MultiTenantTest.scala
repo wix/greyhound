@@ -205,8 +205,6 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         val contextForTopic = TestContext.random
         for {
           sidecarService <- ZIO.service[SidecarService]
-          sidecarUser1 <- ZIO.service[TestSidecarUser]
-          sidecarUser2 <- ZIO.service[TestSidecarUser]
           _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(contextForTopic.topicName, contextForTopic.partition))))
           user1TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser1GrpcPort.toString)).map(_.registrationId)
           user2TenantId <- sidecarService.register(RegisterRequest(localhost, sideCarUser2GrpcPort.toString)).map(_.registrationId)
