@@ -72,7 +72,7 @@ class SidecarService(tenantRegistry: TenantRegistry,
       request.batchConsumers.map(consumer => TenantConsumerInfo(consumer.topic, consumer.group))
     if (candidateConsumers.size == candidateConsumers.toSet.size) {
       ZIO.forall(candidateConsumers) { candidateConsumer =>
-        tenantRegistry.isUniqueConsumer(candidateConsumer.topic, candidateConsumer.consumerGroup)
+        tenantRegistry.isUniqueConsumer(candidateConsumer.topic, candidateConsumer.consumerGroup, request.registrationId)
       }.flatMap { isUnique => if (isUnique) ZIO.succeed() else ZIO.fail(Status.ALREADY_EXISTS) }
     } else
       ZIO.fail(Status.INVALID_ARGUMENT
