@@ -13,6 +13,8 @@ service GreyhoundSidecar {
   rpc Produce (ProduceRequest) returns (ProduceResponse);
   rpc CreateTopics (CreateTopicsRequest) returns (CreateTopicsResponse);
   rpc StartConsuming (StartConsumingRequest) returns (StartConsumingResponse);
+  rpc StopConsuming (StopConsumingRequest) returns (StopConsumingResponse);
+
   // in the future:
   // batch produce, batch consume, retry policies, more consumer features
   // handling failures/restarts - keep-alive, re-subscribing consumers
@@ -94,4 +96,17 @@ message TopicToCreate {
 
 message CreateTopicsResponse {
 
+}
+
+message StopConsumingRequest {
+  repeated ConsumerDetails consumers_details = 1;
+  string registration_id = 2;
+}
+
+message ConsumerDetails {
+  string group = 1;
+  string topic = 2;
+}
+
+message StopConsumingResponse {
 }

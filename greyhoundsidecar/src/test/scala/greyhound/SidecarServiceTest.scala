@@ -3,9 +3,10 @@ package greyhound
 import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar._
 import greyhound.sidecaruser.{TestServer, TestSidecarUser}
 import greyhound.support.{ConnectionSettings, KafkaTestSupport, TestContext}
+import io.grpc.Status
 import zio.test.Assertion.equalTo
 import zio.test.junit.JUnitRunnableSpec
-import zio.test.{Spec, TestAspect, TestEnvironment, assert}
+import zio.test.{Spec, TestAspect, TestEnvironment, assert, assertTrue}
 import zio.{Scope, ZIO, ZLayer}
 import zio._
 import zio.test.TestAspect.sequential
@@ -58,12 +59,56 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           records = requests.head.records
         } yield assert(records.size)(equalTo(2))
       },
+      test("stop consume topic") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          consumers = Seq(Consumer(context.consumerId, context.group, context.topicName))
+          consumersDetails = consumers.map(consumer => ConsumerDetails(topic = consumer.topic, group = consumer.group))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(registrationId = registrationId, consumers = consumers))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          _ <- sidecarService.stopConsuming(StopConsumingRequest(registrationId = registrationId, consumersDetails = consumersDetails)).delay(1.second)
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records <- sidecarUser.collectedRequests.delay(6.seconds)
+        } yield assert(records.size)(equalTo(1))
+      },
+      test("throw exception when stopping non existing entity") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          consumersDetails = Seq(ConsumerDetails(topic = context.topicName, group = context.group), ConsumerDetails(topic = "context.topicName", group = "context.group"))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(registrationId = registrationId, consumers = Seq(Consumer(context.consumerId, context.group, context.topicName))))
+          result <- sidecarService.stopConsuming(StopConsumingRequest(registrationId = registrationId, consumersDetails = consumersDetails)).delay(1.second).either
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records <- sidecarUser.collectedRequests.delay(1.seconds)
+        } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode && records.nonEmpty)
+      },
+      test("throw exception when stop request's registrationId doesn't match existing customer") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          consumersDetails = Seq(ConsumerDetails(topic = context.topicName, group = context.group))
+          _ <- sidecarService.startConsuming(StartConsumingRequest(registrationId = registrationId, consumers = Seq(Consumer(context.consumerId, context.group, context.topicName))))
+          result <- sidecarService.stopConsuming(StopConsumingRequest(registrationId = "registrationId", consumersDetails = consumersDetails)).delay(1.second).either
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records <- sidecarUser.collectedRequests.delay(1.seconds)
+        } yield assertTrue(result.left.get.getCode == Status.NOT_FOUND.getCode && records.nonEmpty)
+      },
     ).provideLayer(
       TestContext.layer ++
         ZLayer.succeed(zio.Scope.global) ++
         TestSidecarUser.layer ++
         (TestSidecarUser.layer >>> sidecarUserServerLayer) ++
-        ((TenantRegistry.layer ++ TestKafkaInfo.layer) >>> SidecarService.layer)) @@
+        ((TenantRegistry.layer ++ TestKafkaInfo.layer ++ (TenantRegistry.layer >>> ConsumerCreatorImpl.layer)) >>> SidecarService.layer)) @@
       TestAspect.withLiveClock @@
       runKafka(kafkaPort, zooKeeperPort) @@
       sequential

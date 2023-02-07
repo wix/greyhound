@@ -1,6 +1,7 @@
 package greyhound
 
-import zio.{Ref, Task, UIO, ZLayer}
+import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
+import zio.{RIO, Ref, Task, UIO, ZLayer}
 
 trait Registry {
 
@@ -12,7 +13,7 @@ trait Registry {
 
   def tenantExists(tenantId: String): Task[Boolean]
 
-  def addConsumer(tenantId: String, topic: String, consumerGroup: String): Task[Unit]
+  def addConsumer(tenantId: String, topic: String, consumerGroup: String, shutdown: RIO[Env, Unit]): Task[Unit]
 
   def removeConsumer(tenantId: String, topic: String, consumerGroup: String): Task[Unit]
 
@@ -30,11 +31,11 @@ case class TenantRegistry(ref: Ref[Map[String, TenantInfo]]) extends Registry {
   override def getTenant(tenantId: String): UIO[Option[TenantInfo]] =
     ref.get.map(_.get(tenantId))
 
-  override def addConsumer(tenantId: String, topic: String, consumerGroup: String): Task[Unit] =
+  override def addConsumer(tenantId: String, topic: String, consumerGroup: String, shutdown: RIO[Env, Unit]): Task[Unit] =
     ref.update { tenants =>
       tenants.get(tenantId) match {
         case Some(tenant) =>
-          tenants.updated(tenantId, tenant.copy(consumers = tenant.consumers.updated((topic, consumerGroup), TenantConsumerInfo(topic, consumerGroup))))
+          tenants.updated(tenantId, tenant.copy(consumers = tenant.consumers.updated((topic, consumerGroup), TenantConsumerInfo(topic, consumerGroup, shutdown))))
         case None =>
           tenants
       }
@@ -71,6 +72,5 @@ case class TenantInfo(hostDetails: TenantHostDetails, consumers: Map[(String, St
 
 case class TenantHostDetails(host: String, port: Int)
 
-case class TenantConsumerInfo(topic: String, consumerGroup: String)
-//                              , shutdown: RIO[Env, Unit])
+case class TenantConsumerInfo(topic: String, consumerGroup: String, shutdown: RIO[Env, Unit])
 
