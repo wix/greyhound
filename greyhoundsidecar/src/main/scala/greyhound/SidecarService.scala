@@ -10,7 +10,8 @@ import zio.{Fiber, IO, Scope, UIO, ZIO, ZLayer}
 
 import java.util.UUID
 
-class SidecarService(tenantRegistry: TenantRegistry,
+class SidecarService(tenantRegistry: Registry,
+                     consumerCreator: ConsumerCreator,
                      onProduceListener: ProducerRecord[_, _] => UIO[Unit] = _ => ZIO.unit,
                      kafkaAddress: String
                     ) extends RCGreyhoundSidecar {
@@ -68,11 +69,11 @@ class SidecarService(tenantRegistry: TenantRegistry,
     } yield StartConsumingResponse()
 
   private def validateStartConsumingRequest(request: StartConsumingRequest): ZIO[Any, Status, Unit] = {
-    val candidateConsumers = request.consumers.map(consumer => TenantConsumerInfo(consumer.topic, consumer.group)) ++
-      request.batchConsumers.map(consumer => TenantConsumerInfo(consumer.topic, consumer.group))
+    val candidateConsumers = request.consumers.map(consumer => (consumer.topic, consumer.group)) ++
+      request.batchConsumers.map(consumer => (consumer.topic, consumer.group))
     if (candidateConsumers.size == candidateConsumers.toSet.size) {
       ZIO.forall(candidateConsumers) { candidateConsumer =>
-        tenantRegistry.isUniqueConsumer(candidateConsumer.topic, candidateConsumer.consumerGroup, request.registrationId)
+        tenantRegistry.isUniqueConsumer(candidateConsumer._1, candidateConsumer._2, request.registrationId)
       }.flatMap { isUnique => if (isUnique) ZIO.succeed() else ZIO.fail(Status.ALREADY_EXISTS) }
     } else
       ZIO.fail(Status.INVALID_ARGUMENT
@@ -85,46 +86,72 @@ class SidecarService(tenantRegistry: TenantRegistry,
                               registrationId: String): ZIO[GreyhoundMetrics with Scope, Throwable, Seq[Fiber.Runtime[Throwable, Unit]]] =
     ZIO.foreachPar(consumers) { consumer =>
       for {
-        fiber <- CreateConsumer(
+        fiber <- consumerCreator.createConsumer(
           hostDetails = hostDetails,
           topic = consumer.topic,
           group = consumer.group,
           retryStrategy = consumer.retryStrategy,
-          kafkaAddress = kafkaAddress
+          kafkaAddress = kafkaAddress,
+          registrationId = registrationId
         ).forkDaemon
-        _ <- tenantRegistry.addConsumer(
-          tenantId = registrationId,
-          topic = consumer.topic,
-          consumerGroup = consumer.group
-        )
       } yield fiber
     } &>
       ZIO.foreachPar(batchConsumers) { consumer =>
         for {
-          fiber <- CreateBatchConsumer(
+          fiber <- consumerCreator.createBatchConsumer(
             hostDetails = hostDetails,
             topic = consumer.topic,
             group = consumer.group,
             retryStrategy = consumer.retryStrategy,
             kafkaAddress = kafkaAddress,
-            extraProperties = consumer.extraProperties
+            extraProperties = consumer.extraProperties,
+            registrationId = registrationId
           ).forkDaemon
-          _ <- tenantRegistry.addConsumer(
-            tenantId = registrationId,
-            topic = consumer.topic,
-            consumerGroup = consumer.group
-          )
         } yield fiber
       }
 
+  override def stopConsuming(request: StopConsumingRequest): IO[Status, StopConsumingResponse] = {
+    for {
+      _ <- validateConsumersExist(request.consumersDetails, request.registrationId)
+      _ <- stopConsuming0(request)
+    } yield StopConsumingResponse()
+  }
+
+  private def stopConsuming0(request: StopConsumingRequest): ZIO[Any, Status, Seq[Unit]] = {
+    ZIO.foreachPar(request.consumersDetails) { consumerDetails =>
+      for {
+        maybeConsumerInfo <- tenantRegistry.getConsumer(tenantId = request.registrationId, topic = consumerDetails.topic, consumerGroup = consumerDetails.group)
+        _ <- maybeConsumerInfo match {
+          case Some(consumerInfo) =>
+            for {
+              _ <- consumerInfo.shutdown
+                .mapError(Status.fromThrowable)
+                .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
+              result <- tenantRegistry.removeConsumer(tenantId = request.registrationId, topic = consumerInfo.topic, consumerGroup = consumerInfo.consumerGroup).mapError(Status.fromThrowable)
+            } yield result
+          case None =>
+            ZIO.fail(Status.NOT_FOUND)
+        }
+      } yield ()
+    }
+  }
+
+  private def validateConsumersExist(consumers: Seq[ConsumerDetails], registrationId: String): ZIO[Any, Status, Set[Unit]] =
+    ZIO.foreachPar(consumers.toSet) { consumer =>
+      tenantRegistry.getConsumer(tenantId = registrationId, topic = consumer.topic, consumerGroup = consumer.group).flatMap {
+        case Some(_) => ZIO.succeed(())
+        case _ => ZIO.fail(Status.NOT_FOUND)
+      }
+    }
 }
 
 object SidecarService {
-  val layer: ZLayer[TenantRegistry with KafkaInfo, Nothing, SidecarService] = ZLayer.fromZIO {
+  val layer: ZLayer[Registry with ConsumerCreator with KafkaInfo, Nothing, SidecarService] = ZLayer.fromZIO {
     for {
       kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
-      tenantRegistry <- ZIO.service[TenantRegistry]
-    } yield new SidecarService(tenantRegistry = tenantRegistry, kafkaAddress = kafkaAddress)
+      tenantRegistry <- ZIO.service[Registry]
+      consumerCreator <- ZIO.service[ConsumerCreator]
+    } yield new SidecarService(tenantRegistry = tenantRegistry, consumerCreator = consumerCreator, kafkaAddress = kafkaAddress)
   }
 }
 
