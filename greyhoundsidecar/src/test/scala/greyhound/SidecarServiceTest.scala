@@ -9,7 +9,7 @@ import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert, assertTrue}
 import zio.{Scope, ZIO, ZLayer}
 import zio._
-import zio.test.TestAspect.sequential
+import zio.test.TestAspect.{nonFlaky, sequential}
 
 object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with ConnectionSettings {
 
@@ -70,10 +70,12 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           consumersDetails = consumers.map(consumer => ConsumerDetails(topic = consumer.topic, group = consumer.group))
           _ <- sidecarService.startConsuming(StartConsumingRequest(registrationId = registrationId, consumers = consumers))
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records1 <- sidecarUser.collectedRequests.delay(6.seconds)
+          _ <- assertTrue(records1.nonEmpty)
           _ <- sidecarService.stopConsuming(StopConsumingRequest(registrationId = registrationId, consumersDetails = consumersDetails)).delay(1.second)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
-          records <- sidecarUser.collectedRequests.delay(6.seconds)
-        } yield assert(records.size)(equalTo(1))
+          records2 <- sidecarUser.collectedRequests.delay(6.seconds)
+        } yield assert(records2.size - records1.size)(equalTo(0))
       },
       test("throw exception when stopping non existing entity") {
         for {
