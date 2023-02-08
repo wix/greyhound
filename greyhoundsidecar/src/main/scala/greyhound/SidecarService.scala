@@ -69,11 +69,11 @@ class SidecarService(tenantRegistry: Registry,
     } yield StartConsumingResponse()
 
   private def validateStartConsumingRequest(request: StartConsumingRequest): ZIO[Any, Status, Unit] = {
-    val candidateConsumers = request.consumers.map(consumer => (consumer.topic, consumer.group)) ++
-      request.batchConsumers.map(consumer => (consumer.topic, consumer.group))
+    val candidateConsumers = request.consumers.map(consumer => TenantConsumerInfo(consumer.topic, consumer.group, shutdown = ZIO.unit)) ++
+      request.batchConsumers.map(consumer => TenantConsumerInfo(consumer.topic, consumer.group, shutdown = ZIO.unit))
     if (candidateConsumers.size == candidateConsumers.toSet.size) {
       ZIO.forall(candidateConsumers) { candidateConsumer =>
-        tenantRegistry.isUniqueConsumer(candidateConsumer._1, candidateConsumer._2, request.registrationId)
+        tenantRegistry.isUniqueConsumer(candidateConsumer.topic, candidateConsumer.consumerGroup, request.registrationId)
       }.flatMap { isUnique => if (isUnique) ZIO.succeed() else ZIO.fail(Status.ALREADY_EXISTS) }
     } else
       ZIO.fail(Status.INVALID_ARGUMENT
