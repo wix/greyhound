@@ -24,7 +24,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
 
   override def spec: Spec[TestEnvironment with Scope, Any] =
     suite("sidecar service")(
-      test("remove registration and consumers if keep alive failed") {
+      test("remove registration and consumers if keep alive failed twice in a row") {
         for {
           context <- ZIO.service[TestContext]
           sidecarUser <- ZIO.service[TestSidecarUser]
@@ -38,9 +38,29 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           records1 <- sidecarUser.collectedRequests.delay(6.seconds)
           _ <- assertTrue(records1.nonEmpty)
           _ <- sidecarUser.updateShouldKeepAlive(keepAlive = false)
+          _ <- sidecarUser.updateShouldKeepAlive(keepAlive = true).delay(5.second)
           _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target)).delay(6.seconds)
           records2 <- sidecarUser.collectedRequests.delay(6.seconds)
         } yield assert(records2.size - records1.size)(equalTo(0))
+      },
+      test("keep registration and consumers if keep alive failed and then succeeds") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          _ <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = registrationId,
+            consumers = Seq(Consumer(context.consumerId, context.group, context.topicName))))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records1 <- sidecarUser.collectedRequests.delay(6.seconds)
+          _ <- assertTrue(records1.nonEmpty)
+          _ <- sidecarUser.updateShouldKeepAlive(keepAlive = false)
+          _ <- sidecarUser.updateShouldKeepAlive(keepAlive = true).delay(2.second)
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target)).delay(6.seconds)
+          records2 <- sidecarUser.collectedRequests.delay(6.seconds)
+        } yield assertTrue((records2.size - records1.size) > 0)
       },
       test("consume topic") {
         for {
