@@ -13,7 +13,7 @@ trait Registry {
 
   def tenantExists(tenantId: String): Task[Boolean]
 
-  def markTenantAsDead(tenantId: String): Task[Unit]
+  def markTenantStatusAs(tenantId: String, isAlive: Boolean): Task[Unit]
 
   def addConsumer(tenantId: String, topic: String, consumerGroup: String, shutdown: RIO[Env, Unit]): Task[Unit]
 
@@ -34,11 +34,11 @@ case class TenantRegistry(ref: Ref[Map[String, TenantInfo]]) extends Registry {
   override def getTenant(tenantId: String): UIO[Option[TenantInfo]] =
     ref.get.map(_.get(tenantId))
 
-  override def markTenantAsDead(tenantId: String): Task[Unit] =
+  override def markTenantStatusAs(tenantId: String, isAlive: Boolean): Task[Unit] =
     ref.update { tenants =>
       tenants.get(tenantId) match {
         case Some(tenant) =>
-          tenants.updated(tenantId, tenant.copy(hostDetails = tenant.hostDetails.copy(alive = false)))
+          tenants.updated(tenantId, tenant.copy(hostDetails = tenant.hostDetails.copy(alive = isAlive)))
         case None =>
           tenants
       }
