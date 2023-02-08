@@ -8,6 +8,7 @@ package com.wixpress.dst.greyhound.sidecar.api.v1;
 
 service GreyhoundSidecarUser {
   rpc HandleMessages (HandleMessagesRequest) returns (HandleMessagesResponse);
+  rpc KeepAlive (KeepAliveRequest) returns (KeepAliveResponse);
 }
 
 message HandleMessagesRequest {
@@ -25,5 +26,10 @@ message Record {
 }
 
 message HandleMessagesResponse {
+}
 
+message KeepAliveRequest {
+}
+
+message KeepAliveResponse {
 }
