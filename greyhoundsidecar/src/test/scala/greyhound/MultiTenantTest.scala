@@ -14,9 +14,13 @@ import zio.{Ref, Scope, ZIO, ZLayer, _}
 import scala.util.Random.nextString
 
 
-class TestSidecarUser1(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends TestSidecarUser(consumedTopics)
+class TestSidecarUser1(consumedTopics: Ref[Seq[HandleMessagesRequest]],
+                       shouldKeepAlive: Ref[Boolean]
+                      ) extends TestSidecarUser(consumedTopics, shouldKeepAlive)
 
-class TestSidecarUser2(consumedTopics: Ref[Seq[HandleMessagesRequest]]) extends TestSidecarUser(consumedTopics)
+class TestSidecarUser2(consumedTopics: Ref[Seq[HandleMessagesRequest]],
+                       shouldKeepAlive: Ref[Boolean]
+                      ) extends TestSidecarUser(consumedTopics, shouldKeepAlive)
 
 object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with ConnectionSettings {
 
@@ -27,8 +31,9 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
   val sideCarUser2GrpcPort = 9106
 
   val testSidecarUser1Layer: ZLayer[Any, Nothing, TestSidecarUser1] = ZLayer.fromZIO(for {
-    ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
-  } yield new TestSidecarUser1(ref))
+    consumedTopics <- Ref.make[Seq[HandleMessagesRequest]](Nil)
+    shouldKeepAlive <- Ref.make[Boolean](true)
+  } yield new TestSidecarUser1(consumedTopics, shouldKeepAlive))
 
   val sidecarUserServer1Layer = ZLayer.fromZIO(for {
     user <- ZIO.service[TestSidecarUser1]
@@ -36,8 +41,9 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
   } yield ())
 
   val testSidecarUser2Layer: ZLayer[Any, Nothing, TestSidecarUser2] = ZLayer.fromZIO(for {
-    ref <- Ref.make[Seq[HandleMessagesRequest]](Nil)
-  } yield new TestSidecarUser2(ref))
+    consumedTopics <- Ref.make[Seq[HandleMessagesRequest]](Nil)
+    shouldKeepAlive <- Ref.make[Boolean](true)
+  } yield new TestSidecarUser2(consumedTopics, shouldKeepAlive))
 
   val sidecarUserServer2Layer = ZLayer.fromZIO(for {
     user <- ZIO.service[TestSidecarUser2]

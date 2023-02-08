@@ -26,6 +26,9 @@ class SidecarService(tenantRegistry: Registry,
     port <- ZIO.attempt(request.port.toInt)
     tenantId = UUID.randomUUID().toString
     _ <- tenantRegistry.addTenant(tenantId = tenantId, host = request.host, port = port)
+    _ <- KeepAliveScheduler(tenantId, hostDetails = TenantHostDetails(request.host, port, alive = true), tenantRegistry)
+      .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
+      .forkDaemon
   } yield RegisterResponse(registrationId = tenantId)
 
   override def produce(request: ProduceRequest): IO[Status, ProduceResponse] =

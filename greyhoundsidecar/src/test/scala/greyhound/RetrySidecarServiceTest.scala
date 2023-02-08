@@ -124,6 +124,6 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport w
       sequential
 
   private def getSuccessfullyHandledRecords(failOnceSidecarUserService: FailOnceTestSidecarUser, delay: Int) = {
-    failOnceSidecarUserService.collectedRecords.delay(delay.seconds)
+    failOnceSidecarUserService.collectedRequests.delay(delay.seconds)
   }
 }

@@ -9,7 +9,7 @@ import zio.test.junit.JUnitRunnableSpec
 import zio.test.{Spec, TestAspect, TestEnvironment, assert, assertTrue}
 import zio.{Scope, ZIO, ZLayer}
 import zio._
-import zio.test.TestAspect.{nonFlaky, sequential}
+import zio.test.TestAspect.sequential
 
 object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with ConnectionSettings {
 
@@ -24,6 +24,24 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
 
   override def spec: Spec[TestEnvironment with Scope, Any] =
     suite("sidecar service")(
+      test("remove registration and consumers if keep alive failed") {
+        for {
+          context <- ZIO.service[TestContext]
+          sidecarUser <- ZIO.service[TestSidecarUser]
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.createTopics(CreateTopicsRequest(Seq(TopicToCreate(context.topicName, context.partition))))
+          registrationId <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).map(_.registrationId)
+          _ <- sidecarService.startConsuming(StartConsumingRequest(
+            registrationId = registrationId,
+            consumers = Seq(Consumer(context.consumerId, context.group, context.topicName))))
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target))
+          records1 <- sidecarUser.collectedRequests.delay(6.seconds)
+          _ <- assertTrue(records1.nonEmpty)
+          _ <- sidecarUser.updateShouldKeepAlive(keepAlive = false)
+          _ <- sidecarService.produce(ProduceRequest(context.topicName, context.payload, context.target)).delay(6.seconds)
+          records2 <- sidecarUser.collectedRequests.delay(6.seconds)
+        } yield assert(records2.size - records1.size)(equalTo(0))
+      },
       test("consume topic") {
         for {
           context <- ZIO.service[TestContext]
