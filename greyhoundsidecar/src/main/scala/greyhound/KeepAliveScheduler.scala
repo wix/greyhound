@@ -14,7 +14,7 @@ object KeepAliveScheduler {
         _ <- tenantRegistry.handleTenantActivityStatus(tenantId, isAlive)
       } yield tenantId
 
-      policy = Schedule.recurUntilZIO[Env, String](tenantId => tenantRegistry.getTenant(tenantId).map(_.isEmpty)) && Schedule.spaced(2.seconds)
+      policy = Schedule.recurUntilZIO[Env, String](tenantId => tenantRegistry.getTenant(tenantId).map(_.isEmpty)) && Schedule.spaced(3.seconds)
      _ <- action repeat policy
     } yield ()
   }
