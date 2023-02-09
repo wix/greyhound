@@ -122,20 +122,13 @@ class SidecarService(tenantRegistry: Registry,
 
   private def stopConsuming0(request: StopConsumingRequest): ZIO[Any, Status, Seq[Unit]] = {
     ZIO.foreachPar(request.consumersDetails) { consumerDetails =>
-      for {
-        maybeConsumerInfo <- tenantRegistry.getConsumer(tenantId = request.registrationId, topic = consumerDetails.topic, consumerGroup = consumerDetails.group)
-        _ <- maybeConsumerInfo match {
-          case Some(consumerInfo) =>
-            for {
-              _ <- consumerInfo.shutdown
-                .mapError(Status.fromThrowable)
-                .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
-              result <- tenantRegistry.removeConsumer(tenantId = request.registrationId, topic = consumerInfo.topic, consumerGroup = consumerInfo.consumerGroup).mapError(Status.fromThrowable)
-            } yield result
-          case None =>
-            ZIO.fail(Status.NOT_FOUND)
-        }
-      } yield ()
+      tenantRegistry.removeConsumer(
+        tenantId = request.registrationId,
+        topic = consumerDetails.topic,
+        consumerGroup = consumerDetails.group
+      )
+        .mapError(Status.fromThrowable)
+        .provideSomeLayer(DebugMetrics.layer ++ ZLayer.succeed(Scope.global))
     }
   }
 
