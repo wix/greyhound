@@ -34,15 +34,15 @@ case class TenantRegistry(ref: Synchronized[Map[String, TenantInfo]]) extends Re
   }
 
   override def handleTenantActivityStatus(tenantId: String, isAlive: Boolean): RIO[Env, Unit] =
-    ref.modifyZIO(tenants => tenants.get(tenantId) match {
+    ref.updateZIO(tenants => tenants.get(tenantId) match {
       case Some(tenant) if !tenant.hostDetails.alive && !isAlive =>
         for {
           _ <- ZIO.foreachPar(tenant.consumers.values)(_.shutdown)
-        } yield ((), tenants - tenantId)
+        } yield tenants - tenantId
       case Some(tenant) =>
-        ZIO.succeed(((), tenants.updated(tenantId, tenant.copy(hostDetails = tenant.hostDetails.copy(alive = isAlive)))))
+        ZIO.succeed(tenants.updated(tenantId, tenant.copy(hostDetails = tenant.hostDetails.copy(alive = isAlive))))
       case _ =>
-        ZIO.succeed(((), tenants))
+        ZIO.succeed(tenants)
     })
 
   override def getTenant(tenantId: String): UIO[Option[TenantInfo]] =
@@ -59,14 +59,14 @@ case class TenantRegistry(ref: Synchronized[Map[String, TenantInfo]]) extends Re
     }
 
   override def removeConsumer(tenantId: String, topic: String, consumerGroup: String): RIO[Env, Unit] =
-    ref.modifyZIO(tenants =>
+    ref.updateZIO(tenants =>
       tenants.get(tenantId) match {
         case Some(tenant) =>
           for {
             _ <- tenant.consumers.get((topic, consumerGroup)).map(_.shutdown).getOrElse(ZIO.unit)
-          } yield ((), tenants.updated(tenantId, tenant.copy(consumers = tenant.consumers - ((topic, consumerGroup)))))
+          } yield tenants.updated(tenantId, tenant.copy(consumers = tenant.consumers - ((topic, consumerGroup))))
         case None =>
-          ZIO.succeed(((), tenants))
+          ZIO.succeed(tenants)
       })
 
   override def getConsumer(tenantId: String, topic: String, consumerGroup: String): UIO[Option[TenantConsumerInfo]] =
