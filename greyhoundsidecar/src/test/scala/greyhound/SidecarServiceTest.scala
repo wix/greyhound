@@ -43,6 +43,13 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
           records2 <- sidecarUser.collectedRequests.delay(6.seconds)
         } yield assert(records2.size - records1.size)(equalTo(0))
       },
+      test("throw ALREADY_EXISTS exception if host and port already exists") {
+        for {
+          sidecarService <- ZIO.service[SidecarService]
+          _ <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString))
+          result <- sidecarService.register(RegisterRequest(localhost, sideCarUserGrpcPort.toString)).either
+        } yield assertTrue(result.left.get.equals(Status.ALREADY_EXISTS))
+      },
       test("keep registration and consumers if keep alive failed and then succeeds") {
         for {
           context <- ZIO.service[TestContext]
