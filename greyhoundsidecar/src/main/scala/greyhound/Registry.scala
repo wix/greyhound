@@ -1,6 +1,7 @@
 package greyhound
 
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
+import io.grpc.{Status, StatusRuntimeException}
 import zio.Ref.Synchronized
 import zio.{RIO, Task, UIO, ZIO, ZLayer}
 
@@ -24,8 +25,13 @@ trait Registry {
 }
 
 case class TenantRegistry(ref: Synchronized[Map[String, TenantInfo]]) extends Registry {
-  override def addTenant(tenantId: String, host: String, port: Int): Task[Unit] =
-    ref.update(_.updated(tenantId, TenantInfo(hostDetails = TenantHostDetails(host, port, alive = true), consumers = Map.empty)))
+  override def addTenant(tenantId: String, host: String, port: Int): Task[Unit] = {
+    ref.updateZIO(tenants => if (tenants.values.map(_.hostDetails).exists(hostDetails => hostDetails.host == host && hostDetails.port == port))
+      ZIO.fail(new StatusRuntimeException(Status.ALREADY_EXISTS))
+    else
+      ZIO.succeed(tenants.updated(tenantId, TenantInfo(hostDetails = TenantHostDetails(host, port, alive = true), consumers = Map.empty)))
+    )
+  }
 
   override def handleTenantActivityStatus(tenantId: String, isAlive: Boolean): RIO[Env, Unit] =
     ref.modifyZIO(tenants => tenants.get(tenantId) match {
@@ -37,7 +43,7 @@ case class TenantRegistry(ref: Synchronized[Map[String, TenantInfo]]) extends Re
         ZIO.succeed(((), tenants.updated(tenantId, tenant.copy(hostDetails = tenant.hostDetails.copy(alive = isAlive)))))
       case _ =>
         ZIO.succeed(((), tenants))
-    }).timed.flatMap(t => ZIO.log(s"removeDeadTenant took ${t._1} ms"))
+    })
 
   override def getTenant(tenantId: String): UIO[Option[TenantInfo]] =
     ref.get.map(_.get(tenantId))
