@@ -11,8 +11,7 @@ object KeepAliveScheduler {
       client <- SidecarUserClient(hostDetails)
       action = for {
         isAlive <- client.keepAlive(KeepAliveRequest()).foldZIO(_ => ZIO.succeed(false), _ => ZIO.succeed(true))
-        _ <- tenantRegistry.removeDeadTenant(tenantId, isAlive)
-        _ <- tenantRegistry.markTenantStatusAs(tenantId, isAlive)
+        _ <- tenantRegistry.handleTenantActivityStatus(tenantId, isAlive)
       } yield tenantId
 
       policy = Schedule.recurUntilZIO[Env, String](tenantId => tenantRegistry.getTenant(tenantId).map(_.isEmpty)) && Schedule.spaced(2.seconds)
