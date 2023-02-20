@@ -14,7 +14,9 @@ def dependency(coordinates,exclusions=None):
             exclusions = exclusions,
         )
 
-scala_version = "2.12.12"
+scala_version = "2.13.10"
+
+scala_version_dependency = "2.13"
 
 deps = [
     dependency("com.google.protobuf:protobuf-java:3.21.10"),
@@ -33,39 +35,39 @@ deps = [
     dependency("com.typesafe.scala-logging:scala-logging_2.12:3.8.0"),
     dependency("com.yammer.metrics:metrics-core:2.2.0"),
     dependency("commons-cli:commons-cli:1.4"),
-    dependency("dev.zio:zio_2.12:2.0.2"),
-    dependency("dev.zio:zio-stacktracer_2.12:2.0.2"),
-    dependency("dev.zio:zio-streams_2.12:2.0.2"),
-    dependency("dev.zio:zio-managed_2.12:2.0.2"),
-    dependency("dev.zio:zio-test_2.12:2.0.2"),
-    dependency("dev.zio:zio-test-junit_2.12:2.0.2"),
+    dependency("dev.zio:zio_{}:2.0.2".format(scala_version_dependency)),
+    dependency("dev.zio:zio-stacktracer_{}:2.0.2".format(scala_version_dependency)),
+    dependency("dev.zio:zio-streams_{}:2.0.2".format(scala_version_dependency)),
+    dependency("dev.zio:zio-managed_{}:2.0.2".format(scala_version_dependency)),
+    dependency("dev.zio:zio-test_{}:2.0.2".format(scala_version_dependency)),
+    dependency("dev.zio:zio-test-junit_{}:2.0.2".format(scala_version_dependency)),
     dependency("junit:junit:4.13"),
     dependency("net.sf.jopt-simple:jopt-simple:5.0.4"),
     dependency("org.apache.curator:curator-test:2.12.0"),
-    dependency("org.apache.kafka:kafka_2.12:2.4.1"),
+    dependency("org.apache.kafka:kafka_{}:2.4.1".format(scala_version_dependency)),
     dependency("org.apache.kafka:kafka-clients:2.4.1"),
     dependency("org.apache.zookeeper:zookeeper:3.4.10"),
     dependency("org.hamcrest:hamcrest-core:1.3"),
     dependency("org.javassist:javassist:3.18.1-GA"),
     dependency("org.lz4:lz4-java:1.6.0"),
-    dependency("org.portable-scala:portable-scala-reflect_2.12:0.1.0"),
-    dependency("org.scala-lang.modules:scala-collection-compat_2.12:2.1.2"),
+    dependency("org.portable-scala:portable-scala-reflect_{}:0.1.0".format(scala_version_dependency)),
+    dependency("org.scala-lang.modules:scala-collection-compat_{}:2.1.2".format(scala_version_dependency)),
     dependency("org.scala-lang:scala-compiler:" + scala_version),
-    dependency("org.scala-lang.modules:scala-parser-combinators_2.12:1.0.6"),
-    dependency("org.scala-lang.modules:scala-xml_2.12:1.1.0"),
+    dependency("org.scala-lang.modules:scala-parser-combinators_{}:1.1.2".format(scala_version_dependency)),
+    dependency("org.scala-lang.modules:scala-xml_{}:1.2.0".format(scala_version_dependency)),
     dependency("org.scala-lang:scala-library:" + scala_version),
     dependency("org.scala-lang:scala-reflect:" + scala_version),
     dependency("org.scala-sbt:test-interface:1.0"),
     dependency("org.slf4j:slf4j-api:1.7.25"),
-    dependency("org.specs2:specs2-common_2.12:4.8.3"),
-    dependency("org.specs2:specs2-core_2.12:4.8.3"),
-    dependency("org.specs2:specs2-fp_2.12:4.8.3"),
-    dependency("org.specs2:specs2-junit_2.12:4.8.3"),
-    dependency("org.specs2:specs2-matcher_2.12:4.8.3"),
-    dependency("org.specs2:specs2-mock_2.12:4.8.3"),
+    dependency("org.specs2:specs2-common_{}:4.8.3".format(scala_version_dependency)),
+    dependency("org.specs2:specs2-core_{}:4.8.3".format(scala_version_dependency)),
+    dependency("org.specs2:specs2-fp_{}:4.8.3".format(scala_version_dependency)),
+    dependency("org.specs2:specs2-junit_{}:4.8.3".format(scala_version_dependency)),
+    dependency("org.specs2:specs2-matcher_{}:4.8.3".format(scala_version_dependency)),
+    dependency("org.specs2:specs2-mock_{}:4.8.3".format(scala_version_dependency)),
     dependency("org.xerial.snappy:snappy-java:1.1.7.1"),
     dependency("net.openhft:chronicle-queue:5.20.123"),
-    dependency("com.kubukoz:better-tostring_" + scala_version +":0.2.4"),
+    dependency("com.kubukoz:better-tostring_2.13.6:0.3.7"),
 ]
 
 def dependencies():
@@ -82,7 +84,7 @@ def dependencies():
     # this is a compiler plugin with full scala version in its maven artifact name
     # so we create an alias without the minor scala version
     import_external_alias(
-       name = "com_kubukoz_better_tostring_2_12",
-       actual = "@maven//:com_kubukoz_better_tostring_" + scala_version.replace(".", "_"),
+       name = "com_kubukoz_better_tostring_{}".format(scala_version_dependency.replace(".", "_")),
+       actual = "@maven//:com_kubukoz_better_tostring_" + "2.13.6".replace(".", "_"),
     )
 

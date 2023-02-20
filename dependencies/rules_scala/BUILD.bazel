@@ -1,10 +1,11 @@
 load("@io_bazel_rules_scala//scala:scala.bzl", "setup_scala_testing_toolchain", "setup_scala_toolchain")
 
+
 setup_scala_toolchain(
     name = "scala_toolchain",
     dependency_mode = "plus-one",
     parser_combinators_deps = [
-        "@maven//:org_scala_lang_modules_scala_parser_combinators_2_12",
+        "@maven//:org_scala_lang_modules_scala_parser_combinators_{}".format(scala_version_dependency),
     ],
     scala_compile_classpath = [
         "@maven//:org_scala_lang_scala_compiler",
@@ -20,15 +21,13 @@ setup_scala_toolchain(
         "@maven//:org_scala_lang_scala_reflect",
     ],
     scala_xml_deps = [
-        "@maven//:org_scala_lang_modules_scala_xml_2_12",
+        "@maven//:org_scala_lang_modules_scala_xml_{}".format(scala_version_dependency),
     ],
     scalacopts = [
         "-unchecked",
         "-deprecation",
         "-feature",
-        "-Xmax-classfile-name",
         "240",
-        "-Ywarn-unused-import",
         "-Ywarn-unused",
         "-Ywarn-macros:after",
     ],
@@ -42,13 +41,13 @@ setup_scala_testing_toolchain(
         "@maven//:org_hamcrest_hamcrest_core",
     ],
     specs2_classpath = [
-        "@maven//:org_specs2_specs2_common_2_12",
-        "@maven//:org_specs2_specs2_core_2_12",
-        "@maven//:org_specs2_specs2_fp_2_12",
-        "@maven//:org_specs2_specs2_matcher_2_12",
+        "@maven//:org_specs2_specs2_common_{}".format(scala_version_dependency),
+        "@maven//:org_specs2_specs2_core_{}".format(scala_version_dependency),
+        "@maven//:org_specs2_specs2_fp_{}".format(scala_version_dependency),
+        "@maven//:org_specs2_specs2_matcher_{}".format(scala_version_dependency),
     ],
     specs2_junit_classpath = [
-        "@maven//:org_specs2_specs2_junit_2_12",
+        "@maven//:org_specs2_specs2_junit_{}".format(scala_version_dependency),
     ],
     visibility = ["//visibility:public"],
 )

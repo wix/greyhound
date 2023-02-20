@@ -16,7 +16,7 @@ scala_library(
         "//future-interop/src/main/scala/com/wixpress/dst/greyhound/future",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/java",
         "//java-interop/src/main/java/com/wixpress/dst/greyhound/scala",
-        "@dev_zio_zio_2_12",
-        "@dev_zio_zio_stacktracer_2_12",
+        "@dev_zio_zio_{}".format(scala_version_dependency),
+        "@dev_zio_zio_stacktracer_{}".format(scala_version_dependency),
     ],
 )
