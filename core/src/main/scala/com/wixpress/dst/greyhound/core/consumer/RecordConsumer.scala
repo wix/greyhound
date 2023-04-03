@@ -79,7 +79,7 @@ object RecordConsumer {
           (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
                                                     maybeAddRetryTopics(policy, config, nonBlockingRetryHelper)
                                                   )
-          _                                    <- AdminClient
+          _                                    <- ZIO.when(config.createRetryTopics)(AdminClient
                                                     .make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes)
                                                     .tap(client =>
                                                       client.createTopics(
@@ -87,7 +87,7 @@ object RecordConsumer {
                                                           TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))
                                                         )
                                                       )
-                                                    )
+                                                    ))
           blockingState                        <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
           blockingStateResolver                 = BlockingStateResolver(blockingState)
           workersShutdownRef                   <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
@@ -321,7 +321,8 @@ case class RecordConsumerConfig(
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
   retryProducerAttributes: Map[String, String] = Map.empty,
   commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
-  rewindUncommittedOffsetsBy: Duration = 0.millis
+  rewindUncommittedOffsetsBy: Duration = 0.millis,
+  createRetryTopics: Boolean = true
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
