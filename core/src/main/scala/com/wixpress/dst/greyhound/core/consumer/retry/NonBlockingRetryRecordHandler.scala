@@ -31,12 +31,11 @@ private[retry] object NonBlockingRetryRecordHandler {
     retryConfig: RetryConfig,
     subscription: ConsumerSubscription,
     nonBlockingRetryHelper: NonBlockingRetryHelper,
-    groupId: Group,
     awaitShutdown: TopicPartition => UIO[AwaitShutdown]
   )(implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): NonBlockingRetryRecordHandler[V, K, R] =
     new NonBlockingRetryRecordHandler[V, K, R] {
       override def handle(record: ConsumerRecord[K, V]): ZIO[GreyhoundMetrics with R, Nothing, Any] = {
-        RetryAttempt.extract(record.headers, record.topic, groupId, subscription, Some(retryConfig)).flatMap { retryAttempt =>
+        nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
           maybeDelayRetry(record, retryAttempt) *>
             handler.handle(record).catchAll {
               case Right(_: NonRetriableException) => ZIO.unit
@@ -57,7 +56,7 @@ private[retry] object NonBlockingRetryRecordHandler {
             WaitingBeforeRetry(record.topic, retryAttempt, record.partition, record.offset, correlationId)
           ) *>
             awaitShutdown(record.topicPartition)
-              .flatMap(_.interruptOnShutdown(RetryUtil.sleep(retryAttempt)))
+              .flatMap(_.interruptOnShutdown(retryAttempt.sleep))
               .reporting(r =>
                 DoneWaitingBeforeRetry(record.topic, record.partition, record.offset, retryAttempt, r.duration, r.failed, correlationId)
               )
@@ -75,7 +74,7 @@ private[retry] object NonBlockingRetryRecordHandler {
       override def handleAfterBlockingFailed(
         record: ConsumerRecord[K, V]
       ): ZIO[GreyhoundMetrics with R, Nothing, Any] = {
-        RetryAttempt.extract(record.headers, record.topic, groupId, subscription, Some(retryConfig)).flatMap { retryAttempt =>
+        nonBlockingRetryHelper.retryAttempt(record.topic, record.headers, subscription).flatMap { retryAttempt =>
           maybeRetry(retryAttempt, BlockingHandlerFailed, record)
         }
       }
