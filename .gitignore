@@ -1,6 +1,7 @@
 *.class
 *.log
 bazel-*
+!bazel-steward.yaml
 .idea
 *.iml
 *.pyc
