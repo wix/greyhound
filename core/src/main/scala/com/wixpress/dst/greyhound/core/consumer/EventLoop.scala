@@ -260,8 +260,7 @@ case class EventLoopConfig(
   highWatermark: Int,
   rebalanceListener: RebalanceListener[Any],
   delayResumeOfPausedPartition: Long,
-  startPaused: Boolean,
-  cooperativeRebalanceEnabled: Boolean
+  startPaused: Boolean
 )
 
 object EventLoopConfig {
@@ -272,8 +271,7 @@ object EventLoopConfig {
     highWatermark = 256,
     rebalanceListener = RebalanceListener.Empty,
     delayResumeOfPausedPartition = 0,
-    startPaused = false,
-    cooperativeRebalanceEnabled = false
+    startPaused = false
   )
 }
 
