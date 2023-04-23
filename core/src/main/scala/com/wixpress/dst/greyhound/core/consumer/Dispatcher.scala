@@ -93,13 +93,10 @@ object Dispatcher {
       override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] =
         workers
           .modify { workers =>
-            partitions.foldLeft((List.empty[(TopicPartition, Worker)], workers)) {
-              case ((revoked, remaining), partition) =>
-                remaining.get(partition) match {
-                  case Some(worker) => ((partition, worker) :: revoked, remaining - partition)
-                  case None         => (revoked, remaining)
-                }
-            }
+            val revoked = workers.filterKeys(partitions.contains)
+            val remaining = workers -- partitions
+
+            (revoked, remaining)
           }
           .flatMap(shutdownWorkers)
 
