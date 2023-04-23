@@ -170,12 +170,14 @@ object EventLoop {
           consumer: Consumer,
           partitions: Set[TopicPartition]
         )(implicit trace: Trace): URIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
-          pausedPartitionsRef.set(Set.empty) *>
-            dispatcher.revoke(partitions).timeout(config.drainTimeout).flatMap { drained =>
-              ZIO.when(drained.isEmpty)(
-                report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumer.config.consumerAttributes))
-              )
-            } *> commitOffsetsOnRebalance(consumer0, offsets)
+          for {
+            _ <- pausedPartitionsRef.update(_ -- partitions)
+            isRevokeTimedOut <- dispatcher.revoke(partitions).timeout(config.drainTimeout).map(_.isEmpty)
+            _ <- ZIO.when(isRevokeTimedOut)(
+              report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumer.config.consumerAttributes))
+            )
+            delayedRebalanceEffect <- commitOffsetsOnRebalance(consumer0, offsets)
+          } yield delayedRebalanceEffect
         }
 
         override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
@@ -258,7 +260,8 @@ case class EventLoopConfig(
   highWatermark: Int,
   rebalanceListener: RebalanceListener[Any],
   delayResumeOfPausedPartition: Long,
-  startPaused: Boolean
+  startPaused: Boolean,
+  cooperativeRebalanceEnabled: Boolean
 )
 
 object EventLoopConfig {
@@ -269,7 +272,8 @@ object EventLoopConfig {
     highWatermark = 256,
     rebalanceListener = RebalanceListener.Empty,
     delayResumeOfPausedPartition = 0,
-    startPaused = false
+    startPaused = false,
+    cooperativeRebalanceEnabled = false
   )
 }
 
