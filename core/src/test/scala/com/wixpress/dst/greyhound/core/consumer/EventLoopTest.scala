@@ -9,7 +9,7 @@ import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHa
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.testkit.{BaseTest, TestMetrics}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
-import com.wixpress.dst.greyhound.core.{Headers, Offset, Topic, TopicPartition}
+import com.wixpress.dst.greyhound.core.{Headers, Offset, OffsetAndMetadata, Topic, TopicPartition}
 import zio._
 
 import java.util.regex.Pattern
@@ -139,7 +139,17 @@ trait EmptyConsumer extends Consumer {
   override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): Task[Unit] =
     ZIO.unit
 
+  override def commitWithMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])(
+    implicit trace: Trace
+  ): RIO[GreyhoundMetrics, Unit] =
+    ZIO.unit
+
   override def commitOnRebalance(offsets: Map[TopicPartition, Offset])(
+    implicit trace: Trace
+  ): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
+    DelayedRebalanceEffect.zioUnit
+
+  override def commitWithMetadataOnRebalance(offsets: Map[TopicPartition, OffsetAndMetadata])(
     implicit trace: Trace
   ): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
     DelayedRebalanceEffect.zioUnit
@@ -172,5 +182,8 @@ trait EmptyConsumer extends Consumer {
   override def listTopics(implicit trace: Trace): RIO[Any, Map[Topic, List[core.PartitionInfo]]] = ZIO.succeed(Map.empty)
 
   override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
+    ZIO.succeed(Map.empty)
+
+  override def committedOffsetsAndMetadata(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]] =
     ZIO.succeed(Map.empty)
 }
