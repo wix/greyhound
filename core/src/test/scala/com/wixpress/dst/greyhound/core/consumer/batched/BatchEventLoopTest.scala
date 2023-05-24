@@ -1,6 +1,6 @@
 package com.wixpress.dst.greyhound.core.consumer.batched
 
-import com.wixpress.dst.greyhound.core.{Offset, Topic, TopicPartition}
+import com.wixpress.dst.greyhound.core.{Offset, OffsetAndMetadata, Topic, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
 import com.wixpress.dst.greyhound.core.consumer.batched.BatchConsumer.RecordBatch
 import com.wixpress.dst.greyhound.core.consumer.batched.BatchEventLoopMetric.{FullBatchHandled, RecordsHandled}
@@ -162,6 +162,11 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
         ZIO.succeed(println(s"commit($offsets)")) *> committedOffsetsRef.update(_ ++ offsets)
       }
 
+      override def commitWithMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])(
+        implicit trace: Trace
+      ): RIO[GreyhoundMetrics, Unit] =
+        committedOffsetsRef.update(_ ++ offsetsAndMetadata.map { case (tp, om) => tp -> om.offset })
+
       override def commitOnRebalance(
         offsets: Map[TopicPartition, Offset]
       )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
@@ -173,7 +178,18 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
           )
         }
       }
+
+      override def commitWithMetadataOnRebalance(
+        offsets: Map[TopicPartition, OffsetAndMetadata]
+      )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
+        ZIO.runtime[Any].flatMap { rt =>
+          ZIO.succeed(DelayedRebalanceEffect(zio.Unsafe.unsafe { implicit s =>
+                rt.unsafe.run(committedOffsetsRef.update(_ ++ offsets.mapValues(_.offset))).getOrThrowFiberFailure()
+              }))
+        }
+      }
     }
+
     val handler  = new BatchRecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]] {
       override def handle(records: RecordBatch): ZIO[Any, HandleError[Throwable], Any] = {
         ZIO.succeed(println(s"handle($records)")) *>

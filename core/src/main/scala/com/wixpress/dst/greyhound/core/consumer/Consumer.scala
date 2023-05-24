@@ -33,15 +33,23 @@ trait Consumer {
 
   def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit]
 
+  def commitWithMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit]
+
   def endOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
 
   def beginningOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
 
   def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
 
+  def committedOffsetsAndMetadata(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]]
+
   def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
 
   def commitOnRebalance(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect]
+
+  def commitWithMetadataOnRebalance(offsets: Map[TopicPartition, OffsetAndMetadata])(
+    implicit trace: Trace
+  ): RIO[GreyhoundMetrics, DelayedRebalanceEffect]
 
   def pause(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[GreyhoundMetrics, IllegalStateException, Unit]
 
@@ -96,7 +104,8 @@ object Consumer {
                               timeoutIfSeek = 10.seconds,
                               initialSeek = cfg.initialSeek,
                               rewindUncommittedOffsetsBy = cfg.rewindUncommittedOffsetsByMillis.millis,
-                              offsetResetIsEarliest = cfg.offsetReset == OffsetReset.Earliest
+                              offsetResetIsEarliest = cfg.offsetReset == OffsetReset.Earliest,
+                              parallelConsumer = cfg.useParallelConsumer
                             )
   } yield {
     new Consumer {
@@ -144,8 +153,20 @@ object Consumer {
         withConsumerBlocking(_.committed(kafkaPartitions(partitions)))
           .map(_.asScala.collect { case (tp: KafkaTopicPartition, o: KafkaOffsetAndMetadata) => (TopicPartition(tp), o.offset) }.toMap)
 
+      override def committedOffsetsAndMetadata(
+        partitions: NonEmptySet[TopicPartition]
+      )(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]] =
+        withConsumerBlocking(_.committed(kafkaPartitions(partitions)))
+          .map(_.asScala.collect { case (tp: KafkaTopicPartition, om: KafkaOffsetAndMetadata) => (TopicPartition(tp), OffsetAndMetadata(om.offset, om.metadata))}.toMap)
+
       override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString))))
+      }
+
+      override def commitWithMetadata(
+        offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]
+      )(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+        withConsumerBlocking(_.commitSync(kafkaOffsetsAndMetaData(offsetsAndMetadata)))
       }
 
       override def commitOnRebalance(
@@ -156,6 +177,11 @@ object Consumer {
         // thread, that triggered poll(), so we return the commit action as thunk
         ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
       }
+
+      override def commitWithMetadataOnRebalance(
+        offsets: Map[TopicPartition, OffsetAndMetadata]
+      )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
+        ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kafkaOffsetsAndMetaData(offsets))))
 
       override def pause(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
         withConsumer(_.pause(kafkaPartitions(partitions))).refineOrDie { case e: IllegalStateException => e }
@@ -285,7 +311,8 @@ case class ConsumerConfig(
   consumerAttributes: Map[String, String] = Map.empty,
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
   commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
-  rewindUncommittedOffsetsByMillis: Long = 0L
+  rewindUncommittedOffsetsByMillis: Long = 0L,
+  useParallelConsumer: Boolean = false
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = Map(
@@ -320,11 +347,15 @@ object OffsetReset {
 trait UnsafeOffsetOperations {
   def committed(partitions: Set[TopicPartition], timeout: zio.Duration): Map[TopicPartition, Offset]
 
+  def committedWithMetadata(partitions: Set[TopicPartition], timeout: zio.Duration): Map[TopicPartition, OffsetAndMetadata]
+
   def beginningOffsets(partitions: Set[TopicPartition], timeout: zio.Duration): Map[TopicPartition, Offset]
 
   def position(partition: TopicPartition, timeout: zio.Duration): Offset
 
   def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit
+
+  def commitWithMetadata(offsets: Map[TopicPartition, OffsetAndMetadata], timeout: Duration): Unit
 
   def seek(offsets: Map[TopicPartition, Offset]): Unit
 
@@ -357,6 +388,20 @@ object UnsafeOffsetOperations {
         }
     }
 
+    override def committedWithMetadata(
+      partitions: NonEmptySet[TopicPartition],
+      timeout: zio.Duration
+    ): Map[TopicPartition, OffsetAndMetadata] = {
+      consumer
+        .committed(partitions.map(_.asKafka).asJava, timeout)
+        .asScala
+        .toMap
+        .collect {
+          case (tp, ofm) if ofm != null =>
+            TopicPartition(tp) -> OffsetAndMetadata(ofm.offset(), ofm.metadata())
+        }
+    }
+
     override def beginningOffsets(partitions: Set[TopicPartition], timeout: Duration): Map[TopicPartition, Offset] =
       consumer
         .beginningOffsets(partitions.map(_.asKafka).asJava, timeout)
@@ -372,6 +417,10 @@ object UnsafeOffsetOperations {
 
     override def commit(offsets: Map[TopicPartition, Offset], timeout: Duration): Unit = {
       consumer.commitSync(kafkaOffsets(offsets), timeout)
+    }
+
+    override def commitWithMetadata(offsets: Map[TopicPartition, OffsetAndMetadata], timeout: zio.Duration): Unit = {
+      consumer.commitSync(kafkaOffsetsAndMetaData(offsets), timeout)
     }
 
     override def seek(offsets: Map[TopicPartition, Offset]): Unit =
