@@ -50,6 +50,32 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
       } yield ok) // If execution is not parallel, the latch will not be released
     }
 
+  "parallelize single partition handling based on key when using parallel consumer" in
+    new ctx(highWatermark = 10) {
+      val numKeys = 8
+      val keys    = getKeys(numKeys)
+
+      run(for {
+        latch      <- CountDownLatch.make(numKeys)
+        slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => Clock.sleep(1.second) *> latch.countDown }
+        ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+        dispatcher <- Dispatcher.make(
+                        "group",
+                        "clientId",
+                        slowHandler,
+                        lowWatermark,
+                        highWatermark,
+                        workersShutdownRef = ref,
+                        consumeInParallel = true,
+                        maxParallelism = 8
+                      )
+        // produce with unique keys to the same partition
+        _          <- submitBatch(dispatcher, keys.map(key => record.copy(partition = 0, key = key)))
+        _          <- TestClock.adjust(1.second)
+        _          <- latch.await
+      } yield ok) // if execution is not parallel, the latch will not be released
+    }
+
   "reject records when high watermark is reached" in
     new ctx() {
       run(for {
@@ -63,6 +89,16 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         result1    <- submit(dispatcher, record.copy(offset = 5L)) // maybe will be dropped
         result2    <- submit(dispatcher, record.copy(offset = 6L)) // maybe will be dropped
       } yield (result1 must equalTo(SubmitResult.Rejected)) or (result2 must equalTo(SubmitResult.Rejected)))
+    }
+
+  "reject records and return first rejected when high watermark is reached on batch submission" in
+    new ctx(highWatermark = 5) {
+      run(for {
+        ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+        dispatcher <- Dispatcher.make[Any]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref)
+        records     = (0 until 7).map(i => record.copy(offset = i.toLong))
+        result     <- submitBatch(dispatcher, records)
+      } yield result must beEqualTo(SubmitResult.RejectedBatch(record.copy(offset = 5L))))
     }
 
   "resume paused partitions" in
@@ -217,6 +253,12 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
     dispatcher.submit(record).tap(_ => TestClock.adjust(10.millis))
   }
 
+  private def submitBatch(
+    dispatcher: Dispatcher[Any],
+    records: Seq[ConsumerRecord[Chunk[Byte], Chunk[Byte]]]
+  ): URIO[Env, SubmitResult] =
+    dispatcher.submitBatch(records).tap(_ => TestClock.adjust(10.millis))
+
   private def waitUntilRecordHandled(timeout: zio.Duration)(metrics: Seq[GreyhoundMetric]) =
     ZIO
       .when(metrics.collect { case r: RecordHandled[_, _] => r }.nonEmpty)(ZIO.fail(TimeoutWaitingForHandledMetric))
@@ -235,6 +277,8 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
     val partition      = 0
     val topicPartition = TopicPartition(topic, partition)
     val record         = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 0L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+
+    def getKeys(numKeys: Int) = (0 until numKeys).map(i => Some(Chunk.fromArray(s"key$i".getBytes)))
   }
 
 }
