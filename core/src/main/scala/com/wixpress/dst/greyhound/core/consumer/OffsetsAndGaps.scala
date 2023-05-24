@@ -1,6 +1,9 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import com.wixpress.dst.greyhound.core.{Offset, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.Gap.GAP_SEPARATOR
+import com.wixpress.dst.greyhound.core.consumer.OffsetAndGaps.{GAPS_STRING_SEPARATOR, LAST_HANDLED_OFFSET_SEPARATOR}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
+import com.wixpress.dst.greyhound.core.{Offset, OffsetAndMetadata, TopicPartition}
 import zio._
 
 trait OffsetsAndGaps {
@@ -9,6 +12,16 @@ trait OffsetsAndGaps {
   def gapsForPartition(partition: TopicPartition): UIO[Seq[Gap]]
 
   def update(partition: TopicPartition, batch: Seq[Offset]): UIO[Unit]
+
+  def update(record: ConsumerRecord[_, _]): UIO[Unit] =
+    update(RecordTopicPartition(record), Seq(record.offset))
+
+  def update(records: Chunk[ConsumerRecord[_, _]]): UIO[Unit] = {
+    val sortedBatch = records.sortBy(_.offset)
+    update(RecordTopicPartition(sortedBatch.head), sortedBatch.map(_.offset) ++ Seq(sortedBatch.last.offset + 1))
+  }
+
+  def setCommittable(offsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit]
 
   def contains(partition: TopicPartition, offset: Offset): UIO[Boolean]
 }
@@ -48,6 +61,9 @@ object OffsetsAndGaps {
         override def contains(partition: TopicPartition, offset: Offset): UIO[Boolean] =
           ref.get.map(_.get(partition).fold(false)(_.contains(offset)))
 
+        override def setCommittable(offsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit] =
+          ref.update { _ => offsets }
+
         private def gapsInBatch(batch: Seq[Offset], prevLastOffset: Offset): Seq[Gap] =
           batch.sorted
             .foldLeft(Seq.empty[Gap], prevLastOffset) {
@@ -73,20 +89,65 @@ object OffsetsAndGaps {
         }
       }
     }
+
+  def toOffsetsAndMetadata(offsetsAndGaps: Map[TopicPartition, OffsetAndGaps]): Map[TopicPartition, OffsetAndMetadata] =
+    offsetsAndGaps.mapValues(offsetAndGaps =>
+      OffsetAndMetadata(offsetAndGaps.offset, offsetAndGaps.gapsString)
+    ) // todo: add encoding and compression to plain gaps string
+
+  def parseGapsString(offsetAndGapsString: String): Option[OffsetAndGaps] = {
+    val lastHandledOffsetSeparatorIndex = offsetAndGapsString.indexOf(LAST_HANDLED_OFFSET_SEPARATOR)
+    if (lastHandledOffsetSeparatorIndex < 0)
+      None
+    else {
+      val lastHandledOffset = offsetAndGapsString.substring(0, lastHandledOffsetSeparatorIndex).toLong
+      val gaps              = offsetAndGapsString
+        .substring(lastHandledOffsetSeparatorIndex + 1)
+        .split(GAPS_STRING_SEPARATOR)
+        .map(_.split(GAP_SEPARATOR))
+        .collect { case Array(start, end) => Gap(start.toLong, end.toLong) }
+        .toSeq
+        .sortBy(_.start)
+      Some(OffsetAndGaps(lastHandledOffset, gaps))
+    }
+  }
+
+  def firstGapOffset(gapsString: String): Option[Offset] = {
+    val maybeOffsetAndGaps = parseGapsString(gapsString)
+    maybeOffsetAndGaps match {
+      case Some(offsetAndGaps) if offsetAndGaps.gaps.nonEmpty => Some(offsetAndGaps.gaps.minBy(_.start).start)
+      case _                                                  => None
+    }
+  }
 }
 
 case class Gap(start: Offset, end: Offset) {
   def contains(offset: Offset): Boolean = start <= offset && offset <= end
 
   def size: Long = end - start + 1
+
+  override def toString: String = s"$start$GAP_SEPARATOR$end"
+}
+
+object Gap {
+  val GAP_SEPARATOR = "_"
 }
 
 case class OffsetAndGaps(offset: Offset, gaps: Seq[Gap], committable: Boolean = true) {
   def contains(offset: Offset): Boolean = gaps.exists(_.contains(offset))
 
   def markCommitted: OffsetAndGaps = copy(committable = false)
+
+  def gapsString: String = {
+    if (gaps.isEmpty) ""
+    else
+      s"${offset.toString}${LAST_HANDLED_OFFSET_SEPARATOR}${gaps.sortBy(_.start).mkString(GAPS_STRING_SEPARATOR)}"
+  }
 }
 
 object OffsetAndGaps {
+  val GAPS_STRING_SEPARATOR         = "$"
+  val LAST_HANDLED_OFFSET_SEPARATOR = "#"
+
   def apply(offset: Offset): OffsetAndGaps = OffsetAndGaps(offset, Seq.empty[Gap])
 }
