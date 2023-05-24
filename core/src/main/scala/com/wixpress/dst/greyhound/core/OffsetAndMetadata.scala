@@ -10,5 +10,8 @@ object OffsetAndMetadata {
   def apply(offsetAndMetadata: KafkaOffsetAndMetadata): OffsetAndMetadata =
     OffsetAndMetadata(offsetAndMetadata.offset(), offsetAndMetadata.metadata())
 
+  def apply(offset: Offset): OffsetAndMetadata =
+    OffsetAndMetadata(offset, NO_METADATA)
+
   val NO_METADATA = ""
 }
