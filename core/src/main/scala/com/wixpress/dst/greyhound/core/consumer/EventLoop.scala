@@ -1,9 +1,12 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import com.wixpress.dst.greyhound.core._
+import com.wixpress.dst.greyhound.core.consumer.Consumer.Records
+import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
 import com.wixpress.dst.greyhound.core.consumer.EventLoopMetric._
 import com.wixpress.dst.greyhound.core.consumer.EventLoopState.{Paused, Running, ShuttingDown}
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
+import com.wixpress.dst.greyhound.core.consumer.SubmitResult.RejectedBatch
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
@@ -37,7 +40,11 @@ object EventLoop {
     val start = for {
       _                   <- report(StartingEventLoop(clientId, group, consumerAttributes))
       offsets             <- Offsets.make
-      handle               = handler.andThen(offsets.update).handle(_)
+      offsetsAndGaps      <- OffsetsAndGaps.make
+      handle               = if (config.consumePartitionInParallel) { cr: Record => handler.handle(cr) }
+                             else handler.andThen(offsets.update).handle(_)
+      updateBatch          = { records: Chunk[Record] => offsetsAndGaps.update(records) }
+      currentGaps          = { partitions: Set[TopicPartition] => currentGapsForPartitions(partitions, clientId)(consumer) }
       _                   <- report(CreatingDispatcher(clientId, group, consumerAttributes, config.startPaused))
       dispatcher          <- Dispatcher.make(
                                group,
@@ -49,18 +56,33 @@ object EventLoop {
                                config.delayResumeOfPausedPartition,
                                consumerAttributes,
                                workersShutdownRef,
-                               config.startPaused
+                               config.startPaused,
+                               config.consumePartitionInParallel,
+                               config.maxParallelism,
+                               updateBatch,
+                               currentGaps
                              )
       positionsRef        <- Ref.make(Map.empty[TopicPartition, Offset])
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
       partitionsAssigned  <- Promise.make[Nothing, Unit]
       // TODO how to handle errors in subscribe?
-      rebalanceListener    = listener(pausedPartitionsRef, config, dispatcher, partitionsAssigned, group, consumer, clientId, offsets)
+      rebalanceListener    = listener(
+                               pausedPartitionsRef,
+                               config,
+                               dispatcher,
+                               partitionsAssigned,
+                               group,
+                               consumer,
+                               clientId,
+                               offsets,
+                               offsetsAndGaps,
+                               config.consumePartitionInParallel
+                             )
       _                   <- report(SubscribingToInitialSubAndRebalanceListener(clientId, group, consumerAttributes))
       _                   <- subscribe(initialSubscription, rebalanceListener)(consumer)
       running             <- Ref.make[EventLoopState](Running)
       _                   <- report(CreatingPollOnceFiber(clientId, group, consumerAttributes))
-      fiber               <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, positionsRef, offsets, config, clientId, group)
+      fiber               <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, positionsRef, offsets, config, clientId, group, offsetsAndGaps)
                                .repeatWhile(_ == true)
                                .forkDaemon
       _                   <- report(AwaitingPartitionsAssignment(clientId, group, consumerAttributes))
@@ -138,7 +160,8 @@ object EventLoop {
     offsets: Offsets,
     config: EventLoopConfig,
     clientId: ClientId,
-    group: Group
+    group: Group,
+    offsetsAndGaps: OffsetsAndGaps
   ): URIO[R2 with Env, Boolean] =
     running.get.flatMap {
       case Running =>
@@ -146,7 +169,7 @@ object EventLoop {
           _       <- resumePartitions(consumer, clientId, group, dispatcher, paused)
           records <- pollAndHandle(consumer, dispatcher, paused, config)
           _       <- updatePositions(records, positionsRef, consumer, clientId)
-          _       <- commitOffsets(consumer, offsets)
+          _       <- if (config.consumePartitionInParallel) commitOffsetsAndGaps(consumer, offsetsAndGaps) else commitOffsets(consumer, offsets)
           _       <- ZIO.when(records.isEmpty)(ZIO.sleep(50.millis))
         } yield true
 
@@ -162,7 +185,9 @@ object EventLoop {
     group: Group,
     consumer0: Consumer,
     clientId: ClientId,
-    offsets: Offsets
+    offsets: Offsets,
+    offsetsAndGaps: OffsetsAndGaps,
+    useParallelConsumer: Boolean
   ) = {
     config.rebalanceListener *>
       new RebalanceListener[GreyhoundMetrics] {
@@ -171,12 +196,13 @@ object EventLoop {
           partitions: Set[TopicPartition]
         )(implicit trace: Trace): URIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
           for {
-            _ <- pausedPartitionsRef.update(_ -- partitions)
-            isRevokeTimedOut <- dispatcher.revoke(partitions).timeout(config.drainTimeout).map(_.isEmpty)
-            _ <- ZIO.when(isRevokeTimedOut)(
-              report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumer.config.consumerAttributes))
-            )
-            delayedRebalanceEffect <- commitOffsetsOnRebalance(consumer0, offsets)
+            _                      <- pausedPartitionsRef.update(_ -- partitions)
+            isRevokeTimedOut       <- dispatcher.revoke(partitions).timeout(config.drainTimeout).map(_.isEmpty)
+            _                      <- ZIO.when(isRevokeTimedOut)(
+                                        report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumer.config.consumerAttributes))
+                                      )
+            delayedRebalanceEffect <- if (useParallelConsumer) commitOffsetsAndGapsOnRebalance(consumer0, offsetsAndGaps)
+                                      else commitOffsetsOnRebalance(consumer0, offsets)
           } yield delayedRebalanceEffect
         }
 
@@ -214,23 +240,60 @@ object EventLoop {
     for {
       records      <- consumer.poll(config.fetchTimeout).catchAll(_ => ZIO.succeed(Nil))
       paused       <- pausedRef.get
-      pausedTopics <- ZIO.foldLeft(records)(paused) { (acc, record) =>
-                        val partition = record.topicPartition
-                        if (acc contains partition)
-                          report(PartitionThrottled(partition, record.offset, consumer.config.consumerAttributes)).as(acc)
-                        else
-                          dispatcher.submit(record).flatMap {
-                            case SubmitResult.Submitted => ZIO.succeed(acc)
-                            case SubmitResult.Rejected  =>
-                              report(HighWatermarkReached(partition, record.offset, consumer.config.consumerAttributes)) *>
-                                consumer.pause(record).fold(_ => acc, _ => acc + partition)
-                          }
-                      }
+      pausedTopics <- if (config.consumePartitionInParallel) submitRecordsAsBatch(consumer, dispatcher, records, paused)
+                      else submitRecordsSequentially(consumer, dispatcher, records, paused)
       _            <- pausedRef.update(_ => pausedTopics)
     } yield records
 
+  private def submitRecordsSequentially[R2, R1](
+    consumer: Consumer,
+    dispatcher: Dispatcher[R2],
+    records: Records,
+    paused: Set[TopicPartition]
+  ): ZIO[R2 with Env, Nothing, Set[TopicPartition]] = {
+    ZIO.foldLeft(records)(paused) { (acc, record) =>
+      val partition = record.topicPartition
+      if (acc contains partition)
+        report(PartitionThrottled(partition, record.offset, consumer.config.consumerAttributes)).as(acc)
+      else
+        dispatcher.submit(record).flatMap {
+          case SubmitResult.Submitted => ZIO.succeed(acc)
+          case SubmitResult.Rejected  =>
+            report(HighWatermarkReached(partition, record.offset, consumer.config.consumerAttributes)) *>
+              consumer.pause(record).fold(_ => acc, _ => acc + partition)
+        }
+    }
+  }
+
+  private def submitRecordsAsBatch[R2, R1](
+    consumer: Consumer,
+    dispatcher: Dispatcher[R2],
+    records: Records,
+    paused: Set[TopicPartition]
+  ): ZIO[R2 with Env, Nothing, Set[TopicPartition]] = {
+    val recordsByPartition = records.groupBy(_.topicPartition)
+    ZIO.foldLeft(recordsByPartition)(paused) { (acc, partitionToRecords) =>
+      val partition = partitionToRecords._1
+      if (acc contains partition)
+        report(PartitionThrottled(partition, partitionToRecords._2.map(_.offset).min, consumer.config.consumerAttributes)).as(acc)
+      else
+        dispatcher.submitBatch(partitionToRecords._2.toSeq).flatMap {
+          case SubmitResult.Submitted       => ZIO.succeed(acc)
+          case RejectedBatch(firstRejected) =>
+            report(HighWatermarkReached(partition, firstRejected.offset, consumer.config.consumerAttributes)) *>
+              consumer.pause(firstRejected).fold(_ => acc, _ => acc + partition)
+        }
+    }
+  }
+
   private def commitOffsets(consumer: Consumer, offsets: Offsets): URIO[GreyhoundMetrics, Unit] =
     offsets.committable.flatMap { committable => consumer.commit(committable).catchAll { _ => offsets.update(committable) } }
+
+  private def commitOffsetsAndGaps(consumer: Consumer, offsetsAndGaps: OffsetsAndGaps): URIO[GreyhoundMetrics, Unit] =
+    offsetsAndGaps.getCommittableAndClear.flatMap { committable =>
+      val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
+      consumer.commitWithMetadata(offsetsAndMetadataToCommit).catchAll { _ => offsetsAndGaps.setCommittable(committable) }
+    }
 
   private def commitOffsetsOnRebalance(
     consumer: Consumer,
@@ -251,6 +314,32 @@ object EventLoop {
     }
   }
 
+  private def commitOffsetsAndGapsOnRebalance(
+    consumer: Consumer,
+    offsetsAndGaps: OffsetsAndGaps
+  ): URIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
+    for {
+      committable <- offsetsAndGaps.getCommittableAndClear
+      tle         <- consumer
+                       .commitWithMetadataOnRebalance(OffsetsAndGaps.toOffsetsAndMetadata(committable))
+                       .catchAll { _ => offsetsAndGaps.setCommittable(committable) *> DelayedRebalanceEffect.zioUnit }
+      runtime     <- ZIO.runtime[Any]
+    } yield tle.catchAll { _ => zio.Unsafe.unsafe { implicit s =>
+        runtime.unsafe
+          .run(offsetsAndGaps.setCommittable(committable))
+          .getOrThrowFiberFailure()
+      }
+    }
+  }
+
+  private def currentGapsForPartitions(partitions: Set[TopicPartition], clientId: ClientId)(
+    consumer: Consumer
+  ): ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]] =
+    consumer
+      .committedOffsetsAndMetadata(partitions)
+      .map { committed => committed.mapValues(om => OffsetsAndGaps.parseGapsString(om.metadata)) }
+      .catchAll(t => report(FailedToFetchCommittedGaps(t, clientId, consumer.config.consumerAttributes)).as(Map.empty))
+
 }
 
 case class EventLoopConfig(
@@ -260,7 +349,9 @@ case class EventLoopConfig(
   highWatermark: Int,
   rebalanceListener: RebalanceListener[Any],
   delayResumeOfPausedPartition: Long,
-  startPaused: Boolean
+  startPaused: Boolean,
+  consumePartitionInParallel: Boolean,
+  maxParallelism: Int
 )
 
 object EventLoopConfig {
@@ -271,7 +362,9 @@ object EventLoopConfig {
     highWatermark = 256,
     rebalanceListener = RebalanceListener.Empty,
     delayResumeOfPausedPartition = 0,
-    startPaused = false
+    startPaused = false,
+    consumePartitionInParallel = false,
+    maxParallelism = 1
   )
 }
 
@@ -304,6 +397,9 @@ object EventLoopMetric {
   ) extends EventLoopMetric
 
   case class FailedToUpdatePositions(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
+
+  case class FailedToFetchCommittedGaps(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty)
+      extends EventLoopMetric
 
   case class CreatingDispatcher(clientId: ClientId, group: Group, attributes: Map[String, String], startPaused: Boolean)
       extends EventLoopMetric
