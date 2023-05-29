@@ -20,14 +20,14 @@ import scala.util.{Random, Try}
 
 trait Consumer {
   def subscribe[R1](
-    topics: Set[Topic],
-    rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty
-  )(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit]
+                     topics: Set[Topic],
+                     rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty
+                   )(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit]
 
   def subscribePattern[R1](
-    topicStartsWith: Pattern,
-    rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty
-  )(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit]
+                            topicStartsWith: Pattern,
+                            rebalanceListener: RebalanceListener[R1] = RebalanceListener.Empty
+                          )(implicit trace: Trace): RIO[GreyhoundMetrics with R1, Unit]
 
   def poll(timeout: Duration)(implicit trace: Trace): RIO[GreyhoundMetrics, Records]
 
@@ -96,17 +96,17 @@ object Consumer {
     // if a partition with no committed offset is revoked during processing
     // we also may want to seek forward to some given initial offsets
     offsetsInitializer <- OffsetsInitializer
-                            .make(
-                              cfg.clientId,
-                              cfg.groupId,
-                              UnsafeOffsetOperations.make(consumer),
-                              timeout = 10.seconds,
-                              timeoutIfSeek = 10.seconds,
-                              initialSeek = cfg.initialSeek,
-                              rewindUncommittedOffsetsBy = cfg.rewindUncommittedOffsetsByMillis.millis,
-                              offsetResetIsEarliest = cfg.offsetReset == OffsetReset.Earliest,
-                              parallelConsumer = cfg.useParallelConsumer
-                            )
+      .make(
+        cfg.clientId,
+        cfg.groupId,
+        UnsafeOffsetOperations.make(consumer),
+        timeout = 10.seconds,
+        timeoutIfSeek = 10.seconds,
+        initialSeek = cfg.initialSeek,
+        rewindUncommittedOffsetsBy = cfg.rewindUncommittedOffsetsByMillis.millis,
+        offsetResetIsEarliest = cfg.offsetReset == OffsetReset.Earliest,
+        parallelConsumer = cfg.useParallelConsumer
+      )
   } yield {
     new Consumer {
       override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(
@@ -154,8 +154,8 @@ object Consumer {
           .map(_.asScala.collect { case (tp: KafkaTopicPartition, o: KafkaOffsetAndMetadata) => (TopicPartition(tp), o.offset) }.toMap)
 
       override def committedOffsetsAndMetadata(
-        partitions: NonEmptySet[TopicPartition]
-      )(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]] =
+                                                partitions: NonEmptySet[TopicPartition]
+                                              )(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]] =
         withConsumerBlocking(_.committed(kafkaPartitions(partitions)))
           .map(_.asScala.collect { case (tp: KafkaTopicPartition, om: KafkaOffsetAndMetadata) => (TopicPartition(tp), OffsetAndMetadata(om.offset, om.metadata))}.toMap)
 
@@ -164,14 +164,14 @@ object Consumer {
       }
 
       override def commitWithMetadata(
-        offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]
-      )(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+                                       offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]
+                                     )(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsetsAndMetaData(offsetsAndMetadata)))
       }
 
       override def commitOnRebalance(
-        offsets: Map[TopicPartition, Offset]
-      )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
+                                      offsets: Map[TopicPartition, Offset]
+                                    )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
         val kOffsets = kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString))
         // we can't actually call commit here, as it needs to be called from the same
         // thread, that triggered poll(), so we return the commit action as thunk
@@ -179,8 +179,8 @@ object Consumer {
       }
 
       override def commitWithMetadataOnRebalance(
-        offsets: Map[TopicPartition, OffsetAndMetadata]
-      )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
+                                                  offsets: Map[TopicPartition, OffsetAndMetadata]
+                                                )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
         ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kafkaOffsetsAndMetaData(offsets))))
 
       override def pause(partitions: Set[TopicPartition])(implicit trace: Trace): ZIO[Any, IllegalStateException, Unit] =
@@ -229,8 +229,8 @@ object Consumer {
         semaphore.withPermit(f(consumer))
 
       override def offsetsForTimes(
-        topicPartitionsOnTimestamp: Map[TopicPartition, Long]
-      )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
+                                    topicPartitionsOnTimestamp: Map[TopicPartition, Long]
+                                  )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
         val kafkaTopicPartitionsOnTimestamp = topicPartitionsOnTimestamp.map { case (tp, ts) => tp.asKafka -> ts }
         withConsumerBlocking(_.offsetsForTimes(kafkaTopicPartitionsOnTimestamp.mapValues(l => new lang.Long(l)).toMap.asJava))
           .map(
@@ -263,9 +263,9 @@ object Consumer {
               .getOrThrowFiberFailure()
               .run()
           }
-//          runtime
-//            .unsafeRun()
-//            .run() // this needs to be run in the same thread
+          //          runtime
+          //            .unsafeRun()
+          //            .run() // this needs to be run in the same thread
         }
 
         override def onPartitionsAssigned(partitions: util.Collection[KafkaTopicPartition]): Unit = {
@@ -286,9 +286,9 @@ object Consumer {
     }
 
   private def makeConsumer(
-    config: ConsumerConfig,
-    semaphore: Semaphore
-  )(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
+                            config: ConsumerConfig,
+                            semaphore: Semaphore
+                          )(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
     val acquire                              = ZIO.attemptBlocking(new KafkaConsumer(config.properties, deserializer, deserializer))
     def close(consumer: KafkaConsumer[_, _]) =
       attemptBlocking(consumer.close())
@@ -301,19 +301,19 @@ object Consumer {
 }
 
 case class ConsumerConfig(
-  bootstrapServers: String,
-  groupId: Group,
-  clientId: ClientId = s"wix-consumer-${Random.alphanumeric.take(5).mkString}",
-  offsetReset: OffsetReset = OffsetReset.Latest,
-  extraProperties: Map[String, String] = Map.empty,
-  additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
-  initialSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
-  consumerAttributes: Map[String, String] = Map.empty,
-  decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
-  rewindUncommittedOffsetsByMillis: Long = 0L,
-  useParallelConsumer: Boolean = false
-) extends CommonGreyhoundConfig {
+                           bootstrapServers: String,
+                           groupId: Group,
+                           clientId: ClientId = s"wix-consumer-${Random.alphanumeric.take(5).mkString}",
+                           offsetReset: OffsetReset = OffsetReset.Latest,
+                           extraProperties: Map[String, String] = Map.empty,
+                           additionalListener: RebalanceListener[Any] = RebalanceListener.Empty,
+                           initialSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
+                           consumerAttributes: Map[String, String] = Map.empty,
+                           decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
+                           commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
+                           rewindUncommittedOffsetsByMillis: Long = 0L,
+                           useParallelConsumer: Boolean = false
+                         ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = Map(
     KafkaConsumerConfig.BOOTSTRAP_SERVERS_CONFIG  -> bootstrapServers,
@@ -389,9 +389,9 @@ object UnsafeOffsetOperations {
     }
 
     override def committedWithMetadata(
-      partitions: NonEmptySet[TopicPartition],
-      timeout: zio.Duration
-    ): Map[TopicPartition, OffsetAndMetadata] = {
+                                        partitions: NonEmptySet[TopicPartition],
+                                        timeout: zio.Duration
+                                      ): Map[TopicPartition, OffsetAndMetadata] = {
       consumer
         .committed(partitions.map(_.asKafka).asJava, timeout)
         .asScala
