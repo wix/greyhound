@@ -43,7 +43,7 @@ object EventLoop {
       offsetsAndGaps      <- OffsetsAndGaps.make
       handle               = if (config.consumePartitionInParallel) { cr: Record => handler.handle(cr) }
                              else handler.andThen(offsets.update).handle(_)
-      updateBatch          = { records: Chunk[Record] => offsetsAndGaps.update(records) }
+      updateBatch          = { records: Chunk[Record] => report(HandledBatch(records)) *> offsetsAndGaps.update(records) }
       currentGaps          = { partitions: Set[TopicPartition] => currentGapsForPartitions(partitions, clientId)(consumer) }
       _                   <- report(CreatingDispatcher(clientId, group, consumerAttributes, config.startPaused))
       dispatcher          <- Dispatcher.make(
@@ -278,7 +278,9 @@ object EventLoop {
         report(PartitionThrottled(partition, partitionToRecords._2.map(_.offset).min, consumer.config.consumerAttributes)).as(acc)
       else
         dispatcher.submitBatch(partitionToRecords._2.toSeq).flatMap {
-          case SubmitResult.Submitted       => ZIO.succeed(acc)
+          case SubmitResult.Submitted       =>
+            report(SubmittedBatch(partitionToRecords._2.size, partitionToRecords._1, partitionToRecords._2.map(_.offset))) *>
+              ZIO.succeed(acc)
           case RejectedBatch(firstRejected) =>
             report(HighWatermarkReached(partition, firstRejected.offset, consumer.config.consumerAttributes)) *>
               consumer.pause(firstRejected).fold(_ => acc, _ => acc + partition)
@@ -292,7 +294,12 @@ object EventLoop {
   private def commitOffsetsAndGaps(consumer: Consumer, offsetsAndGaps: OffsetsAndGaps): URIO[GreyhoundMetrics, Unit] =
     offsetsAndGaps.getCommittableAndClear.flatMap { committable =>
       val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
-      consumer.commitWithMetadata(offsetsAndMetadataToCommit).catchAll { _ => offsetsAndGaps.setCommittable(committable) }
+      consumer
+        .commitWithMetadata(offsetsAndMetadataToCommit)
+        .tap(_ => report(CommittedOffsetsAndMetadata(offsetsAndMetadataToCommit)))
+        .catchAll { t =>
+          report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
+        }
     }
 
   private def commitOffsetsOnRebalance(
@@ -396,6 +403,8 @@ object EventLoopMetric {
     attributes: Map[String, String] = Map.empty
   ) extends EventLoopMetric
 
+  case class SubmittedBatch(numSubmitted: Int, partition: TopicPartition, offsets: Iterable[Offset]) extends EventLoopMetric
+
   case class FailedToUpdatePositions(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
   case class FailedToFetchCommittedGaps(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty)
@@ -410,6 +419,13 @@ object EventLoopMetric {
   case class CreatingPollOnceFiber(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
 
   case class AwaitingPartitionsAssignment(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
+
+  case class CommittedOffsetsAndMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]) extends EventLoopMetric
+
+  case class FailedToCommitOffsetsAndMetadata(t: Throwable, offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])
+      extends EventLoopMetric
+
+  case class HandledBatch(records: Records) extends EventLoopMetric
 }
 
 sealed trait EventLoopState
