@@ -54,7 +54,7 @@ object Dispatcher {
     startPaused: Boolean = false,
     consumeInParallel: Boolean = false,
     maxParallelism: Int = 1,
-    updateBatch: Chunk[Record] => UIO[Unit] = _ => ZIO.unit,
+    updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
     currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]] = _ =>
       ZIO.succeed(Map.empty)
   )(implicit trace: Trace): UIO[Dispatcher[R]] =
@@ -73,7 +73,7 @@ object Dispatcher {
 
       override def submitBatch(records: Records): URIO[R with Env, SubmitResult] =
         for {
-          _               <- report(SubmittingRecordBatch(group, clientId, records.size, consumerAttributes))
+          _               <- report(SubmittingRecordBatch(group, clientId, records.size, records, consumerAttributes))
           allSamePartition = records.map(r => RecordTopicPartition(r)).distinct.size == 1
           submitResult    <- if (allSamePartition) {
                                val partition = RecordTopicPartition(records.head)
@@ -240,7 +240,7 @@ object Dispatcher {
       consumerAttributes: Map[String, String],
       consumeInParallel: Boolean,
       maxParallelism: Int,
-      updateBatch: Chunk[Record] => UIO[Unit] = _ => ZIO.unit,
+      updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
       currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]]
     )(implicit trace: Trace): URIO[R with Env, Worker] = for {
       queue         <- Queue.dropping[Record](capacity)
@@ -355,7 +355,7 @@ object Dispatcher {
       partition: TopicPartition,
       consumerAttributes: Map[String, String],
       maxParallelism: Int,
-      updateBatch: Chunk[Record] => UIO[Unit],
+      updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit],
       currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]]
     )(implicit trace: Trace): ZIO[R with GreyhoundMetrics, Any, Boolean] =
       internalState.update(s => s.cleared).commit *>
@@ -391,8 +391,8 @@ object Dispatcher {
       clientId: ClientId,
       partition: TopicPartition,
       consumerAttributes: Map[ClientId, ClientId],
-      maxParallelism: RuntimeFlags,
-      updateBatch: Chunk[Record] => UIO[Unit],
+      maxParallelism: Int,
+      updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit],
       currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]]
     ): ZIO[R with GreyhoundMetrics, Throwable, Boolean] =
       for {
@@ -511,8 +511,13 @@ object DispatcherMetric {
   case class SubmittingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], attributes: Map[String, String])
       extends DispatcherMetric
 
-  case class SubmittingRecordBatch[K, V](group: Group, clientId: ClientId, numRecords: Int, attributes: Map[String, String])
-      extends DispatcherMetric
+  case class SubmittingRecordBatch[K, V](
+    group: Group,
+    clientId: ClientId,
+    numRecords: Int,
+    records: Records,
+    attributes: Map[String, String]
+  ) extends DispatcherMetric
 
   case class HandlingRecord[K, V](
     group: Group,
