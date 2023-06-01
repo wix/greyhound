@@ -117,7 +117,7 @@ object Dispatcher {
       override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] =
         workers
           .modify { workers =>
-            val revoked = workers.filterKeys(partitions.contains)
+            val revoked   = workers.filterKeys(partitions.contains)
             val remaining = workers -- partitions
 
             (revoked, remaining)
@@ -246,13 +246,23 @@ object Dispatcher {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber         <-
-        (reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId).forkDaemon *>
-          (if (consumeInParallel)
-              pollBatch(status, internalState, handle, queue, group, clientId, partition, consumerAttributes, maxParallelism, updateBatch, currentGaps)
-            else pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes))
-              .repeatWhile(_ == true))
-          .interruptible
-          .forkDaemon
+      (reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId).forkDaemon *>
+        (if (consumeInParallel)
+           pollBatch(
+             status,
+             internalState,
+             handle,
+             queue,
+             group,
+             clientId,
+             partition,
+             consumerAttributes,
+             maxParallelism,
+             updateBatch,
+             currentGaps
+           )
+         else pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes))
+          .repeatWhile(_ == true)).interruptible.forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
         queue
@@ -406,17 +416,18 @@ object Dispatcher {
                               )
         groupedRecords    = records.groupBy(_.key).values // todo: add sub-grouping for records without key
         latestCommitGaps <- currentGaps(records.map(r => TopicPartition(r.topic, r.partition)).toSet)
-        _                <- ZIO
-                              .foreachParDiscard(groupedRecords)(sameKeyRecords =>
-                                ZIO.foreach(sameKeyRecords) { record =>
-                                  if (shouldRecordBeHandled(record, latestCommitGaps)) {
-                                    handle(record).interruptible.ignore *> updateBatch(sameKeyRecords).interruptible
-                                  } else
-                                    report(SkippedPreviouslyHandledRecord(record, group, clientId, consumerAttributes))
+        _                <- report(InvokingHandlersInParallel(Math.max(groupedRecords.size, maxParallelism))) *>
+                              ZIO
+                                .foreachParDiscard(groupedRecords)(sameKeyRecords =>
+                                  ZIO.foreach(sameKeyRecords) { record =>
+                                    if (shouldRecordBeHandled(record, latestCommitGaps)) {
+                                      handle(record).interruptible.ignore *> updateBatch(sameKeyRecords).interruptible
+                                    } else
+                                      report(SkippedPreviouslyHandledRecord(record, group, clientId, consumerAttributes))
 
-                                }
-                              )
-                              .withParallelism(maxParallelism)
+                                  }
+                                )
+                                .withParallelism(maxParallelism)
         res              <- isActive(internalState)
       } yield res
   }
@@ -567,6 +578,8 @@ object DispatcherMetric {
     clientId: ClientId,
     currentExecutionStarted: Option[Long]
   ) extends DispatcherMetric
+
+  case class InvokingHandlersInParallel(numHandlers: Int) extends DispatcherMetric
 
   case class SkippedPreviouslyHandledRecord(record: Record, group: Group, clientId: ClientId, attributes: Map[String, String])
       extends DispatcherMetric
