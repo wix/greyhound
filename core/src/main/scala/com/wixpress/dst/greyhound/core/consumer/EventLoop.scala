@@ -296,7 +296,7 @@ object EventLoop {
       val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
       consumer
         .commitWithMetadata(offsetsAndMetadataToCommit)
-        .tap(_ => report(CommittedOffsetsAndMetadata(offsetsAndMetadataToCommit)))
+        .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndMetadata(offsetsAndMetadataToCommit))))
         .catchAll { t =>
           report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
         }
@@ -331,7 +331,8 @@ object EventLoop {
                        .commitWithMetadataOnRebalance(OffsetsAndGaps.toOffsetsAndMetadata(committable))
                        .catchAll { _ => offsetsAndGaps.setCommittable(committable) *> DelayedRebalanceEffect.zioUnit }
       runtime     <- ZIO.runtime[Any]
-    } yield tle.catchAll { _ => zio.Unsafe.unsafe { implicit s =>
+    } yield tle.catchAll { _ =>
+      zio.Unsafe.unsafe { implicit s =>
         runtime.unsafe
           .run(offsetsAndGaps.setCommittable(committable))
           .getOrThrowFiberFailure()
@@ -406,6 +407,14 @@ object EventLoopMetric {
   case class SubmittedBatch(numSubmitted: Int, partition: TopicPartition, offsets: Iterable[Offset]) extends EventLoopMetric
 
   case class FailedToUpdatePositions(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
+
+  case class FailedToUpdateGapsOnPartitionAssignment(
+    t: Throwable,
+    clientId: ClientId,
+    group: Group,
+    partitions: Set[TopicPartition],
+    attributes: Map[String, String] = Map.empty
+  ) extends EventLoopMetric
 
   case class FailedToFetchCommittedGaps(t: Throwable, clientId: ClientId, attributes: Map[String, String] = Map.empty)
       extends EventLoopMetric
