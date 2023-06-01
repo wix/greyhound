@@ -11,15 +11,18 @@ trait OffsetsAndGaps {
 
   def gapsForPartition(partition: TopicPartition): UIO[Seq[Gap]]
 
-  def update(partition: TopicPartition, batch: Seq[Offset]): UIO[Unit]
+  def update(partition: TopicPartition, batch: Seq[Offset], prevCommittedOffset: Option[Offset]): UIO[Unit]
 
   def update(record: ConsumerRecord[_, _]): UIO[Unit] =
-    update(RecordTopicPartition(record), Seq(record.offset))
+    update(RecordTopicPartition(record), Seq(record.offset), None)
 
   def update(records: Chunk[ConsumerRecord[_, _]]): UIO[Unit] = {
     val sortedBatch = records.sortBy(_.offset)
-    update(RecordTopicPartition(sortedBatch.head), sortedBatch.map(_.offset) ++ Seq(sortedBatch.last.offset + 1))
+    update(RecordTopicPartition(sortedBatch.head), sortedBatch.map(_.offset) ++ Seq(sortedBatch.last.offset + 1), None)
   }
+
+  def update(partition: TopicPartition, batch: Seq[Offset]): UIO[Unit] =
+    update(partition, batch, None)
 
   def setCommittable(offsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit]
 
@@ -40,7 +43,7 @@ object OffsetsAndGaps {
         override def gapsForPartition(partition: TopicPartition): UIO[Seq[Gap]] =
           ref.get.map(_.get(partition).fold(Seq.empty[Gap])(_.gaps.sortBy(_.start)))
 
-        override def update(partition: TopicPartition, batch: Seq[Offset]): UIO[Unit] =
+        override def update(partition: TopicPartition, batch: Seq[Offset], prevCommittedOffset: Option[Offset]): UIO[Unit] =
           ref.update { offsetsAndGaps =>
             val sortedBatch            = batch.sorted
             val maxBatchOffset         = sortedBatch.last
