@@ -55,13 +55,15 @@ object Dispatcher {
     consumeInParallel: Boolean = false,
     maxParallelism: Int = 1,
     updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
-    currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]] = _ =>
-      ZIO.succeed(Map.empty)
+    currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]] = _ => ZIO.succeed(Map.empty),
+    init: Promise[Nothing, Unit]
   )(implicit trace: Trace): UIO[Dispatcher[R]] =
     for {
-      p       <- Promise.make[Nothing, Unit]
-      state   <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
-      workers <- Ref.make(Map.empty[TopicPartition, Worker])
+      p         <- Promise.make[Nothing, Unit]
+      state     <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
+      initState <-
+        Ref.make[DispatcherInitState](if (consumeInParallel) DispatcherInitState.NotInitialized else DispatcherInitState.Initialized)
+      workers   <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
         for {
@@ -73,15 +75,20 @@ object Dispatcher {
 
       override def submitBatch(records: Records): URIO[R with Env, SubmitResult] =
         for {
-          _               <- report(SubmittingRecordBatch(group, clientId, records.size, records, consumerAttributes))
-          allSamePartition = records.map(r => RecordTopicPartition(r)).distinct.size == 1
-          submitResult    <- if (allSamePartition) {
-                               val partition = RecordTopicPartition(records.head)
-                               for {
-                                 worker    <- workerFor(partition, records.head.offset)
-                                 submitted <- worker.submitBatch(records)
-                               } yield submitted
-                             } else ZIO.succeed(SubmitBatchResult(success = false, Some(records.minBy(_.offset))))
+          _                <- report(SubmittingRecordBatch(group, clientId, records.size, records, consumerAttributes))
+          currentInitState <- initState.get
+          _                <- currentInitState match {
+                                case DispatcherInitState.NotInitialized => init.await *> initState.set(DispatcherInitState.Initialized)
+                                case _                                  => ZIO.unit
+                              }
+          allSamePartition  = records.map(r => RecordTopicPartition(r)).distinct.size == 1
+          submitResult     <- if (allSamePartition) {
+                                val partition = RecordTopicPartition(records.head)
+                                for {
+                                  worker    <- workerFor(partition, records.head.offset)
+                                  submitted <- worker.submitBatch(records)
+                                } yield submitted
+                              } else ZIO.succeed(SubmitBatchResult(success = false, Some(records.minBy(_.offset))))
 
         } yield
           if (allSamePartition && submitResult.success) Submitted
@@ -212,6 +219,16 @@ object Dispatcher {
 
   }
 
+  sealed trait DispatcherInitState
+
+  object DispatcherInitState {
+
+    case object NotInitialized extends DispatcherInitState
+
+    case object Initialized extends DispatcherInitState
+
+  }
+
   case class Task(record: Record, complete: UIO[Unit])
 
   trait Worker {
@@ -241,7 +258,7 @@ object Dispatcher {
       consumeInParallel: Boolean,
       maxParallelism: Int,
       updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
-      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]]
+      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]]
     )(implicit trace: Trace): URIO[R with Env, Worker] = for {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
@@ -366,7 +383,7 @@ object Dispatcher {
       consumerAttributes: Map[String, String],
       maxParallelism: Int,
       updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit],
-      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]]
+      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]]
     )(implicit trace: Trace): ZIO[R with GreyhoundMetrics, Any, Boolean] =
       internalState.update(s => s.cleared).commit *>
         state.get.flatMap {
@@ -403,7 +420,7 @@ object Dispatcher {
       consumerAttributes: Map[ClientId, ClientId],
       maxParallelism: Int,
       updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit],
-      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]]
+      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]]
     ): ZIO[R with GreyhoundMetrics, Throwable, Boolean] =
       for {
         _                <- report(TookAllRecordsFromQueue(records.size, records, group, clientId, consumerAttributes))
@@ -432,15 +449,11 @@ object Dispatcher {
       } yield res
   }
 
-  private def shouldRecordBeHandled(record: Record, maybeGaps: Map[TopicPartition, Option[OffsetAndGaps]]): Boolean = {
-    maybeGaps.get(TopicPartition(record.topic, record.partition)) match {
-      case Some(maybeOffsetAndGapsForPartition) =>
-        maybeOffsetAndGapsForPartition match {
-          case Some(offsetAndGapsForPartition) if offsetAndGapsForPartition.gaps.nonEmpty =>
-            record.offset > offsetAndGapsForPartition.offset || offsetAndGapsForPartition.gaps.exists(_.contains(record.offset))
-          case _                                                                          => true
-        }
-      case None                                 => true
+  private def shouldRecordBeHandled(record: Record, gaps: Map[TopicPartition, OffsetAndGaps]): Boolean = {
+    gaps.get(TopicPartition(record.topic, record.partition)) match {
+      case Some(offsetAndGapsForPartition) if offsetAndGapsForPartition.gaps.nonEmpty =>
+        record.offset > offsetAndGapsForPartition.offset || offsetAndGapsForPartition.gaps.exists(_.contains(record.offset))
+      case _                                                                          => true
     }
   }
 
