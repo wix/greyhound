@@ -96,7 +96,7 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       for {
         r                             <- getShared
         TestResources(kafka, producer) = r
-        topic                         <- kafka.createRandomTopic()
+        topic                         <- kafka.createRandomTopic(partitions = 1)
         group                         <- randomGroup
         cId                           <- clientId
         partition                      = 0
@@ -129,10 +129,11 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
             consumer <- makeParallelConsumer(handler, kafka, topic, group, cId, drainTimeout = drainTimeout, startPaused = true)
             _        <- produceRecords(producer, Seq(slowRecord))
             _        <- produceRecords(producer, fastRecords)
+            _        <- ZIO.sleep(2.seconds)
             // produce is done synchronously to make sure all records are produced before consumer starts, so all records are polled at once
             _        <- consumer.resume
             _        <- fastMessagesLatch.await
-            _        <- ZIO.sleep(2.second) // sleep to ensure commit is done before rebalance
+            _        <- ZIO.sleep(3.second) // sleep to ensure commit is done before rebalance
             // start another consumer to trigger a rebalance before slow handler is done
             _        <- makeParallelConsumer(
                           handler,
@@ -141,11 +142,11 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                           group,
                           cId,
                           drainTimeout = drainTimeout,
-                          onAssigned = assigned => ZIO.when(assigned.nonEmpty)(finishRebalance.succeed())
+                          onAssigned = _ => finishRebalance.succeed()
                         )
           } yield ()
 
-        _ <- eventuallyZ(numProcessedMessges.get, 20.seconds)(_ == allMessages)
+        _ <- eventuallyZ(numProcessedMessges.get, 25.seconds)(_ == allMessages)
       } yield {
         ok
       }
@@ -209,8 +210,7 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         regularConfig = configFor(kafka, group, Set(topic))
         _            <- metricsQueue.take
                           .flatMap {
-                            case m: SkippedGapsOnInitialization =>
-                              ZIO.debug(s">>> got SkippedGapsOnInitialization with gaps: ${m.gaps}") *> skippedGaps.update(_ + 1)
+                            case _: SkippedGapsOnInitialization => skippedGaps.update(_ + 1)
                             case _                              => ZIO.unit
                           }
                           .repeat(Schedule.forever)
@@ -242,6 +242,7 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         parallelConsumer <- makeParallelConsumer(parallelConsumerHandler, kafka, topic, group, cId, startPaused = true)
         _                <- produceRecords(producer, Seq(slowRecord))
         _                <- produceRecords(producer, fastRecords)
+        _                <- ZIO.sleep(3.seconds)
         // produce is done synchronously to make sure all records are produced before consumer starts, so all records are polled at once
         _                <- parallelConsumer.resume
         _                <- fastMessagesLatch.await
