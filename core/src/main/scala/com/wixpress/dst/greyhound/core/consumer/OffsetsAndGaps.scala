@@ -7,9 +7,13 @@ import com.wixpress.dst.greyhound.core.{Offset, OffsetAndMetadata, TopicPartitio
 import zio._
 
 trait OffsetsAndGaps {
+  def init(committedOffsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit]
+
   def getCommittableAndClear: UIO[Map[TopicPartition, OffsetAndGaps]]
 
   def gapsForPartition(partition: TopicPartition): UIO[Seq[Gap]]
+
+  def offsetsAndGapsForPartitions(partitions: Set[TopicPartition]): UIO[Map[TopicPartition, OffsetAndGaps]]
 
   def update(partition: TopicPartition, batch: Seq[Offset], prevCommittedOffset: Option[Offset]): UIO[Unit]
 
@@ -33,6 +37,9 @@ object OffsetsAndGaps {
   def make: UIO[OffsetsAndGaps] =
     Ref.make(Map.empty[TopicPartition, OffsetAndGaps]).map { ref =>
       new OffsetsAndGaps {
+        override def init(committedOffsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit] =
+          ref.update(_ => committedOffsets)
+
         override def getCommittableAndClear: UIO[Map[TopicPartition, OffsetAndGaps]] =
           ref.modify(offsetsAndGaps => {
             val committable = offsetsAndGaps.filter(_._2.committable)
@@ -42,6 +49,9 @@ object OffsetsAndGaps {
 
         override def gapsForPartition(partition: TopicPartition): UIO[Seq[Gap]] =
           ref.get.map(_.get(partition).fold(Seq.empty[Gap])(_.gaps.sortBy(_.start)))
+
+        override def offsetsAndGapsForPartitions(partitions: Set[TopicPartition]): UIO[Map[TopicPartition, OffsetAndGaps]] =
+          ref.get.map(_.filterKeys(partitions.contains))
 
         override def update(partition: TopicPartition, batch: Seq[Offset], prevCommittedOffset: Option[Offset]): UIO[Unit] =
           ref.update { offsetsAndGaps =>
@@ -153,4 +163,6 @@ object OffsetAndGaps {
   val LAST_HANDLED_OFFSET_SEPARATOR = "#"
 
   def apply(offset: Offset): OffsetAndGaps = OffsetAndGaps(offset, Seq.empty[Gap])
+
+  def apply(offset: Offset, committable: Boolean): OffsetAndGaps = OffsetAndGaps(offset, Seq.empty[Gap], committable)
 }
