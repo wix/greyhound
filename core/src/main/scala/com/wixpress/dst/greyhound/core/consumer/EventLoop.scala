@@ -43,9 +43,10 @@ object EventLoop {
       offsetsAndGaps      <- OffsetsAndGaps.make
       handle               = if (config.consumePartitionInParallel) { cr: Record => handler.handle(cr) }
                              else handler.andThen(offsets.update).handle(_)
-      updateBatch          = { records: Chunk[Record] => report(HandledBatch(records)) *> offsetsAndGaps.update(records) }
-      currentGaps          = { partitions: Set[TopicPartition] => currentGapsForPartitions(partitions, clientId)(consumer) }
+      updateBatch          = { records: Chunk[Record] => report(HandledBatch(records)) *> updateGapsByBatch(records, offsetsAndGaps) }
+      currentGaps          = { partitions: Set[TopicPartition] => offsetsAndGaps.offsetsAndGapsForPartitions(partitions) }
       _                   <- report(CreatingDispatcher(clientId, group, consumerAttributes, config.startPaused))
+      offsetsAndGapsInit  <- Promise.make[Nothing, Unit]
       dispatcher          <- Dispatcher.make(
                                group,
                                clientId,
@@ -60,11 +61,12 @@ object EventLoop {
                                config.consumePartitionInParallel,
                                config.maxParallelism,
                                updateBatch,
-                               currentGaps
+                               currentGaps,
+                               offsetsAndGapsInit
                              )
       positionsRef        <- Ref.make(Map.empty[TopicPartition, Offset])
       pausedPartitionsRef <- Ref.make(Set.empty[TopicPartition])
-      partitionsAssigned  <- Promise.make[Nothing, Unit]
+      partitionsAssigned  <- Promise.make[Nothing, Set[TopicPartition]]
       // TODO how to handle errors in subscribe?
       rebalanceListener    = listener(
                                pausedPartitionsRef,
@@ -86,7 +88,20 @@ object EventLoop {
                                .repeatWhile(_ == true)
                                .forkDaemon
       _                   <- report(AwaitingPartitionsAssignment(clientId, group, consumerAttributes))
-      _                   <- partitionsAssigned.await
+      partitions          <- partitionsAssigned.await
+      _                   <- if (config.consumePartitionInParallel) {
+                               report(AwaitingOffsetsAndGapsInit(clientId, group, consumerAttributes)) *>
+                                 initializeOffsetsAndGaps( // we must preform init in the main thread ant not in the rebalance listener as it involves calling SDK
+                                   offsetsAndGaps,
+                                   partitions,
+                                   consumer,
+                                   clientId,
+                                   group,
+                                   consumerAttributes,
+                                   offsetsAndGapsInit
+                                 ) *> offsetsAndGapsInit.await
+
+                             } else offsetsAndGapsInit.succeed()
       env                 <- ZIO.environment[Env]
     } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provideEnvironment(env))
 
@@ -181,7 +196,7 @@ object EventLoop {
     pausedPartitionsRef: Ref[Set[TopicPartition]],
     config: EventLoopConfig,
     dispatcher: Dispatcher[_],
-    partitionsAssigned: Promise[Nothing, Unit],
+    partitionsAssigned: Promise[Nothing, Set[TopicPartition]],
     group: Group,
     consumer0: Consumer,
     clientId: ClientId,
@@ -207,7 +222,7 @@ object EventLoop {
         }
 
         override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
-          partitionsAssigned.succeed(())
+          partitionsAssigned.succeed(partitions)
       }
   }
 
@@ -244,6 +259,25 @@ object EventLoop {
                       else submitRecordsSequentially(consumer, dispatcher, records, paused)
       _            <- pausedRef.update(_ => pausedTopics)
     } yield records
+
+  private def initializeOffsetsAndGaps(
+    offsetsAndGaps: OffsetsAndGaps,
+    partitions: Set[TopicPartition],
+    consumer: Consumer,
+    clientId: ClientId,
+    group: Group,
+    attributes: Map[String, String],
+    offsetsAndGapsInit: Promise[Nothing, Unit]
+  ) = for {
+    committedOffsetsAndMetadata <- consumer.committedOffsetsAndMetadata(partitions)
+    initialOffsetsAndGaps        =
+      committedOffsetsAndMetadata.mapValues(om =>
+        OffsetsAndGaps.parseGapsString(om.metadata).fold(OffsetAndGaps(om.offset - 1, committable = false))(identity)
+      )
+    _                           <- offsetsAndGaps.init(initialOffsetsAndGaps)
+    _                           <- report(InitializedOffsetsAndGaps(clientId, group, initialOffsetsAndGaps, attributes))
+    _                           <- offsetsAndGapsInit.succeed(())
+  } yield ()
 
   private def submitRecordsSequentially[R2, R1](
     consumer: Consumer,
@@ -340,6 +374,9 @@ object EventLoop {
     }
   }
 
+  private def updateGapsByBatch(records: Chunk[Record], offsetsAndGaps: OffsetsAndGaps) =
+    offsetsAndGaps.update(records)
+
   private def currentGapsForPartitions(partitions: Set[TopicPartition], clientId: ClientId)(
     consumer: Consumer
   ): ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, Option[OffsetAndGaps]]] =
@@ -428,6 +465,15 @@ object EventLoopMetric {
   case class CreatingPollOnceFiber(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
 
   case class AwaitingPartitionsAssignment(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
+
+  case class AwaitingOffsetsAndGapsInit(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
+
+  case class InitializedOffsetsAndGaps(
+    clientId: ClientId,
+    group: Group,
+    initial: Map[TopicPartition, OffsetAndGaps],
+    attributes: Map[String, String]
+  ) extends EventLoopMetric
 
   case class CommittedOffsetsAndMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]) extends EventLoopMetric
 
