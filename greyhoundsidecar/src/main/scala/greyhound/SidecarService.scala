@@ -142,12 +142,8 @@ class SidecarService(tenantRegistry: Registry,
 }
 
 object SidecarService {
-  val layer: ZLayer[Registry with ConsumerCreator with KafkaInfo, Nothing, SidecarService] = ZLayer.fromZIO {
-    for {
-      kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
-      tenantRegistry <- ZIO.service[Registry]
-      consumerCreator <- ZIO.service[ConsumerCreator]
-    } yield new SidecarService(tenantRegistry = tenantRegistry, consumerCreator = consumerCreator, kafkaAddress = kafkaAddress)
+  val layer = ZLayer.fromFunction { (registry: Registry, consumerCreator: ConsumerCreator, kafkaInfo: KafkaInfo) =>
+    new SidecarService(registry, consumerCreator, _ => ZIO.unit, kafkaInfo.address)
   }
 }
 

@@ -52,7 +52,19 @@ services:
     networks:
       - greyhound-network
 
+  greyhound-sidecar-cache:
+    image: redis:7.2-rc1-alpine
+    ports:
+      - 6379:6379
+    volumes:
+      - redis_data:/data
+    networks:
+      - greyhound-network
+
   greyhound-sidecar:
+    depends_on:
+      - kafka
+      - greyhound-sidecar-cache
     image: greyhound-sidecar:1.0
     ports:
       - 9000:9000
@@ -61,3 +73,6 @@ services:
       KAFKA_ADDRESS: kafka:29092
     networks:
       - greyhound-network
+
+volumes:
+  redis_data:

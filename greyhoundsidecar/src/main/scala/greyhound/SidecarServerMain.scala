@@ -3,8 +3,9 @@ package greyhound
 import io.grpc.Status
 import scalapb.zio_grpc.{RequestContext, ServerMain, ServiceList, ZTransform}
 import zio.logging.backend.SLF4J
+import zio.redis._
 import zio.stream.ZStream
-import zio.{Cause, Runtime, URIO, ZIO}
+import zio.{Cause, Runtime, URIO, ZIO, ZLayer}
 
 object SidecarServerMain extends ServerMain {
 
@@ -46,17 +47,28 @@ object SidecarServerMain extends ServerMain {
       .onError(logCause)
   }
 
-  val sidecarService = for {
+  private val sidecarService = for {
     service <- ZIO.service[SidecarService]
     kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
     _ <- zio.Console.printLine(s"~~~ INIT Sidecar Service with kafka address $kafkaAddress").orDie
   } yield service.transform[RequestContext](new LoggingTransform)
 
-  val initSidecarService = sidecarService.provide(
+  // Currently supports only single node
+  private val redisLayer: ZLayer[Any, RedisError.IOError, Redis] = ZLayer.make[Redis](
+    Redis.layer,
+    RedisExecutor.layer,
+    ZLayer.succeed(RedisConfig("greyhound-sidecar-cache", 6379)), //TODO don't use hardcoded values
+    ZLayer.succeed(CodecSupplier.utf8string),
+  )
+
+  private val initSidecarService = sidecarService.provide(
     SidecarService.layer,
     TenantRegistry.layer,
     KafkaInfoLive.layer,
-    ConsumerCreatorImpl.layer)
+    ConsumerCreatorImpl.layer,
+    RegistryRepo.layer,
+    redisLayer,
+  )
 
 }
 

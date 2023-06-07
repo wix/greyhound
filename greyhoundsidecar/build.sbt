@@ -21,6 +21,7 @@ lazy val root = (project in file("."))
       "org.slf4j" % "slf4j-api" % "1.7.25",
       "ch.qos.logback" % "logback-classic" % "1.1.3",
       "dev.zio" %% "zio-logging-slf4j" % "2.1.3",
+      "dev.zio" %% "zio-redis" % "0.2.0",
 
       // -- test -- //
       "dev.zio" %% "zio-test" % "2.0.3" % Test,
@@ -28,7 +29,8 @@ lazy val root = (project in file("."))
       "dev.zio" %% "zio-test-sbt" % "2.0.3" % Test,
       "org.specs2" %% "specs2-core" % "4.14.1" % Test,
       "org.apache.curator" % "curator-test" % "5.3.0" % Test,
-      "com.wix" %% "greyhound-testkit" % "0.3.0" % Test
+      "com.wix" %% "greyhound-testkit" % "0.3.0" % Test,
+      "dev.zio" %% "zio-redis-embedded" % "0.2.0" % Test,
     ),
     packageName := "greyhound-sidecar",
     version := "1.0",
