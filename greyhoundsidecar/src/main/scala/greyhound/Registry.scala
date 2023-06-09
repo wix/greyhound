@@ -24,7 +24,10 @@ trait Registry {
   def isUniqueConsumer(topic: String, consumerGroup: String, tenantId: String): UIO[Boolean]
 }
 
-case class TenantRegistry(ref: Synchronized[Map[String, TenantInfo]]) extends Registry {
+case class TenantRegistry(
+    ref: Synchronized[Map[String, TenantInfo]],
+    registryRepo: RegistryRepo
+) extends Registry {
   override def addTenant(tenantId: String, host: String, port: Int): Task[Unit] = {
     ref.updateZIO(tenants => if (tenants.values.map(_.hostDetails).exists(hostDetails => hostDetails.host == host && hostDetails.port == port))
       ZIO.fail(new StatusRuntimeException(Status.ALREADY_EXISTS))
@@ -80,9 +83,11 @@ case class TenantRegistry(ref: Synchronized[Map[String, TenantInfo]]) extends Re
 }
 
 object TenantRegistry {
-  val layer = ZLayer.fromZIO {
-    Synchronized.make(Map.empty[String, TenantInfo])
-      .map(TenantRegistry(_))
+  val layer: ZLayer[RegistryRepo, Nothing, TenantRegistry] = ZLayer.fromZIO {
+    for {
+      ref <- Synchronized.make(Map.empty[String, TenantInfo])
+      registryRepo <- ZIO.service[RegistryRepo]
+    } yield TenantRegistry(ref, registryRepo)
   }
 }
 

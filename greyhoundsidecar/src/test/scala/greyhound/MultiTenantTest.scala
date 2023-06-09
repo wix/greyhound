@@ -27,6 +27,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
   override val kafkaPort: Int = 6667
   override val zooKeeperPort: Int = 2187
   override val sideCarUserGrpcPort: Int = 9107
+  override val isStandaloneMode: Boolean = false
   val sideCarUser1GrpcPort = 9105
   val sideCarUser2GrpcPort = 9106
 
@@ -238,7 +239,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
         (testSidecarUser1Layer >>> sidecarUserServer1Layer) ++
         testSidecarUser2Layer ++
         (testSidecarUser2Layer >>> sidecarUserServer2Layer) ++
-        ((TenantRegistry.layer ++ TestKafkaInfo.layer ++ (TenantRegistry.layer >>> ConsumerCreatorImpl.layer)) >>> SidecarService.layer)) @@
+        ((TestTenantRegistry.layer ++ TestKafkaInfo.layer ++ (TestTenantRegistry.layer >>> ConsumerCreatorImpl.layer)) >>> SidecarService.layer)) @@
       TestAspect.withLiveClock @@
       runKafka(kafkaPort, zooKeeperPort) @@
       sequential

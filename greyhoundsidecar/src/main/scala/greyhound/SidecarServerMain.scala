@@ -1,10 +1,12 @@
 package greyhound
 
+import com.wixpress.dst.greyhound.sidecar.api.v1.greyhoundsidecar.ZioGreyhoundsidecar
 import io.grpc.Status
 import scalapb.zio_grpc.{RequestContext, ServerMain, ServiceList, ZTransform}
 import zio.logging.backend.SLF4J
+import zio.redis._
 import zio.stream.ZStream
-import zio.{Cause, Runtime, URIO, ZIO}
+import zio.{Cause, Runtime, UIO, URIO, ZIO, ZLayer}
 
 object SidecarServerMain extends ServerMain {
 
@@ -46,18 +48,51 @@ object SidecarServerMain extends ServerMain {
       .onError(logCause)
   }
 
-  val sidecarService = for {
+  private def getRedisConfig: UIO[RedisConfig] = {
+    val maybeConfig = for {
+      redisHost <- ZIO.fromOption(scala.util.Properties.envOrNone("REDIS_HOST"))
+      redisPortEnv <- ZIO.fromOption(scala.util.Properties.envOrNone("REDIS_PORT"))
+      redisPort <- ZIO.attempt(redisPortEnv.toInt)
+    } yield RedisConfig(redisHost, redisPort)
+
+    maybeConfig.catchAll(_ => ZIO.succeed(RedisConfig.Default))
+  }
+
+  private val redisConfigLayer = ZLayer.fromZIO(getRedisConfig)
+
+  // Currently supports only single node
+  private lazy val redisLayer: ZLayer[Any, RedisError.IOError, Redis] = ZLayer.make[Redis](
+    Redis.layer,
+    RedisExecutor.layer,
+    redisConfigLayer,
+    ZLayer.succeed(CodecSupplier.utf8string),
+  )
+
+  private lazy val redisRegistryRepo = ZLayer.make[RedisRegistryRepo](
+    ZLayer.fromFunction(RedisRegistryRepo(_)),
+    redisLayer,
+  )
+
+  private val sidecarService = for {
     service <- ZIO.service[SidecarService]
     kafkaAddress <- ZIO.service[KafkaInfo].map(_.address)
     _ <- zio.Console.printLine(s"~~~ INIT Sidecar Service with kafka address $kafkaAddress").orDie
   } yield service.transform[RequestContext](new LoggingTransform)
 
-  val initSidecarService = sidecarService.provide(
-    SidecarService.layer,
-    TenantRegistry.layer,
-    KafkaInfoLive.layer,
-    ConsumerCreatorImpl.layer)
+  private def getStandaloneMode: UIO[Boolean] = ZIO.attempt(
+    scala.util.Properties.envOrNone("STANDALONE_MODE").exists(_.toBoolean)
+  ).catchAll(_ => ZIO.succeed(false))
 
+  private def initSidecarService: ZIO[Any, Throwable, ZioGreyhoundsidecar.ZGreyhoundSidecar[RequestContext]] = for {
+    isStandalone <- getStandaloneMode
+    partialService = sidecarService.provideSome[RegistryRepo](
+      SidecarService.layer,
+      TenantRegistry.layer,
+      KafkaInfoLive.layer,
+      ConsumerCreatorImpl.layer,
+    )
+    service <- if(isStandalone) partialService.provide(redisRegistryRepo) else partialService.provide(InMemoryRegistryRepo.layer)
+  } yield service
 }
 
 class LoggingTransform[R] extends ZTransform[R, Status, R with RequestContext] {

@@ -16,6 +16,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
   override val kafkaPort: Int = 6668
   override val zooKeeperPort: Int = 2188
   override val sideCarUserGrpcPort: Int = 9108
+  override val isStandaloneMode: Boolean = false
 
   val sidecarUserServerLayer = ZLayer.fromZIO(for {
     user <- ZIO.service[TestSidecarUser]
@@ -155,7 +156,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
         ZLayer.succeed(zio.Scope.global) ++
         TestSidecarUser.layer ++
         (TestSidecarUser.layer >>> sidecarUserServerLayer) ++
-        ((TenantRegistry.layer ++ TestKafkaInfo.layer ++ (TenantRegistry.layer >>> ConsumerCreatorImpl.layer)) >>> SidecarService.layer)) @@
+        ((TestTenantRegistry.layer ++ TestKafkaInfo.layer ++ (TestTenantRegistry.layer >>> ConsumerCreatorImpl.layer)) >>> SidecarService.layer)) @@
       TestAspect.withLiveClock @@
       runKafka(kafkaPort, zooKeeperPort) @@
       sequential
