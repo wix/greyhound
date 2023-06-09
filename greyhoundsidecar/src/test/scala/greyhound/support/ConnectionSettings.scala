@@ -1,6 +1,6 @@
 package greyhound.support
 
-import greyhound.{KafkaInfo, RegistryRepo, TenantRegistry}
+import greyhound.{InMemoryRegistryRepo, KafkaInfo, RedisRegistryRepo, RegistryRepo, TenantRegistry}
 import zio.ZLayer
 import zio.redis.{CodecSupplier, Redis, RedisExecutor}
 import zio.redis.embedded.EmbeddedRedis
@@ -9,6 +9,7 @@ trait ConnectionSettings {
   val kafkaPort: Int
   val zooKeeperPort: Int
   val sideCarUserGrpcPort: Int
+  val isStandaloneMode: Boolean
 
   final val localhost: String = "localhost"
 
@@ -22,13 +23,17 @@ trait ConnectionSettings {
   }
 
   object TestRegistryRepo {
-    val layer = ZLayer.make[RegistryRepo](
-      RegistryRepo.layer,
+    def layer = if (isStandaloneMode) redisTestLayer else inMemoryTestLayer
+
+    val redisTestLayer = ZLayer.make[RegistryRepo](
+      RedisRegistryRepo.layer,
       Redis.layer,
       RedisExecutor.layer,
       EmbeddedRedis.layer,
       ZLayer.succeed(CodecSupplier.utf8string),
     )
+
+    val inMemoryTestLayer = InMemoryRegistryRepo.layer
   }
 
   object TestTenantRegistry {

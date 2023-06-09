@@ -16,6 +16,7 @@ object SidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport with C
   override val kafkaPort: Int = 6668
   override val zooKeeperPort: Int = 2188
   override val sideCarUserGrpcPort: Int = 9108
+  override val isStandaloneMode: Boolean = false
 
   val sidecarUserServerLayer = ZLayer.fromZIO(for {
     user <- ZIO.service[TestSidecarUser]

@@ -27,6 +27,7 @@ object MultiTenantTest extends JUnitRunnableSpec with KafkaTestSupport with Conn
   override val kafkaPort: Int = 6667
   override val zooKeeperPort: Int = 2187
   override val sideCarUserGrpcPort: Int = 9107
+  override val isStandaloneMode: Boolean = false
   val sideCarUser1GrpcPort = 9105
   val sideCarUser2GrpcPort = 9106
 

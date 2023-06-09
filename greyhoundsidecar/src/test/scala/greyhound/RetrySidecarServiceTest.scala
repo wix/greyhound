@@ -16,6 +16,7 @@ object RetrySidecarServiceTest extends JUnitRunnableSpec with KafkaTestSupport w
   override val kafkaPort: Int = 6669
   override val zooKeeperPort: Int = 2189
   override val sideCarUserGrpcPort: Int = 9109
+  override val isStandaloneMode: Boolean = false
 
   val sidecarUserServerLayer = ZLayer.fromZIO(for {
     user <- ZIO.service[FailOnceTestSidecarUser]
