@@ -431,9 +431,9 @@ object Dispatcher {
                                 e => report(FailToUpdateParallelCurrentExecutionStarted(records.size, group, clientId, consumerAttributes, e)),
                                 t => report(CurrentExecutionStartedEvent(partition, group, clientId, t.currentExecutionStarted))
                               )
-        groupedRecords    = records.groupBy(_.key).values // todo: add sub-grouping for records without key
+        groupedRecords    = groupRecordsForParallelHandling(records, maxParallelism)
         latestCommitGaps <- currentGaps(records.map(r => TopicPartition(r.topic, r.partition)).toSet)
-        _                <- report(InvokingHandlersInParallel(Math.max(groupedRecords.size, maxParallelism))) *>
+        _                <- report(InvokingHandlersInParallel(partition, numHandlers = Math.min(groupedRecords.size, maxParallelism))) *>
                               ZIO
                                 .foreachParDiscard(groupedRecords)(sameKeyRecords =>
                                   ZIO.foreach(sameKeyRecords) { record =>
@@ -455,6 +455,18 @@ object Dispatcher {
         record.offset > offsetAndGapsForPartition.offset || offsetAndGapsForPartition.gaps.exists(_.contains(record.offset))
       case _                                                                          => true
     }
+  }
+
+  private def groupRecordsForParallelHandling(records: Chunk[Record], maxParallelism: Int): Iterable[Chunk[Record]] = {
+    val recordsByKey      = records.groupBy(_.key)
+    val withKeyGroups     = recordsByKey.collect { case (Some(_), records) => records }
+    val unusedParallelism = maxParallelism - withKeyGroups.size
+    val noKeyGroups       = recordsByKey.get(None) match {
+      case Some(records) =>
+        if (unusedParallelism > 0) records.grouped(Math.max(records.size / unusedParallelism, 1)).toIterable else Iterable(records)
+      case None          => Chunk.empty
+    }
+    withKeyGroups ++ noKeyGroups
   }
 
   private def reportWorkerRunningInInterval(
@@ -592,7 +604,7 @@ object DispatcherMetric {
     currentExecutionStarted: Option[Long]
   ) extends DispatcherMetric
 
-  case class InvokingHandlersInParallel(numHandlers: Int) extends DispatcherMetric
+  case class InvokingHandlersInParallel(partition: TopicPartition, numHandlers: Int) extends DispatcherMetric
 
   case class SkippedPreviouslyHandledRecord(record: Record, group: Group, clientId: ClientId, attributes: Map[String, String])
       extends DispatcherMetric
