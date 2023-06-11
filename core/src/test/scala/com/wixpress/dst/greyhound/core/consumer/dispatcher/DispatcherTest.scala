@@ -82,6 +82,32 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
       } yield ok) // if execution is not parallel, the latch will not be released
     }
 
+  "parallelize single partition handling of no-key records when using parallel consumer" in
+    new ctx(highWatermark = 10) {
+      val numRecords = 8
+
+      run(for {
+        latch      <- CountDownLatch.make(numRecords)
+        slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => Clock.sleep(1.second) *> latch.countDown }
+        ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+        init       <- getInit
+        dispatcher <- Dispatcher.make(
+                        "group",
+                        "clientId",
+                        slowHandler,
+                        lowWatermark,
+                        highWatermark,
+                        workersShutdownRef = ref,
+                        consumeInParallel = true,
+                        maxParallelism = numRecords,
+                        init = init
+                      )
+        _          <- submitBatch(dispatcher, (1 to numRecords).map(_ => record.copy(partition = 0, key = None)))
+        _          <- TestClock.adjust(1.second)
+        _          <- latch.await
+      } yield ok) // if execution is not parallel, the latch will not be released
+    }
+
   "reject records when high watermark is reached" in
     new ctx() {
       run(for {

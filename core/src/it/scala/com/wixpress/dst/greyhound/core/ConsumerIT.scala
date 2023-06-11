@@ -30,9 +30,9 @@ import zio.managed._
 class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
 
-  override def env = ITEnv.ManagedEnv
+  override def env       = ITEnv.ManagedEnv
   override def sharedEnv = ITEnv.testResources()
-  val resources = testResources()
+  val resources          = testResources()
 
   s"subscribe to a pattern" in
     ZIO.scoped {
@@ -51,8 +51,7 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                val record = ProducerRecord(topic1, Chunk.empty, key = Option(Chunk.empty))
                producer.produce(record) *> eventuallyZ(probe.get)(_ == (topic1, 0) :: Nil) *>
                  consumer.resubscribe(TopicPattern(compile("core-subscribe-pattern2.*"))) *>
-                 producer.produce(record.copy(topic = topic2)) *>
-                 eventuallyZ(probe.get)(_ == (topic1, 0) :: (topic2, 0) :: Nil)
+                 producer.produce(record.copy(topic = topic2)) *> eventuallyZ(probe.get)(_ == (topic1, 0) :: (topic2, 0) :: Nil)
              }
       } yield ok
     }
@@ -73,11 +72,9 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         _ <- makeConsumer(kafka, compile("core-subscribe-parallel-pattern1.*"), group, handler, 0, useParallelConsumer = true).flatMap {
                consumer =>
                  val record = ProducerRecord(topic1, Chunk.empty, key = Option(Chunk.empty))
-                 producer.produce(record) *>
-                   eventuallyZ(probe.get, timeout = 20.seconds)(_ == (topic1, 0) :: Nil) *>
+                 producer.produce(record) *> eventuallyZ(probe.get, timeout = 20.seconds)(_ == (topic1, 0) :: Nil) *>
                    consumer.resubscribe(TopicPattern(compile("core-subscribe-parallel-pattern2.*"))) *>
-                   producer.produce(record.copy(topic = topic2)) *>
-                   eventuallyZ(probe.get)(_ == (topic1, 0) :: (topic2, 0) :: Nil)
+                   producer.produce(record.copy(topic = topic2)) *> eventuallyZ(probe.get)(_ == (topic1, 0) :: (topic2, 0) :: Nil)
              }
       } yield ok
     }
@@ -98,7 +95,8 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                       .ignore
           cId    <- clientId
           config  =
-            configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)).copy(clientId = cId)
+            configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
+              .copy(clientId = cId)
           record  = ProducerRecord(topic, "bar", Some("foo"))
 
           messages <- RecordConsumer.make(config, handler).flatMap { consumer =>
@@ -171,7 +169,8 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                        .ignore
           cId     <- clientId
           config   =
-            configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)).copy(clientId = cId)
+            configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
+              .copy(clientId = cId)
           record   = ProducerRecord.tombstone(topic, Some("foo"))
           message <- RecordConsumer.make(config, handler).flatMap { _ =>
                        producer.produce(record, StringSerde, StringSerde) *> queue.take.timeoutFail(TimedOutWaitingForMessages)(10.seconds)
@@ -204,7 +203,15 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
           test <-
             RecordConsumer
-              .make(configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)), handler)
+              .make(
+                configFor(
+                  kafka,
+                  group,
+                  topic,
+                  mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+                ),
+                handler
+              )
               .flatMap { _ =>
                 val recordPartition0 = ProducerRecord(topic, Chunk.empty, partition = Some(0))
                 val recordPartition1 = ProducerRecord(topic, Chunk.empty, partition = Some(1))
@@ -243,7 +250,8 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                                        kafka,
                                        group,
                                        topic,
-                                       mutateEventLoop = _.copy(delayResumeOfPausedPartition = 3000, consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+                                       mutateEventLoop =
+                                         _.copy(delayResumeOfPausedPartition = 3000, consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
                                      ),
                                      handler
                                    )
@@ -286,7 +294,12 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           test <-
             RecordConsumer
               .make(
-                configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
+                configFor(
+                  kafka,
+                  group,
+                  topic,
+                  mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+                )
                   .copy(offsetReset = OffsetReset.Earliest),
                 handler
               )
@@ -324,7 +337,15 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
         _ <- ZIO.scoped(
                RecordConsumer
-                 .make(configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)), handler)
+                 .make(
+                   configFor(
+                     kafka,
+                     group,
+                     topic,
+                     mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+                   ),
+                   handler
+                 )
                  .flatMap { _ => producer.produce(ProducerRecord(topic, Chunk.empty)) *> startedHandling.await }
              )
 
@@ -353,7 +374,12 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
           message <- RecordConsumer
                        .make(
-                         configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
+                         configFor(
+                           kafka,
+                           group,
+                           topic,
+                           mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+                         )
                            .copy(offsetReset = Earliest),
                          handler
                        )
@@ -387,7 +413,14 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                                            }
           createConsumerTask             =
             (i: Int) =>
-              makeConsumer(kafka, topic, group, handler, i, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
+              makeConsumer(
+                kafka,
+                topic,
+                group,
+                handler,
+                i,
+                mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+              )
           test                          <- createConsumerTask(0).flatMap { _ =>
                                              val record = ProducerRecord(topic, Chunk.empty, partition = Some(0))
                                              for {
@@ -399,11 +432,11 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                                                _           <- createConsumerTask(2).provideEnvironment(env.add(Scope.global)).forkScoped // rebalance // rebalance
                                                expected     = (0 until partitions).map(p => (p, 0L until messagesPerPartition)).toMap
                                                _           <- eventuallyTimeoutFail(probe.get)(m =>
-                                                                m.mapValues(_.lastOption).values.toSet == Set(Option(messagesPerPartition - 1L)) && m.size == partitions
+                                                                m.mapValues(_.max.toOption).values.toSet == Set(Option(messagesPerPartition - 1L)) && m.size == partitions
                                                               )(120.seconds)
                                                finalResult <- probe.get
                                                _           <- ZIO.debug(finalResult.mapValues(_.size).mkString(","))
-                                             } yield finalResult === expected
+                                             } yield finalResult.mapValues(_.sorted) === expected
                                            }
         } yield test
       }
@@ -473,7 +506,8 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
           handler               = RecordHandler((_: ConsumerRecord[String, String]) => outerGate.toggle(true) *> innerGate.await())
                                     .withDeserializers(StringSerde, StringSerde)
                                     .ignore
-          config                = configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
+          config                =
+            configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
           record                = ProducerRecord(topic, "bar", Some("foo"))
 
           test <- RecordConsumer.make(config, handler).flatMap { consumer =>
@@ -517,8 +551,9 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
           pollFailedMetrics <- TestMetrics.queue
 
-          config  = configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
-                      .copy(clientId = cId, decryptor = decryptor)
+          config  =
+            configFor(kafka, group, topic, mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8))
+              .copy(clientId = cId, decryptor = decryptor)
           aRecord = (i: Int) => ProducerRecord(topic, s"payload-$i", Some(s"key-$i"))
           _      <- RecordConsumer.make(config, handler).flatMap { consumer =>
                       val Seq(rec1, rec2) = (1 to 2) map aRecord
