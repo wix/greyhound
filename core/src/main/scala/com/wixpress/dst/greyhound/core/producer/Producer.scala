@@ -5,13 +5,15 @@ import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerConfi
 import org.apache.kafka.common.header.Header
 import org.apache.kafka.common.header.internals.RecordHeader
 import org.apache.kafka.common.serialization.ByteArraySerializer
+import org.apache.kafka.common.{Metric, MetricName}
+import zio.ZIO.attemptBlocking
 import zio._
 
 import scala.collection.JavaConverters._
-import zio.ZIO.attemptBlocking
-import zio.managed._
 
 trait ProducerR[-R] { self =>
+  def metrics : UIO[Option[Map[MetricName, Metric]]] = ZIO.none
+
   def produceAsync(record: ProducerRecord[Chunk[Byte], Chunk[Byte]])(
     implicit trace: Trace
   ): ZIO[R, ProducerError, IO[ProducerError, RecordMetadata]]
@@ -80,6 +82,9 @@ object Producer {
     val acquire = ZIO.attemptBlocking(new KafkaProducer(config.properties, serializer, serializer))
     ZIO.acquireRelease(acquire)(producer => attemptBlocking(producer.close()).ignore).map { producer =>
       new ProducerR[R] {
+        override def metrics: UIO[Option[Map[MetricName, Metric]]] =
+          ZIO.succeed(Option(producer.metrics().asScala.toMap))
+
         private def recordFrom(record: ProducerRecord[Chunk[Byte], Chunk[Byte]]) =
           new KafkaProducerRecord(
             record.topic,
@@ -153,6 +158,8 @@ object ProducerR {
 
       override def partitionsFor(topic: Topic)(implicit trace: Trace): RIO[Any, Seq[PartitionInfo]] =
         producer.partitionsFor(topic).provideEnvironment(env)
+
+      override def metrics: UIO[Option[Map[MetricName, Metric]]] = producer.metrics
     }
     def onShutdown(onShutdown: => UIO[Unit])(implicit trace: Trace): ProducerR[R] = new ProducerR[R] {
       override def produceAsync(
@@ -165,6 +172,8 @@ object ProducerR {
       override def attributes: Map[String, String] = producer.attributes
 
       override def partitionsFor(topic: Topic)(implicit trace: Trace) = producer.partitionsFor(topic)
+
+      override def metrics: UIO[Option[Map[MetricName, Metric]]] = producer.metrics
     }
 
     def tapBoth(onError: (Topic, Cause[ProducerError]) => URIO[R, Unit], onSuccess: RecordMetadata => URIO[R, Unit]) = new ProducerR[R] {
@@ -186,6 +195,8 @@ object ProducerR {
       override def attributes: Map[String, String] = producer.attributes
 
       override def partitionsFor(topic: Topic)(implicit trace: Trace) = producer.partitionsFor(topic)
+
+      override def metrics: UIO[Option[Map[MetricName, Metric]]] = producer.metrics
     }
 
     def map(f: ProducerRecord[Chunk[Byte], Chunk[Byte]] => ProducerRecord[Chunk[Byte], Chunk[Byte]]) = new ProducerR[R] {
@@ -199,6 +210,8 @@ object ProducerR {
       override def shutdown(implicit trace: Trace): UIO[Unit] = producer.shutdown
 
       override def attributes: Map[String, String] = producer.attributes
+
+      override def metrics: UIO[Option[Map[MetricName, Metric]]] = producer.metrics
     }
   }
 

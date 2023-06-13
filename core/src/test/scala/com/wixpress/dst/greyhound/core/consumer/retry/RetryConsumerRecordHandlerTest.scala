@@ -4,8 +4,9 @@ import java.time.Instant
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
-import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
+import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, Blocking => InternalBlocking, IgnoringAll, IgnoringOnce}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfigForTopic.nonBlockingRetryConfigForTopic
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerRecord}
@@ -20,8 +21,6 @@ import zio.Random
 import zio.Random.{nextBytes, nextIntBounded}
 import zio.managed.UManaged
 import zio.test.TestClock
-
-import scala.concurrent.TimeoutException
 
 class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics] {
 
@@ -52,9 +51,6 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
         _             <- retryHandler.handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
         record        <- producer.records.take
         now           <- currentTime
-        retryAttempt  <- IntSerde.serialize(retryTopic, 0)
-        submittedAt   <- InstantSerde.serialize(retryTopic, now)
-        backoff       <- DurationSerde.serialize(retryTopic, 1.second)
       } yield {
         record ===
           ProducerRecord(
@@ -62,7 +58,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
             value,
             Some(key),
             partition = None,
-            headers = Headers("retry-attempt" -> retryAttempt, "retry-submitted-at" -> submittedAt, "retry-backoff" -> backoff)
+            headers = RetryAttempt.toHeaders(RetryAttempt(topic, 0, now, 1.second))
           )
       }
     }
@@ -71,7 +67,8 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
       for {
         producer      <- FakeProducer.make
         topic         <- randomTopicName
-        retryTopic     = s"$topic-retry"
+        attempt        = 0
+        retryTopic     = NonBlockingRetryHelper.fixedRetryTopic(topic, group, attempt)
         executionTime <- Promise.make[Nothing, Instant]
         handler        = RecordHandler[Clock, HandlerError, Chunk[Byte], Chunk[Byte]] { _ => currentTime.flatMap(executionTime.succeed) }
         blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
@@ -86,10 +83,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
                          )
         value         <- bytes
         begin         <- currentTime
-        retryAttempt  <- IntSerde.serialize(retryTopic, 0)
-        submittedAt   <- InstantSerde.serialize(retryTopic, begin)
-        backoff       <- DurationSerde.serialize(retryTopic, 1.second)
-        headers        = Headers("retry-attempt" -> retryAttempt, "retry-submitted-at" -> submittedAt, "retry-backoff" -> backoff)
+        headers        = RetryAttempt.toHeaders(RetryAttempt(topic, attempt, begin, 1.second))
         _             <- retryHandler.handle(ConsumerRecord(retryTopic, partition, offset, headers, None, value, 0L, 0L, 0L)).fork
         _             <- TestClock.adjust(1.second).repeat(Schedule.once)
         end           <- executionTime.await.disconnect.timeoutFail(TimeoutWaitingForAssertion)(5.seconds)
@@ -318,7 +312,10 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
                             group,
                             failingHandlerWith(handleCountRef),
                             ZRetryConfig
-                              .blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), NonBlockingBackoffPolicy(List(1.second))),
+                              .blockingFollowedByNonBlockingRetry(
+                                FiniteBlockingBackoffPolicy(List(10.millis, 500.millis)),
+                                NonBlockingBackoffPolicy(List(1.second))
+                              ),
                             producer,
                             Topics(Set(topic)),
                             blockingState,
@@ -343,9 +340,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
         topic           <- randomTopicName
         otherTopic      <- randomTopicName
         blockingState   <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        policy           = ZRetryConfig.perTopicRetries {
-                             case `otherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
-                           }
+        policy           = ZRetryConfig.perTopicRetries { case `otherTopic` => nonBlockingRetryConfigForTopic(1.second :: Nil) }
         retryHandler     = RetryRecordHandler.withRetries(
                              group,
                              failingHandler,
@@ -404,7 +399,8 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
           producer      <- FakeProducer.make
           topic         <- randomTopicName
           blockingState <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-          retryHelper    = alwaysBackOffRetryHelper(3.seconds)
+          retryHelper    = FakeRetryHelper(topic)
+          now           <- Clock.instant
           handling      <- AwaitShutdown.makeManaged.flatMap { awaitShutdown =>
                              val retryHandler = RetryRecordHandler.withRetries(
                                group,
@@ -416,11 +412,12 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
                                retryHelper,
                                awaitShutdown = _ => ZIO.succeed(awaitShutdown)
                              )
+                             val headers      = RetryAttempt.toHeaders(RetryAttempt(topic, 0, now, 3.seconds))
                              for {
                                key      <- bytes
                                value    <- bytes
                                handling <- retryHandler
-                                             .handle(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+                                             .handle(ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L))
                                              .forkDaemon
                              } yield handling
                            }
@@ -534,18 +531,6 @@ object RetryConsumerRecordHandlerTest {
   def randomTopicName = randomStr.map(suffix => s"some-topic-$suffix")
 
   val cause = new RuntimeException("cause")
-
-  def alwaysBackOffRetryHelper(backoff: Duration) = {
-    new FakeNonBlockingRetryHelper {
-      override val topic: Topic = ""
-
-      override def retryAttempt(topic: Topic, headers: Headers, subscription: ConsumerSubscription)(
-        implicit trace: Trace
-      ): UIO[Option[RetryAttempt]] = ZIO.succeed(
-        Some(RetryAttempt(topic, 1, Instant.now, backoff))
-      )
-    }
-  }
 }
 
 object TimeoutWaitingForAssertion extends RuntimeException
