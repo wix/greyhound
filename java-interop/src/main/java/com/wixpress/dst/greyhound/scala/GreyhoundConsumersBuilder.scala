@@ -5,9 +5,9 @@ import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.consumer.batched.{BatchConsumer, BatchConsumerConfig, BatchEventLoopConfig}
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{RecordHandler => CoreRecordHandler}
-import com.wixpress.dst.greyhound.core.consumer.retry.{NonBlockingBackoffPolicy, RetryConfig => CoreRetryConfig, RetryConfigForTopic}
+import com.wixpress.dst.greyhound.core.consumer.retry.{EmptyInfiniteBlockingBackoffPolicy, FiniteBlockingBackoffPolicy, InfiniteBlockingBackoffPolicy, NonBlockingBackoffPolicy, RetryConfigForTopic, RetryConfig => CoreRetryConfig}
 import com.wixpress.dst.greyhound.core.consumer.{RecordConsumer, RecordConsumerConfig}
-import com.wixpress.dst.greyhound.core.{consumer, Group, NonEmptySet, Topic}
+import com.wixpress.dst.greyhound.core.{Group, NonEmptySet, Topic, consumer}
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime
 import com.wixpress.dst.greyhound.future.GreyhoundRuntime.Env
 import zio._
@@ -138,7 +138,11 @@ class GreyhoundConsumersBuilder(val config: GreyhoundConfig) {
 
     retryConfig.map(config => {
       val forTopic =
-        RetryConfigForTopic(() => config.blockingBackoffs().asScala, NonBlockingBackoffPolicy(config.nonBlockingBackoffs.asScala))
+        RetryConfigForTopic(
+          FiniteBlockingBackoffPolicy(config.blockingBackoffs().asScala.toList),
+          EmptyInfiniteBlockingBackoffPolicy,
+          NonBlockingBackoffPolicy(config.nonBlockingBackoffs.asScala.toList)
+        )
 
       CoreRetryConfig({ case _ => forTopic }, None)
     })
