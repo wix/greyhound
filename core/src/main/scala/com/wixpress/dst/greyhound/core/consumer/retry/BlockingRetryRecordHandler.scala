@@ -3,7 +3,7 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 import java.util.concurrent.TimeUnit
 import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
-import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, IgnoringOnce, Blocking => InternalBlocking}
+import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, Blocking => InternalBlocking, IgnoringOnce}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingRetryHandlerInvocationFailed, DoneBlockingBeforeRetry, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics.report
@@ -30,7 +30,11 @@ private[retry] object BlockingRetryRecordHandler {
     override def handle(record: ConsumerRecord[K, V])(implicit trace: Trace): ZIO[GreyhoundMetrics with R, Nothing, LastHandleResult] = {
       val topicPartition = TopicPartition(record.topic, record.partition)
 
-      def pollBlockingStateWithSuspensions(record: ConsumerRecord[K, V], interval: Duration, start: Long): URIO[GreyhoundMetrics, PollResult] = {
+      def pollBlockingStateWithSuspensions(
+        record: ConsumerRecord[K, V],
+        interval: Duration,
+        start: Long
+      ): URIO[GreyhoundMetrics, PollResult] = {
         for {
           shouldBlock     <- blockingStateResolver.resolve(record)
           shouldPollAgain <-
@@ -73,7 +77,8 @@ private[retry] object BlockingRetryRecordHandler {
           case error                               =>
             interval
               .map { interval =>
-                report(BlockingRetryHandlerInvocationFailed(topicPartition, record.offset, error.toString)) *> blockOnErrorFor(record, interval)
+                report(BlockingRetryHandlerInvocationFailed(topicPartition, record.offset, error.toString)) *>
+                  blockOnErrorFor(record, interval)
               }
               .getOrElse(ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false)))
         }
@@ -94,12 +99,13 @@ private[retry] object BlockingRetryRecordHandler {
       if (nonBlockingHandler.isHandlingRetryTopicMessage(group, record)) {
         ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
       } else {
-        val durationsIncludingForInvocationWithNoErrorHandling = retryConfig.blockingBackoffs(record.topic)().map(Some(_)) :+ None
+        val durations                                          = retryConfig.blockingBackoffs(record.topic)
+        val durationsIncludingForInvocationWithNoErrorHandling = durations.map(Some(_)) :+ None
         for {
           result <- retryEvery(record, durationsIncludingForInvocationWithNoErrorHandling) { (rec, interval) =>
-            handleAndMaybeBlockOnErrorFor(rec, interval)
-          }
-          _ <- maybeBackToStateBlocking
+                      handleAndMaybeBlockOnErrorFor(rec, interval)
+                    }
+          _      <- maybeBackToStateBlocking
         } yield result
       }
     }
@@ -111,7 +117,7 @@ private[retry] object BlockingRetryRecordHandler {
     ZIO.succeed(as.iterator).flatMap { i =>
       def loop(retryAttempt: Option[RetryAttempt]): ZIO[R, E, LastHandleResult] =
         if (i.hasNext) {
-          val nextDelay = i.next
+          val nextDelay         = i.next
           val recordWithAttempt = retryAttempt.fold(record) { attempt =>
             record.copy(headers = record.headers ++ RetryAttempt.toHeaders(attempt))
           }
@@ -127,8 +133,7 @@ private[retry] object BlockingRetryRecordHandler {
             }
             else ZIO.succeed(result)
           }
-        }
-        else ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
+        } else ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
 
       loop(None)
     }

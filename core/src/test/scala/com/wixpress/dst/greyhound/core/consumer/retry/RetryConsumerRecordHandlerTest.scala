@@ -6,6 +6,7 @@ import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.Topics
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.BlockingState.{Blocked, Blocking => InternalBlocking, IgnoringAll, IgnoringOnce}
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfigForTopic.nonBlockingRetryConfigForTopic
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryConsumerRecordHandlerTest.{offset, partition, _}
 import com.wixpress.dst.greyhound.core.consumer.retry.RetryRecordHandlerMetric.{BlockingIgnoredForAllFor, BlockingIgnoredOnceFor, BlockingRetryHandlerInvocationFailed, NoRetryOnNonRetryableFailure}
 import com.wixpress.dst.greyhound.core.producer.{ProducerError, ProducerRecord}
@@ -311,7 +312,10 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
                             group,
                             failingHandlerWith(handleCountRef),
                             ZRetryConfig
-                              .blockingFollowedByNonBlockingRetry(List(10.millis, 500.millis), NonBlockingBackoffPolicy(List(1.second))),
+                              .blockingFollowedByNonBlockingRetry(
+                                FiniteBlockingBackoffPolicy(List(10.millis, 500.millis)),
+                                NonBlockingBackoffPolicy(List(1.second))
+                              ),
                             producer,
                             Topics(Set(topic)),
                             blockingState,
@@ -336,9 +340,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
         topic           <- randomTopicName
         otherTopic      <- randomTopicName
         blockingState   <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
-        policy           = ZRetryConfig.perTopicRetries {
-                             case `otherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
-                           }
+        policy           = ZRetryConfig.perTopicRetries { case `otherTopic` => nonBlockingRetryConfigForTopic(1.second :: Nil) }
         retryHandler     = RetryRecordHandler.withRetries(
                              group,
                              failingHandler,
@@ -410,7 +412,7 @@ class RetryConsumerRecordHandlerTest extends BaseTest[TestClock with TestMetrics
                                retryHelper,
                                awaitShutdown = _ => ZIO.succeed(awaitShutdown)
                              )
-                             val headers = RetryAttempt.toHeaders(RetryAttempt(topic, 0, now, 3.seconds))
+                             val headers      = RetryAttempt.toHeaders(RetryAttempt(topic, 0, now, 3.seconds))
                              for {
                                key      <- bytes
                                value    <- bytes
