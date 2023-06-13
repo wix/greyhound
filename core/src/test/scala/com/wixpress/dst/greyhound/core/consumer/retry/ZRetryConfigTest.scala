@@ -29,12 +29,12 @@ class ZRetryConfigTest extends SpecificationWithJUnit {
 
         val absMult              = abs(params.mult)
         val safeInit             = if (init < 10) 10 else init
-        for (i <- 0 to max) yield { backoffs()(i) } mustEqual (pow(1 + absMult, i) * safeInit).toLong.millis
+        for (i <- 0 to max) yield { backoffs(i) } mustEqual (pow(1 + absMult, i) * safeInit).toLong.millis
         val maxMult              = math.max(0, max)
         val lastDurationToCheck  = abs(max + 1) * 2
         val firstDurationToCheck = math.max(0, max + 1)
         for (i <- firstDurationToCheck to lastDurationToCheck)
-          yield backoffs()(i) mustEqual (pow(1 + absMult, maxMult) * safeInit).toLong.millis
+          yield backoffs(i) mustEqual (pow(1 + absMult, maxMult) * safeInit).toLong.millis
       }
     }
 
@@ -57,11 +57,11 @@ class ZRetryConfigTest extends SpecificationWithJUnit {
 
         val absMult              = abs(params.mult)
         val safeInit             = if (init < 10) 10 else init
-        for (i <- 0 to maxMult) yield { backoffs()(i) } mustEqual (pow(1 + absMult, i) * safeInit).toLong.millis
+        for (i <- 0 to maxMult) yield { backoffs(i) } mustEqual (pow(1 + absMult, i) * safeInit).toLong.millis
         val lastDurationToCheck  = abs(maxMult + 1) * 2
         val firstDurationToCheck = math.max(0, maxMult + 1)
         for (i <- firstDurationToCheck to lastDurationToCheck)
-          yield backoffs()(i) mustEqual (pow(1 + absMult, maxMult) * safeInit).toLong.millis
+          yield backoffs(i) mustEqual (pow(1 + absMult, maxMult) * safeInit).toLong.millis
       }
     }
   }
