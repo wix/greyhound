@@ -11,7 +11,8 @@ import java.time.Instant
 
 /**
  * Description of a retry attempt
- * @param attempt contains which attempt is it, starting from 0 including blocking and non-blocking attempts
+ * @param attempt
+ *   contains which attempt is it, starting from 0 including blocking and non-blocking attempts
  */
 case class RetryAttempt(
   originalTopic: Topic,
@@ -33,10 +34,10 @@ object RetryAttempt {
   private def toChunk(str: String): Chunk[Byte] = Chunk.fromArray(str.getBytes)
 
   def toHeaders(attempt: RetryAttempt): Headers = Headers(
-    RetryHeader.Submitted -> toChunk(attempt.submittedAt.toEpochMilli.toString),
-    RetryHeader.Backoff -> toChunk(attempt.backoff.toMillis.toString),
+    RetryHeader.Submitted     -> toChunk(attempt.submittedAt.toEpochMilli.toString),
+    RetryHeader.Backoff       -> toChunk(attempt.backoff.toMillis.toString),
     RetryHeader.OriginalTopic -> toChunk(attempt.originalTopic),
-    RetryHeader.RetryAttempt -> toChunk(attempt.attempt.toString),
+    RetryHeader.RetryAttempt  -> toChunk(attempt.attempt.toString)
   )
 
   private case class RetryAttemptHeaders(
@@ -49,14 +50,14 @@ object RetryAttempt {
   private def fromHeaders(headers: Headers): Task[RetryAttemptHeaders] =
     for {
       submitted <- headers.get(RetryHeader.Submitted, instantDeserializer)
-      backoff <- headers.get(RetryHeader.Backoff, durationDeserializer)
-      topic <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
-      attempt <- headers.get(RetryHeader.RetryAttempt, longDeserializer)
+      backoff   <- headers.get(RetryHeader.Backoff, durationDeserializer)
+      topic     <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
+      attempt   <- headers.get(RetryHeader.RetryAttempt, longDeserializer)
     } yield RetryAttemptHeaders(topic, attempt.map(_.toInt), submitted, backoff)
 
   /** @return None on infinite blocking retries */
   def maxBlockingAttempts(topic: Topic, retryConfig: Option[RetryConfig]): Option[Int] =
-    retryConfig.map(_.blockingBackoffs(topic)()).fold(Option(0)) {
+    retryConfig.map(_.blockingBackoffs(topic)).fold(Option(0)) {
       case finite if finite.hasDefiniteSize => Some(finite.size)
       case _                                => None
     }
@@ -68,31 +69,29 @@ object RetryAttempt {
     }
 
   def extract(
-      headers: Headers,
-      topic: Topic,
-      group: Group,
-      subscription: ConsumerSubscription,
-      retryConfig: Option[RetryConfig],
+    headers: Headers,
+    topic: Topic,
+    group: Group,
+    subscription: ConsumerSubscription,
+    retryConfig: Option[RetryConfig]
   )(implicit trace: Trace): UIO[Option[RetryAttempt]] = {
 
     def maybeNonBlockingAttempt(hs: RetryAttemptHeaders): Option[RetryAttempt] =
       for {
-        submitted <- hs.submittedAt
-        backoff <- hs.backoff
+        submitted                            <- hs.submittedAt
+        backoff                              <- hs.backoff
         TopicAttempt(originalTopic, attempt) <- attemptNumberFromTopic(subscription, topic, hs.originalTopic, group)
-        blockingRetries = maxBlockingAttempts(originalTopic, retryConfig).getOrElse(0)
+        blockingRetries                       = maxBlockingAttempts(originalTopic, retryConfig).getOrElse(0)
       } yield RetryAttempt(originalTopic, blockingRetries + attempt, submitted, backoff)
 
     def maybeBlockingAttempt(hs: RetryAttemptHeaders): Option[RetryAttempt] =
       for {
-        submitted <- hs.submittedAt
-        backoff <- hs.backoff
+        submitted     <- hs.submittedAt
+        backoff       <- hs.backoff
         originalTopic <- hs.originalTopic if originalTopic == topic
-        attempt <- hs.attempt
+        attempt       <- hs.attempt
       } yield RetryAttempt(originalTopic, attempt, submitted, backoff)
 
-    fromHeaders(headers).map { hs =>
-      maybeNonBlockingAttempt(hs) orElse maybeBlockingAttempt(hs)
-    }
+    fromHeaders(headers).map { hs => maybeNonBlockingAttempt(hs) orElse maybeBlockingAttempt(hs) }
   }.catchAll(_ => ZIO.none)
 }
