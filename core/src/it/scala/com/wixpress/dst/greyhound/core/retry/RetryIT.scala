@@ -6,6 +6,7 @@ import com.wixpress.dst.greyhound.core.consumer._
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerSubscription.{TopicPattern, Topics}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordHandler}
 import com.wixpress.dst.greyhound.core.consumer.retry.NonBlockingRetryHelper.fixedRetryTopic
+import com.wixpress.dst.greyhound.core.consumer.retry.RetryConfigForTopic.{finiteBlockingRetryConfigForTopic, nonBlockingRetryConfigForTopic}
 import com.wixpress.dst.greyhound.core.consumer.retry._
 import com.wixpress.dst.greyhound.core.producer.{Encryptor, ProducerRecord}
 import com.wixpress.dst.greyhound.core.testkit.{eventuallyZ, AwaitableRef, BaseTestWithSharedEnv}
@@ -40,8 +41,8 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
           done        <- Promise.make[Nothing, ConsumerRecord[String, String]]
           retryConfig  = ZRetryConfig
                            .perTopicRetries {
-                             case `topic`        => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
-                             case `anotherTopic` => RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(1.second :: Nil))
+                             case `topic`        => nonBlockingRetryConfigForTopic(1.second :: Nil)
+                             case `anotherTopic` => nonBlockingRetryConfigForTopic(1.second :: Nil)
                            }
                            .copy(produceEncryptor = _ => ZIO.succeed(dummyEncryptor))
 
@@ -76,7 +77,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
         retryConfig     =
           ZRetryConfig
             .finiteBlockingRetry(100.millis, 100.millis)
-            .withCustomRetriesFor { case `topic2` => RetryConfigForTopic(() => 300.millis :: Nil, NonBlockingBackoffPolicy.empty) }
+            .withCustomRetriesFor { case `topic2` => finiteBlockingRetryConfigForTopic(300.millis :: Nil) }
         retryHandler    = failingBlockingRecordHandlerWith(consumedValuesRef, Set(topic, topic2)).withDeserializers(StringSerde, StringSerde)
         _              <- RecordConsumer.make(configFor(kafka, group, retryConfig, topic, topic2), retryHandler).flatMap { _ =>
                             producer.produce(ProducerRecord(topic, "bar", Some("foo")), StringSerde, StringSerde) *> Clock.sleep(2.seconds) *>
@@ -225,7 +226,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
           invocations                   <- Ref.make(0)
           done                          <- Promise.make[Nothing, ConsumerRecord[String, String]]
           retryConfig                    = ZRetryConfig.retryForPattern(
-                                             RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(Seq(1.second, 1.second, 1.seconds)))
+                                             nonBlockingRetryConfigForTopic(List(1.second, 1.second, 1.seconds))
                                            )
           retryHandler                   = failingRecordHandler(invocations, done).withDeserializers(StringSerde, StringSerde)
           success                       <- RecordConsumer
@@ -258,7 +259,9 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
           group                         <- randomGroup
           originalTopicCallCount        <- Ref.make[Int](0)
           retryTopicCallCount           <- Ref.make[Int](0)
-          retryConfig                    = ZRetryConfig.blockingFollowedByNonBlockingRetry(List(1.second), NonBlockingBackoffPolicy(List(1.seconds)))
+          retryConfig                    =
+            ZRetryConfig
+              .blockingFollowedByNonBlockingRetry(FiniteBlockingBackoffPolicy(List(1.second)), NonBlockingBackoffPolicy(List(1.seconds)))
           retryHandler                   = failingBlockingNonBlockingRecordHandler(originalTopicCallCount, retryTopicCallCount, topic).withDeserializers(
                                              StringSerde,
                                              StringSerde
@@ -281,9 +284,7 @@ class RetryIT extends BaseTestWithSharedEnv[Env, TestResources] {
         for {
           r                      <- getShared
           TestResources(kafka, _) = r
-          retryConfig             = ZRetryConfig.retryForPattern(
-                                      RetryConfigForTopic(() => Nil, NonBlockingBackoffPolicy(Seq(1.second, 1.second, 1.seconds)))
-                                    )
+          retryConfig             = ZRetryConfig.retryForPattern(nonBlockingRetryConfigForTopic(List(1.second, 1.second, 1.seconds)))
           handler                 = RecordHandler { _: ConsumerRecord[String, String] => ZIO.unit }.withDeserializers(StringSerde, StringSerde)
           _                      <- RecordConsumer
                                       .make(configFor(kafka, "group", retryConfig, "topic"), handler)
