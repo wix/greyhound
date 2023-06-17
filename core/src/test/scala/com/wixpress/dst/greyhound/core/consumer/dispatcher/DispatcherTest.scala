@@ -158,12 +158,12 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
           _          <- ZIO.foreachDiscard(0 to (highWatermark + 1)) { offset =>
                           submit(
                             dispatcher,
-                            ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+                            ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
                           )
                         }
           _          <- submit(
                           dispatcher,
-                          ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+                          ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
                         ) // Will be dropped
           _          <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
           _          <- ZIO.foreachDiscard(1 to 4)(_ => queue.take)
@@ -195,13 +195,13 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
           _                                       <- ZIO.foreachDiscard(0 to (highWatermark + 1)) { offset =>
                                                        submit(
                                                          dispatcher,
-                                                         ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+                                                         ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
                                                        )
                                                      }
           overCapacitySubmitResult                <-
             submit(
               dispatcher,
-              ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+              ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
             ) // Will be dropped
           resumeablePartitionsWhenInHighWatermark <- dispatcher.resumeablePartitions(Set(topicPartition))
           _                                       <- ZIO.foreachDiscard(1 to 4)(_ => queue.take)
@@ -212,13 +212,13 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
           _                                       <- ZIO.foreachDiscard(0 to 3) { offset =>
                                                        submit(
                                                          dispatcher,
-                                                         ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+                                                         ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
                                                        )
                                                      }
           overCapacitySubmitResult2               <-
             submit(
               dispatcher,
-              ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 16L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+              ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 16L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
             ) // Will be dropped
           _                                       <- ZIO.foreachDiscard(1 to 4)(_ => queue.take)
           _                                       <- TestClock.adjust(1.second)
@@ -332,7 +332,7 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
     val topic          = "topic"
     val partition      = 0
     val topicPartition = TopicPartition(topic, partition)
-    val record         = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 0L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+    val record         = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 0L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
 
     def getKeys(numKeys: Int) = (0 until numKeys).map(i => Some(Chunk.fromArray(s"key$i".getBytes)))
 

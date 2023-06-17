@@ -114,7 +114,7 @@ object EventLoopTest {
   val partition                                        = 0
   val offset                                           = 0L
   val record: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =
-    ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L)
+    ConsumerRecord(topic, partition, offset, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
   val exception                                        = new RuntimeException("oops")
 
   def recordsFrom(records: ConsumerRecord[Chunk[Byte], Chunk[Byte]]*): Records = {
