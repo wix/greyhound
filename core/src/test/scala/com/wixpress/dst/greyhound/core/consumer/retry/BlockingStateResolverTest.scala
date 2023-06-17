@@ -31,7 +31,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
           resolver = BlockingStateResolver(blockingState)
           _       <- blockingState.set(Map(TopicPartitionTarget(TopicPartition(topic, partition)) -> state))
 
-          shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+          shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L, ""))
         } yield shouldBlock === expectedShouldBlock
       }
     }
@@ -48,7 +48,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
           resolver = BlockingStateResolver(blockingState)
           _       <- blockingState.set(Map(TopicTarget(topic) -> state))
 
-          shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+          shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L, ""))
         } yield shouldBlock === expectedShouldBlock
       }
     }
@@ -62,7 +62,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
         resolver = BlockingStateResolver(blockingState)
 
-        shouldBlock <- resolver.resolve(ConsumerRecord(missingTopic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+        shouldBlock <- resolver.resolve(ConsumerRecord(missingTopic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L, ""))
       } yield shouldBlock === true
     }
 
@@ -77,7 +77,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
         resolver = BlockingStateResolver(blockingState)
 
-        record           = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        record           = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L, "")
         shouldBlock     <- resolver.resolve(record)
         updatedStateMap <- blockingState.get
         updatedState     = updatedStateMap(TopicPartitionTarget(tpartition))
@@ -95,7 +95,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
         resolver = BlockingStateResolver(blockingState)
 
-        record           = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        record           = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L, "")
         shouldBlock     <- resolver.resolve(record)
         updatedStateMap <- blockingState.get
         updatedState     = updatedStateMap(TopicPartitionTarget(tpartition))
@@ -111,7 +111,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
         resolver = BlockingStateResolver(blockingState)
 
-        shouldBlock     <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+        shouldBlock     <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L, ""))
         updatedStateMap <- blockingState.get
         updatedState     = updatedStateMap(TopicTarget(topic))
       } yield shouldBlock === true and updatedState === InternalBlocking
@@ -150,7 +150,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
                          )
                        )
 
-            shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L))
+            shouldBlock <- resolver.resolve(ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L, ""))
           } yield shouldBlock === expectedShouldBlock
         }
     }
@@ -170,8 +170,8 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
         resolver = BlockingStateResolver(blockingState)
 
-        record              = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
-        record2             = ConsumerRecord(anotherTopic, partition, offset, headers, Some(key), value, 0L, 0L, 0L)
+        record              = ConsumerRecord(topic, partition, offset, headers, Some(key), value, 0L, 0L, 0L, "")
+        record2             = ConsumerRecord(anotherTopic, partition, offset, headers, Some(key), value, 0L, 0L, 0L, "")
         shouldBlockBefore  <- resolver.resolve(record)
         shouldBlockBefore2 <- resolver.resolve(record2)
         _                  <- resolver.setBlockingState(BlockErrors(topic))
@@ -219,7 +219,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
 
         resolver = BlockingStateResolver(blockingState)
 
-        record                     = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+        record                     = ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L, "")
         shouldBlock               <- resolver.resolve(record)
         updatedStateMap           <- blockingState.get
         updatedStateTopic          = updatedStateMap(TopicTarget(topic))
@@ -228,7 +228,7 @@ class BlockingStateResolverTest extends BaseTest[TestEnvironment with GreyhoundM
     }
   }
 
-  final val BlockedMessageState = Blocked(ConsumerRecord("", 0, 0, Headers.Empty, None, "", 0L, 0L, 0L))
+  final val BlockedMessageState = Blocked(ConsumerRecord("", 0, 0, Headers.Empty, None, "", 0L, 0L, 0L, ""))
 }
 
 case class Foo(message: String)

@@ -28,5 +28,5 @@ object Maker {
     topic <- randomTopicName
     key   <- bytes
     value <- bytes
-  } yield new ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L)
+  } yield new ConsumerRecord(topic, partition, offset, Headers.Empty, Some(key), value, 0L, 0L, 0L, "")
 }

@@ -7,6 +7,8 @@ case class TopicPartition(topic: Topic, partition: Partition) {
 }
 
 object TopicPartition {
+  def fromKafka(topicPartition: KafkaTopicPartition): TopicPartition =
+    TopicPartition(topicPartition.topic, topicPartition.partition)
   def apply(topicPartition: KafkaTopicPartition): TopicPartition =
     TopicPartition(topicPartition.topic, topicPartition.partition)
 }
