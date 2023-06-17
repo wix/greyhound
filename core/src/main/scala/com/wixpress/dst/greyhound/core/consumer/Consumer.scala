@@ -69,6 +69,8 @@ trait Consumer {
 
   def assignment(implicit trace: Trace): Task[Set[TopicPartition]]
 
+  def assign(tps: Set[TopicPartition])(implicit trace: Trace): Task[Unit] = ZIO.fail(new IllegalStateException("Not implemented"))
+
   def config(implicit trace: Trace): ConsumerConfig
 
   def listTopics(implicit trace: Trace): RIO[Any, Map[Topic, List[PartitionInfo]]]
@@ -124,7 +126,7 @@ object Consumer {
       override def poll(timeout: Duration)(implicit trace: Trace): RIO[Any, Records] =
         withConsumerM { c =>
           rewindPositionsOnError(c) {
-            attemptBlocking(c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(ConsumerRecord(_)))
+            attemptBlocking(c.poll(time.Duration.ofMillis(timeout.toMillis)).asScala.map(rec => ConsumerRecord(rec, config.groupId)))
               .flatMap(ZIO.foreach(_)(cfg.decryptor.decrypt))
           }
         }
@@ -207,6 +209,9 @@ object Consumer {
       override def assignment(implicit trace: Trace): Task[Set[TopicPartition]] = {
         withConsumer(_.assignment().asScala.toSet.map(TopicPartition.apply(_: org.apache.kafka.common.TopicPartition)))
       }
+
+      override def assign(tps: Set[TopicPartition])(implicit trace: Trace): Task[Unit] =
+        withConsumer(_.assign(kafkaPartitions(tps)))
 
       private def allPositionsUnsafe = attemptBlocking {
         consumer
