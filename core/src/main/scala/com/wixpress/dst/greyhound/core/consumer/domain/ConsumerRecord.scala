@@ -13,7 +13,8 @@ case class ConsumerRecord[+K, +V](
   value: V,
   pollTime: Long,
   bytesTotal: Long,
-  producedTimestamp: Long
+  producedTimestamp: Long,
+  consumerGroupId: ConsumerGroupId
 ) {
   def id: String = s"$topic:$partition:$offset"
 
@@ -30,7 +31,8 @@ case class ConsumerRecord[+K, +V](
       value = fv(value),
       pollTime = pollTime,
       bytesTotal = bytesTotal,
-      producedTimestamp = producedTimestamp
+      producedTimestamp = producedTimestamp,
+      consumerGroupId = consumerGroupId
     )
 
   def bimapM[R, E, K2, V2](fk: K => ZIO[R, E, K2], fv: V => ZIO[R, E, V2]): ZIO[R, E, ConsumerRecord[K2, V2]] =
@@ -46,7 +48,8 @@ case class ConsumerRecord[+K, +V](
       value = value2,
       pollTime = pollTime,
       bytesTotal = bytesTotal,
-      producedTimestamp = producedTimestamp
+      producedTimestamp = producedTimestamp,
+      consumerGroupId = consumerGroupId
     )
 
   def mapKey[K2](f: K => K2): ConsumerRecord[K2, V] = bimap(f, identity)
@@ -56,7 +59,7 @@ case class ConsumerRecord[+K, +V](
 }
 
 object ConsumerRecord {
-  def apply[K, V](record: KafkaConsumerRecord[K, V]): ConsumerRecord[K, V] =
+  def apply[K, V](record: KafkaConsumerRecord[K, V], consumerGroupId: ConsumerGroupId): ConsumerRecord[K, V] =
     ConsumerRecord(
       topic = record.topic,
       partition = record.partition,
@@ -67,6 +70,7 @@ object ConsumerRecord {
       pollTime = System.currentTimeMillis,
       producedTimestamp = record.timestamp,
       bytesTotal = record.serializedValueSize() + record.serializedKeySize() +
-        record.headers().toArray.map(h => h.key.length + h.value.length).sum
+        record.headers().toArray.map(h => h.key.length + h.value.length).sum,
+      consumerGroupId = consumerGroupId
     )
 }
