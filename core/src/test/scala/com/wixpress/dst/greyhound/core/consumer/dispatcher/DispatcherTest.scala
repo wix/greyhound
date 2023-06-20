@@ -139,6 +139,29 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
       } yield result must beEqualTo(SubmitResult.RejectedBatch(record.copy(offset = 5L))))
     }
 
+  "reject records and return first rejected when gaps limit is reached" in
+    new ctx(highWatermark = 20) {
+      val gapsSizeLimit = 5
+      run(for {
+        ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+        init       <- getInit
+        dispatcher <-
+          Dispatcher
+            .make[Any](
+              "group",
+              "clientId",
+              _ => ZIO.never,
+              lowWatermark,
+              highWatermark,
+              workersShutdownRef = ref,
+              init = init,
+              gapsSizeLimit = gapsSizeLimit
+            )
+        records     = (0 until 7).map(i => record.copy(offset = i.toLong))
+        result     <- submitBatch(dispatcher, records)
+      } yield result must beEqualTo(SubmitResult.RejectedBatch(record.copy(offset = 5L))))
+    }
+
   "resume paused partitions" in
     new ctx(lowWatermark = 3, highWatermark = 7) {
       run(
