@@ -62,6 +62,7 @@ object EventLoop {
                                config.maxParallelism,
                                updateBatch,
                                currentGaps,
+                               config.gapsSizeLimit,
                                offsetsAndGapsInit
                              )
       positionsRef        <- Ref.make(Map.empty[TopicPartition, Offset])
@@ -396,7 +397,8 @@ case class EventLoopConfig(
   delayResumeOfPausedPartition: Long,
   startPaused: Boolean,
   consumePartitionInParallel: Boolean,
-  maxParallelism: Int
+  maxParallelism: Int,
+  gapsSizeLimit: Int
 )
 
 object EventLoopConfig {
@@ -409,7 +411,8 @@ object EventLoopConfig {
     delayResumeOfPausedPartition = 0,
     startPaused = false,
     consumePartitionInParallel = false,
-    maxParallelism = 1
+    maxParallelism = 1,
+    gapsSizeLimit = 256 // todo: calculate actual gaps limit based on the max metadata size
   )
 }
 
