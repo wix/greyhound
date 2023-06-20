@@ -165,4 +165,7 @@ object OffsetAndGaps {
   def apply(offset: Offset): OffsetAndGaps = OffsetAndGaps(offset, Seq.empty[Gap])
 
   def apply(offset: Offset, committable: Boolean): OffsetAndGaps = OffsetAndGaps(offset, Seq.empty[Gap], committable)
+
+  def gapsSize(gaps: Map[TopicPartition, OffsetAndGaps]): Int =
+    gaps.values.flatMap(_.gaps).map(_.size.toInt).sum
 }
