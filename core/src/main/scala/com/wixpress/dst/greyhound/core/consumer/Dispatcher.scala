@@ -56,6 +56,7 @@ object Dispatcher {
     maxParallelism: Int = 1,
     updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
     currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]] = _ => ZIO.succeed(Map.empty),
+    gapsSizeLimit: Int = 256,
     init: Promise[Nothing, Unit]
   )(implicit trace: Trace): UIO[Dispatcher[R]] =
     for {
@@ -85,8 +86,9 @@ object Dispatcher {
           submitResult     <- if (allSamePartition) {
                                 val partition = RecordTopicPartition(records.head)
                                 for {
-                                  worker    <- workerFor(partition, records.head.offset)
-                                  submitted <- worker.submitBatch(records)
+                                  worker      <- workerFor(partition, records.head.offset)
+                                  currentGaps <- currentGaps(Set(partition))
+                                  submitted   <- worker.submitBatch(records, currentGaps)
                                 } yield submitted
                               } else ZIO.succeed(SubmitBatchResult(success = false, Some(records.minBy(_.offset))))
 
@@ -172,6 +174,7 @@ object Dispatcher {
                                      consumerAttributes,
                                      consumeInParallel,
                                      maxParallelism,
+                                     gapsSizeLimit,
                                      updateBatch,
                                      currentGaps
                                    )
@@ -234,7 +237,7 @@ object Dispatcher {
   trait Worker {
     def submit(record: Record): URIO[Any, Boolean]
 
-    def submitBatch(records: Records): URIO[Any, SubmitBatchResult]
+    def submitBatch(records: Records, currentGaps: Map[TopicPartition, OffsetAndGaps]): URIO[Env, SubmitBatchResult]
 
     def expose: URIO[Any, WorkerExposedState]
 
@@ -257,6 +260,7 @@ object Dispatcher {
       consumerAttributes: Map[String, String],
       consumeInParallel: Boolean,
       maxParallelism: Int,
+      gapsSizeLimit: Int,
       updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
       currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]]
     )(implicit trace: Trace): URIO[R with Env, Worker] = for {
@@ -295,23 +299,13 @@ object Dispatcher {
           )
 
       override def submitBatch(
-        records: Records
-      ): URIO[Any, SubmitBatchResult] =
-        queue
-          .offerAll(records)
-          .tap(notInserted =>
-            ZIO.when(notInserted.nonEmpty) {
-              Clock
-                .currentTime(TimeUnit.MILLISECONDS)
-                .flatMap(now =>
-                  internalState.update(s => if (s.reachedHighWatermarkSince.nonEmpty) s else s.reachedHighWatermark(now)).commit
-                )
-            }
-          )
-          .map(rejected => {
-            val isSuccess = rejected.isEmpty
-            SubmitBatchResult(isSuccess, if (isSuccess) None else Some(rejected.minBy(_.offset)))
-          })
+        records: Records,
+        currentGaps: Map[TopicPartition, OffsetAndGaps]
+      ): URIO[Env, SubmitBatchResult] = {
+        val gapsSize = OffsetAndGaps.gapsSize(currentGaps)
+        if (gapsSize + records.size <= gapsSizeLimit) submitBatchToQueue(queue, records, internalState)
+        else submitBatchPartially(group, clientId, partition, consumerAttributes, gapsSizeLimit, queue, internalState, records, gapsSize)
+      }
 
       override def expose: URIO[Any, WorkerExposedState] = (queue.size zip internalState.get.commit)
         .flatMap {
@@ -339,6 +333,61 @@ object Dispatcher {
       override def waitForCurrentExecutionCompletion: UIO[Unit] =
         internalState.get.flatMap(state => STM.check(state.currentExecutionStarted.isEmpty)).commit
     }
+
+    private def submitBatchPartially[R](
+      group: Group,
+      clientId: ClientId,
+      partition: TopicPartition,
+      consumerAttributes: Map[ClientId, ClientId],
+      gapsSizeLimit: Int,
+      queue: Queue[Record],
+      internalState: TRef[WorkerInternalState],
+      records: Records,
+      gapsSize: Int
+    ) = {
+      if (gapsSize == gapsSizeLimit) { // no records can be submitted
+        report(
+          DroppedRecordsDueToGapsSizeLimit(records.size, records.minBy(_.offset).offset, group, partition, clientId, consumerAttributes)
+        ) *> ZIO.succeed(SubmitBatchResult(success = false, firstRejected = Some(records.minBy(_.offset))))
+      } else {
+        val sortedRecords     = records.sortBy(_.offset)
+        val recordsToSubmit   = sortedRecords.take(gapsSizeLimit - gapsSize)
+        val firstNotSubmitted =
+          sortedRecords
+            .take(gapsSizeLimit - gapsSize + 1)
+            .last // flow control in the calling function ensures this is safe, since records.size > gapsSizeLimit - gapsSize
+        report(
+          DroppedRecordsDueToGapsSizeLimit(recordsToSubmit.size, firstNotSubmitted.offset, group, partition, clientId, consumerAttributes)
+        ) *>
+          submitBatchToQueue(queue, recordsToSubmit, internalState).flatMap {
+            case SubmitBatchResult(true, _)              =>
+              ZIO.succeed(SubmitBatchResult(success = false, firstRejected = Some(firstNotSubmitted)))
+            case SubmitBatchResult(false, firstRejected) =>
+              ZIO.succeed(SubmitBatchResult(success = false, firstRejected = firstRejected))
+          }
+      }
+    }
+
+    private def submitBatchToQueue[R](
+      queue: Queue[Record],
+      records: Records,
+      internalState: TRef[WorkerInternalState]
+    ): URIO[Any, SubmitBatchResult] =
+      queue
+        .offerAll(records)
+        .tap(notInserted =>
+          ZIO.when(notInserted.nonEmpty) {
+            Clock
+              .currentTime(TimeUnit.MILLISECONDS)
+              .flatMap(now =>
+                internalState.update(s => if (s.reachedHighWatermarkSince.nonEmpty) s else s.reachedHighWatermark(now)).commit
+              )
+          }
+        )
+        .map(rejected => {
+          val isSuccess = rejected.isEmpty
+          SubmitBatchResult(isSuccess, if (isSuccess) None else Some(rejected.minBy(_.offset)))
+        })
 
     private def pollOnce[R](
       state: Ref[DispatcherState],
@@ -579,6 +628,16 @@ object DispatcherMetric {
     clientId: ClientId,
     attributes: Map[String, String]
   ) extends DispatcherMetric
+
+  case class DroppedRecordsDueToGapsSizeLimit(
+    numRecords: Int,
+    firstDroppedOffset: Long,
+    group: Group,
+    partition: TopicPartition,
+    clientId: ClientId,
+    attributes: Map[String, String]
+  ) extends DispatcherMetric
+
   case class FailToUpdateCurrentExecutionStarted(
     record: Record,
     group: Group,
