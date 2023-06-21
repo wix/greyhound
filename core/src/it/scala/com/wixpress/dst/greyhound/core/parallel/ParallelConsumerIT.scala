@@ -104,49 +104,46 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         fastMessages                   = allMessages - 1
         drainTimeout                   = 5.seconds
 
-        keyWithSlowHandling  = "slow-key"
-        numProcessedMessges <- Ref.make[Int](0)
-        fastMessagesLatch   <- CountDownLatch.make(fastMessages)
+        numProcessedMessages <- Ref.make[Int](0)
+        fastMessagesLatch    <- CountDownLatch.make(fastMessages)
 
         randomKeys <- ZIO.foreach(1 to fastMessages)(i => randomKey(i.toString)).map(_.toSeq)
 
         fastRecords = randomKeys.map { key => recordWithKey(topic, key, partition) }
-        slowRecord  = recordWithKey(topic, keyWithSlowHandling, partition)
+        slowRecord  = recordWithoutKey(topic, partition)
 
         finishRebalance <- Promise.make[Nothing, Unit]
 
         // handler that sleeps only on the slow key
-        handler = RecordHandler { cr: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
-                    (cr.key match {
-                      case Some(k) if k == Chunk.fromArray(keyWithSlowHandling.getBytes) =>
-                        // make sure the handler doesn't finish before the rebalance is done, including drain timeout
-                        finishRebalance.await *> ZIO.sleep(drainTimeout + 1.second)
-                      case _                                                             => fastMessagesLatch.countDown
-                    }) *> numProcessedMessges.update(_ + 1)
-                  }
-        _      <-
-          for {
-            consumer <- makeParallelConsumer(handler, kafka, topic, group, cId, drainTimeout = drainTimeout, startPaused = true)
-            _        <- produceRecords(producer, Seq(slowRecord))
-            _        <- produceRecords(producer, fastRecords)
-            _        <- ZIO.sleep(2.seconds)
-            // produce is done synchronously to make sure all records are produced before consumer starts, so all records are polled at once
-            _        <- consumer.resume
-            _        <- fastMessagesLatch.await
-            _        <- ZIO.sleep(3.second) // sleep to ensure commit is done before rebalance
-            // start another consumer to trigger a rebalance before slow handler is done
-            _        <- makeParallelConsumer(
-                          handler,
-                          kafka,
-                          topic,
-                          group,
-                          cId,
-                          drainTimeout = drainTimeout,
-                          onAssigned = _ => finishRebalance.succeed()
-                        )
-          } yield ()
+        handler   = RecordHandler { cr: ConsumerRecord[Chunk[Byte], Chunk[Byte]] =>
+                      (cr.key match {
+                        case Some(_) =>
+                          fastMessagesLatch.countDown
+                        case None      =>
+                          // make sure the handler doesn't finish before the rebalance is done, including drain timeout
+                          finishRebalance.await *> ZIO.sleep(drainTimeout + 5.second)
+                      }) *> numProcessedMessages.update(_ + 1)
+                    }
+        consumer <- makeParallelConsumer(handler, kafka, topic, group, cId, drainTimeout = drainTimeout, startPaused = true)
+        _        <- produceRecords(producer, Seq(slowRecord))
+        _        <- produceRecords(producer, fastRecords)
+        _        <- ZIO.sleep(2.seconds)
+        // produce is done synchronously to make sure all records are produced before consumer starts, so all records are polled at once
+        _        <- consumer.resume
+        _        <- fastMessagesLatch.await
+        _        <- ZIO.sleep(3.second) // sleep to ensure commit is done before rebalance
+        // start another consumer to trigger a rebalance before slow handler is done
+        _        <- makeParallelConsumer(
+                      handler,
+                      kafka,
+                      topic,
+                      group,
+                      cId,
+                      drainTimeout = drainTimeout,
+                      onAssigned = _ => finishRebalance.succeed()
+                    )
 
-        _ <- eventuallyZ(numProcessedMessges.get, 25.seconds)(_ == allMessages)
+        _ <- eventuallyZ(numProcessedMessages.get, 25.seconds)(_ == allMessages)
       } yield {
         ok
       }
@@ -318,6 +315,9 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
 
   private def recordWithKey(topic: String, key: String, partition: Int) =
     ProducerRecord(topic, "", Some(key), partition = Some(partition))
+
+  private def recordWithoutKey(topic: String, partition: Int) =
+    ProducerRecord(topic, "", None, partition = Some(partition))
 
   private def randomKey(prefix: String) =
     randomId.map(r => s"$prefix-$r")
