@@ -52,7 +52,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
             ZIO.scoped(BatchEventLoop.make(group, ConsumerSubscription.topics(topics: _*), consumer, handler, clientId, retry).flatMap {
               loop =>
                 for {
-                  _              <- ZIO.succeed(println(s"Should not retry for retry: $retry, cause: $cause"))
+                  _              <- ZIO.debug(s"Should not retry for retry: $retry, cause: $cause")
                   _              <- givenHandleError(failOnPartition(0, cause))
                   _              <- givenRecords(consumerRecords)
                   handledRecords <- handled.await(_.nonEmpty)
@@ -79,7 +79,7 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
           ZIO.scoped(BatchEventLoop.make(group, ConsumerSubscription.topics(topics: _*), consumer, handler, clientId, Some(retry)).flatMap {
             loop =>
               for {
-                _        <- ZIO.succeed(println(s"Should retry for cause: $cause"))
+                _        <- ZIO.debug(s"Should retry for cause: $cause")
                 _        <- givenHandleError(failOnPartition(0, cause))
                 _        <- givenRecords(consumerRecords)
                 handled1 <- handled.await(_.nonEmpty)
@@ -153,13 +153,14 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
 
     val consumer = new EmptyConsumer {
       override def poll(timeout: Duration)(implicit trace: Trace): Task[Records] =
-        queue.take
+        queue.take.interruptible
           .timeout(timeout)
           .map(_.getOrElse(Iterable.empty))
-          .tap(r => ZIO.succeed(println(s"poll($timeout): $r")))
+          .tap(r => ZIO.debug(s"poll($timeout): $r"))
+
 
       override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): Task[Unit] = {
-        ZIO.succeed(println(s"commit($offsets)")) *> committedOffsetsRef.update(_ ++ offsets)
+        ZIO.debug(s"commit($offsets)") *> committedOffsetsRef.update(_ ++ offsets)
       }
 
       override def commitWithMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])(
@@ -190,14 +191,16 @@ class BatchEventLoopTest extends JUnitRunnableSpec {
       }
     }
 
-    val handler  = new BatchRecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]] {
-      override def handle(records: RecordBatch): ZIO[Any, HandleError[Throwable], Any] = {
-        ZIO.succeed(println(s"handle($records)")) *>
-          (handlerErrorsRef.get.flatMap(he => he(records.records).fold(ZIO.unit: IO[HandleError[Throwable], Unit])(ZIO.failCause(_))) *>
-            handled.update(_ :+ records.records))
-            .tapErrorCause(e => ZIO.succeed(println(s"handle failed with $e, records: $records")))
-            .tap(_ => ZIO.succeed(println(s"handled $records")))
-      }
+    val handler = new BatchRecordHandler[Any, Throwable, Chunk[Byte], Chunk[Byte]] {
+      override def handle(records: RecordBatch): ZIO[Any, HandleError[Throwable], Any] = for {
+        _  <- ZIO.debug(s"handle($records)")
+        he <- handlerErrorsRef.get
+        _  <- he(records.records).fold(ZIO.unit: IO[HandleError[Throwable], Unit])(ZIO.failCause(_))
+        _  <- handled
+                .update(_ :+ records.records)
+                .tapErrorCause(e => ZIO.debug(s"handle failed with $e, records: $records"))
+                .tap(_ => ZIO.debug(s"handled $records"))
+      } yield ()
     }
 
     def givenRecords(records: Seq[Consumer.Record]) = queue.offer(records)

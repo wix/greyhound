@@ -196,15 +196,18 @@ object Dispatcher {
         ZIO
           .foreachParDiscard(workers) {
             case (partition, worker) =>
-              report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
-                workersShutdownRef.get.flatMap(_.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
-                worker.shutdown
-                  .catchSomeCause {
-                    case _: Cause[InterruptedException] => ZIO.unit
-                  } // happens on revoke - must not fail on it so we have visibility to worker completion
-                  .timed
-                  .map(_._1)
-                  .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
+              for {
+                _                  <- report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes))
+                workersShutdownMap <- workersShutdownRef.get
+                _                  <- workersShutdownMap.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)
+                duration           <- worker.shutdown
+                                        .catchSomeCause {
+                                          case _: Cause[InterruptedException] => ZIO.unit
+                                        } // happens on revoke - must not fail on it so we have visibility to worker completion
+                                        .timed
+                                        .map(_._1)
+                _                  <- report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes))
+              } yield ()
           }
           .resurrect
           .ignore
@@ -324,7 +327,7 @@ object Dispatcher {
       override def shutdown: URIO[Any, Unit] =
         for {
           _       <- internalState.update(_.shutdown).commit
-          timeout <- fiber.join.ignore.disconnect.timeout(drainTimeout)
+          timeout <- fiber.join.ignore.interruptible.timeout(drainTimeout)
           _       <- ZIO.when(timeout.isEmpty)(fiber.interruptFork)
         } yield ()
 
@@ -404,19 +407,26 @@ object Dispatcher {
           case DispatcherState.Running        =>
             queue.poll.flatMap {
               case Some(record) =>
-                report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *>
-                  ZIO
-                    .attempt(currentTimeMillis())
-                    .flatMap(t => internalState.updateAndGet(_.startedWith(t)).commit)
-                    .tapBoth(
-                      e => report(FailToUpdateCurrentExecutionStarted(record, group, clientId, consumerAttributes, e)),
-                      t => report(CurrentExecutionStartedEvent(partition, group, clientId, t.currentExecutionStarted))
-                    ) *> handle(record).interruptible.ignore *> isActive(internalState)
-              case None         => isActive(internalState).delay(5.millis)
+                for {
+                  _                  <- report(TookRecordFromQueue(record, group, clientId, consumerAttributes))
+                  clock              <- ZIO.clock
+                  executionStartTime <- clock.currentTime(TimeUnit.MILLISECONDS)
+                  _                  <- internalState
+                                          .updateAndGet(_.startedWith(executionStartTime))
+                                          .commit
+                  _                  <- report(CurrentExecutionStartedEvent(partition, group, clientId, Some(executionStartTime)))
+                  _                  <- handle(record).interruptible.ignore
+                  active             <- isActive(internalState)
+                } yield active
+              case None         =>
+                isActive(internalState).delay(5.millis)
             }
           case DispatcherState.Paused(resume) =>
-            report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes)) *> resume.await.timeout(30.seconds) *>
-              isActive(internalState)
+            for {
+              _      <- report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes))
+              _      <- resume.await.timeout(30.seconds)
+              active <- isActive(internalState)
+            } yield active
           case DispatcherState.ShuttingDown   =>
             ZIO.succeed(false)
         }
