@@ -6,10 +6,10 @@ import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GHThrowable, Group, GroupTopicPartition, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
+import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GHThrowable, Group, GroupTopicPartition, Offset, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, ListConsumerGroupOffsetsSpec, NewPartitions, NewTopic, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
+import org.apache.kafka.clients.admin.{AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, ListConsumerGroupOffsetsSpec, ListOffsetsOptions, ListOffsetsResult, NewPartitions, NewTopic, OffsetSpec, TopicDescription, AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig}
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{InvalidTopicException, TopicExistsException, UnknownTopicOrPartitionException}
@@ -27,6 +27,10 @@ trait AdminClient {
 
   def listTopics()(implicit trace: Trace): RIO[Any, Set[String]]
 
+  def listEndOffsets(
+      tps: Set[TopicPartition]
+  )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+
   def topicExists(topic: String)(implicit trace: Trace): RIO[Any, Boolean]
 
   def topicsExist(topics: Set[Topic])(implicit trace: Trace): ZIO[Any, Throwable, Map[Topic, Boolean]]
@@ -40,7 +44,9 @@ trait AdminClient {
 
   def propertiesFor(topics: Set[Topic])(implicit trace: Trace): RIO[Any, Map[Topic, TopicPropertiesResult]]
 
-  def commit(group: Group, commits: Map[TopicPartition, OffsetAndMetadata])(implicit trace: Trace): ZIO[Any, Throwable, Unit]
+  def commit(group: Group, commits: Map[TopicPartition, OffsetAndMetadata])(
+      implicit trace: Trace
+  ): ZIO[Any, Throwable, Unit]
 
   def listGroups()(implicit trace: Trace): RIO[Any, Set[String]]
 
@@ -216,6 +222,20 @@ object AdminClient {
           topics <- result.names().asZio
         } yield topics.asScala.toSet
 
+        override def listEndOffsets(
+            tps: Set[TopicPartition]
+        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
+          val j: java.util.Map[org.apache.kafka.common.TopicPartition, OffsetSpec] =
+            tps.map { tp => (tp.asKafka, OffsetSpec.latest()) }.toMap.asJava
+
+          for {
+            result <- attemptBlocking(client.listOffsets(j))
+            results <- result.all.asZio.map(_.asScala.toMap.map { case (tp, offset) =>
+              (TopicPartition.fromKafka(tp), offset.offset())
+            })
+          } yield results
+        }
+
         private def toNewTopic(config: TopicConfig): NewTopic =
           new NewTopic(config.name, config.partitions, config.replicationFactor.toShort)
             .configs(config.propertiesMap.asJava)
@@ -225,9 +245,13 @@ object AdminClient {
           groups <- result.valid().asZio
         } yield groups.asScala.map(_.groupId()).toSet
 
-        override def commit(group: Group, commits: Map[TopicPartition, OffsetAndMetadata])(implicit trace: Trace): ZIO[Any, Throwable, Unit] =
-          attemptBlocking(client.alterConsumerGroupOffsets(group,
-            commits.map { case (tp, offset) => (tp.asKafka, offset.asKafka) }.asJava)).unit
+        override def commit(group: Group, commits: Map[TopicPartition, OffsetAndMetadata])(
+            implicit trace: Trace
+        ): ZIO[Any, Throwable, Unit] =
+          attemptBlocking(
+            client
+              .alterConsumerGroupOffsets(group, commits.map { case (tp, offset) => (tp.asKafka, offset.asKafka) }.asJava)
+          ).unit
 
         override def groupOffsetsSpecific(
             requestedTopicPartitions: Map[Group, Set[TopicPartition]]
@@ -249,9 +273,13 @@ object AdminClient {
             rawOffsets = result.asScala.toMap.mapValues(_.asScala.toMap)
             offset =
               rawOffsets.map { case (group, offsets) =>
-                offsets.map{case (tp, offset) =>
-                  (GroupTopicPartition(group, TopicPartition.fromKafka(tp)), PartitionOffset(Option(offset).map(_.offset()).getOrElse(0L)))
+                offsets.map { case (tp, offset) =>
+                  (
+                    GroupTopicPartition(group, TopicPartition.fromKafka(tp)),
+                    PartitionOffset(Option(offset).map(_.offset()).getOrElse(-1L))
+                  )
                 }
+                .filter{case (_, o) => o.offset >= 0}
               }
             groupOffsets = offset.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++ y)
           } yield groupOffsets
