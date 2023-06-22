@@ -62,8 +62,9 @@ object RecordConsumer {
    * concurrent between partitions; order is guaranteed to be maintained within the same partition.
    */
   def make[R, E](
-    config: RecordConsumerConfig,
-    handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]
+                  config: RecordConsumerConfig,
+                  handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
+                  createConsumerOverride: Option[ConsumerConfig => RIO[GreyhoundMetrics with Scope, Consumer]] = None
   )(implicit trace: Trace, tag: Tag[Env]): ZIO[R with Env with Scope with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     ZIO
       .acquireRelease(
@@ -75,19 +76,21 @@ object RecordConsumer {
           _                                    <- validateRetryPolicy(config)
           consumerSubscriptionRef              <- Ref.make[ConsumerSubscription](config.initialSubscription)
           nonBlockingRetryHelper                = NonBlockingRetryHelper(config.group, config.retryConfig)
-          consumer                             <- Consumer.make(consumerConfig(config))
+          consumer                             <- createConsumerOverride.getOrElse(Consumer.make _)(consumerConfig(config))
           (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
                                                     maybeAddRetryTopics(policy, config, nonBlockingRetryHelper)
                                                   )
-          _                                    <- AdminClient
-                                                    .make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes)
-                                                    .tap(client =>
-                                                      client.createTopics(
-                                                        topicsToCreate.map(topic =>
-                                                          TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))
+          _                                    <- ZIO.when(config.createRetryTopics)(
+                                                    AdminClient
+                                                      .make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes)
+                                                      .tap(client =>
+                                                        client.createTopics(
+                                                          topicsToCreate.map(topic =>
+                                                            TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))
+                                                          )
                                                         )
                                                       )
-                                                    )
+                                                  )
           blockingState                        <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
           blockingStateResolver                 = BlockingStateResolver(blockingState)
           workersShutdownRef                   <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
@@ -206,7 +209,8 @@ object RecordConsumer {
       config.consumerAttributes,
       config.decryptor,
       config.commitMetadataString,
-      config.rewindUncommittedOffsetsBy.toMillis
+      config.rewindUncommittedOffsetsBy.toMillis,
+      config.eventLoopConfig.consumePartitionInParallel
     )
   }
 
@@ -321,7 +325,8 @@ case class RecordConsumerConfig(
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
   retryProducerAttributes: Map[String, String] = Map.empty,
   commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
-  rewindUncommittedOffsetsBy: Duration = 0.millis
+  rewindUncommittedOffsetsBy: Duration = 0.millis,
+  createRetryTopics: Boolean = true
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
