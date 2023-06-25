@@ -1,0 +1,14 @@
+package(default_visibility = ["//visibility:public"])
+
+# visibility is extended to allow packaging a jar to deploy to maven central
+sources(["//core:__subpackages__"])
+
+scala_library(
+    name = "compression",
+    srcs = [
+        ":sources",
+    ],
+    deps = [
+        "@org_apache_commons_commons_compress",
+    ],
+)
