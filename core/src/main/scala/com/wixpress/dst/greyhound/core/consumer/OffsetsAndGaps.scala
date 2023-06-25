@@ -1,10 +1,13 @@
 package com.wixpress.dst.greyhound.core.consumer
 
+import com.wixpress.dst.greyhound.core.compression.GzipCompression
 import com.wixpress.dst.greyhound.core.consumer.Gap.GAP_SEPARATOR
 import com.wixpress.dst.greyhound.core.consumer.OffsetAndGaps.{GAPS_STRING_SEPARATOR, LAST_HANDLED_OFFSET_SEPARATOR}
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.{Offset, OffsetAndMetadata, TopicPartition}
 import zio._
+
+import java.util.Base64
 
 trait OffsetsAndGaps {
   def init(committedOffsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit]
@@ -104,11 +107,15 @@ object OffsetsAndGaps {
     }
 
   def toOffsetsAndMetadata(offsetsAndGaps: Map[TopicPartition, OffsetAndGaps]): Map[TopicPartition, OffsetAndMetadata] =
-    offsetsAndGaps.mapValues(offsetAndGaps =>
-      OffsetAndMetadata(offsetAndGaps.offset, offsetAndGaps.gapsString)
-    ) // todo: add encoding and compression to plain gaps string
+    offsetsAndGaps.mapValues(offsetAndGaps => OffsetAndMetadata(offsetAndGaps.offset, offsetAndGaps.gapsString))
 
-  def parseGapsString(offsetAndGapsString: String): Option[OffsetAndGaps] = {
+  def parseGapsString(rawOffsetAndGapsString: String): Option[OffsetAndGaps] = {
+    val offsetAndGapsString             =
+      if (rawOffsetAndGapsString.nonEmpty)
+        new String(
+          GzipCompression.decompress(Base64.getDecoder.decode(rawOffsetAndGapsString)).getOrElse(Array.empty)
+        )
+      else ""
     val lastHandledOffsetSeparatorIndex = offsetAndGapsString.indexOf(LAST_HANDLED_OFFSET_SEPARATOR)
     if (lastHandledOffsetSeparatorIndex < 0)
       None
@@ -152,9 +159,8 @@ case class OffsetAndGaps(offset: Offset, gaps: Seq[Gap], committable: Boolean = 
   def markCommitted: OffsetAndGaps = copy(committable = false)
 
   def gapsString: String = {
-    if (gaps.isEmpty) ""
-    else
-      s"${offset.toString}${LAST_HANDLED_OFFSET_SEPARATOR}${gaps.sortBy(_.start).mkString(GAPS_STRING_SEPARATOR)}"
+    val plainGapsString = s"${offset.toString}${LAST_HANDLED_OFFSET_SEPARATOR}${gaps.sortBy(_.start).mkString(GAPS_STRING_SEPARATOR)}"
+    Base64.getEncoder.encodeToString(GzipCompression.compress(plainGapsString.getBytes()))
   }
 }
 
@@ -167,5 +173,5 @@ object OffsetAndGaps {
   def apply(offset: Offset, committable: Boolean): OffsetAndGaps = OffsetAndGaps(offset, Seq.empty[Gap], committable)
 
   def gapsSize(gaps: Map[TopicPartition, OffsetAndGaps]): Int =
-    gaps.values.flatMap(_.gaps).map(_.size.toInt).sum
+    gaps.values.map(_.gaps.size).sum
 }
