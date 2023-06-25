@@ -70,15 +70,16 @@ class OffsetsAndGapsTestGapsTest extends BaseTestNoEnv {
     } yield current must havePairs(partition0 -> OffsetAndGaps(102L, Seq()), partition1 -> OffsetAndGaps(204L, Seq(Gap(201L, 202L))))
   }
 
-  "parse gaps from string" in {
-    val gaps     = Seq(s"10${LAST_HANDLED_OFFSET_SEPARATOR}0${GAP_SEPARATOR}1", s"10${LAST_HANDLED_OFFSET_SEPARATOR}", "")
-    val expected = Seq(Some(OffsetAndGaps(10, Seq(Gap(0, 1)))), Some(OffsetAndGaps(10, Seq())), None)
-    gaps.map(OffsetsAndGaps.parseGapsString).must(beEqualTo(expected))
+  "parse offsets and gaps correctly" in {
+    val offsetsAndGaps    = Seq(OffsetAndGaps(10, Seq(Gap(0, 1))), OffsetAndGaps(10, Seq()))
+    val gapsStringsToTest = offsetsAndGaps.map(_.gapsString) ++ Seq("") // use gapsString method to get compressed and encoded strings
+    val expected          = Seq(Some(OffsetAndGaps(10, Seq(Gap(0, 1)))), Some(OffsetAndGaps(10, Seq())), None)
+    gapsStringsToTest.map(OffsetsAndGaps.parseGapsString).must(beEqualTo(expected))
   }
 
 }
 
 object OffsetGapsTest {
-  val topic          = "some-topic"
+  val topic = "some-topic"
   val topicPartition = TopicPartition(topic, 0)
 }
