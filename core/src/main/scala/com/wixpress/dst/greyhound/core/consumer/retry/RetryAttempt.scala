@@ -28,6 +28,23 @@ object RetryHeader {
   val RetryAttempt  = "GH_RetryAttempt"
 }
 
+case class RetryAttemptHeaders(
+  originalTopic: Option[Topic],
+  attempt: Option[RetryAttemptNumber],
+  submittedAt: Option[Instant],
+  backoff: Option[Duration]
+)
+
+object RetryAttemptHeaders {
+  def fromHeaders(headers: Headers): Task[RetryAttemptHeaders] =
+    for {
+      submitted <- headers.get(RetryHeader.Submitted, instantDeserializer)
+      backoff   <- headers.get(RetryHeader.Backoff, durationDeserializer)
+      topic     <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
+      attempt   <- headers.get(RetryHeader.RetryAttempt, longDeserializer)
+    } yield RetryAttemptHeaders(topic, attempt.map(_.toInt), submitted, backoff)
+}
+
 object RetryAttempt {
   type RetryAttemptNumber = Int
 
@@ -39,21 +56,6 @@ object RetryAttempt {
     RetryHeader.OriginalTopic -> toChunk(attempt.originalTopic),
     RetryHeader.RetryAttempt  -> toChunk(attempt.attempt.toString)
   )
-
-  private case class RetryAttemptHeaders(
-    originalTopic: Option[Topic],
-    attempt: Option[RetryAttemptNumber],
-    submittedAt: Option[Instant],
-    backoff: Option[Duration]
-  )
-
-  private def fromHeaders(headers: Headers): Task[RetryAttemptHeaders] =
-    for {
-      submitted <- headers.get(RetryHeader.Submitted, instantDeserializer)
-      backoff   <- headers.get(RetryHeader.Backoff, durationDeserializer)
-      topic     <- headers.get[String](RetryHeader.OriginalTopic, StringSerde)
-      attempt   <- headers.get(RetryHeader.RetryAttempt, longDeserializer)
-    } yield RetryAttemptHeaders(topic, attempt.map(_.toInt), submitted, backoff)
 
   /** @return None on infinite blocking retries */
   def maxBlockingAttempts(topic: Topic, retryConfig: Option[RetryConfig]): Option[Int] =
@@ -92,6 +94,6 @@ object RetryAttempt {
         attempt       <- hs.attempt
       } yield RetryAttempt(originalTopic, attempt, submitted, backoff)
 
-    fromHeaders(headers).map { hs => maybeNonBlockingAttempt(hs) orElse maybeBlockingAttempt(hs) }
+    RetryAttemptHeaders.fromHeaders(headers).map { hs => maybeNonBlockingAttempt(hs) orElse maybeBlockingAttempt(hs) }
   }.catchAll(_ => ZIO.none)
 }
