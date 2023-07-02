@@ -5,13 +5,17 @@ import java.util.concurrent.TimeUnit.MILLISECONDS
 import com.wixpress.dst.greyhound.core.PartitionInfo
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import com.wixpress.dst.greyhound.core.producer.ProducerMetric._
-import zio.{Chunk, IO, RIO, Trace, ULayer, ZIO}
+import zio.{Chunk, IO, RIO, Trace, UIO, ULayer, ZIO}
 import GreyhoundMetrics._
+import org.apache.kafka.common.{Metric, MetricName}
 
 import scala.concurrent.duration.FiniteDuration
 import zio.Clock.currentTime
 
 case class ReportingProducer[-R](internal: ProducerR[R], extraAttributes: Map[String, String]) extends ProducerR[GreyhoundMetrics with R] {
+
+
+  override def metrics: UIO[Option[Map[MetricName, Metric]]] = internal.metrics
 
   override def produceAsync(
     record: ProducerRecord[Chunk[Byte], Chunk[Byte]]

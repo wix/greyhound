@@ -2,7 +2,7 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.{Clock, Duration, ZoneId}
 import java.util.concurrent.atomic.AtomicReference
-import com.wixpress.dst.greyhound.core.TopicPartition
+import com.wixpress.dst.greyhound.core.{OffsetAndMetadata, TopicPartition}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed}
 import com.wixpress.dst.greyhound.core.consumer.SeekTo.{SeekToEnd, SeekToOffset}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
@@ -16,7 +16,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
   private val Seq(p1, p2, p3)     = Seq("t1" -> 1, "t2" -> 2, "t3" -> 3).map(tp => TopicPartition(tp._1, tp._2))
   private val partitions          = Set(p1, p2, p3)
   private val p1Pos, p2Pos, p3Pos = randomInt.toLong
-  val epochTimeToRewind = 1000L
+  val epochTimeToRewind           = 1000L
 
   "do nothing if no missing offsets" in
     new ctx {
@@ -40,8 +40,8 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
         p3 -> p3Pos
       )
       there was
-        one(offsetOps).commit(
-          missingOffsets,
+        one(offsetOps).commitWithMetadata(
+          missingOffsets.mapValues(OffsetAndMetadata(_)),
           timeout
         )
 
@@ -57,8 +57,8 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
 
       val expected = Map(p1 -> p1Pos, p3 -> p3Pos)
       there was
-        one(offsetOps).commit(
-          expected,
+        one(offsetOps).commitWithMetadata(
+          expected.mapValues(OffsetAndMetadata(_)),
           timeoutIfSeek
         )
 
@@ -79,8 +79,8 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
 
       val expected = Map(p1 -> p1Pos, p3 -> p3Pos, p2 -> p2Pos)
       there was
-        one(offsetOps).commit(
-          expected,
+        one(offsetOps).commitWithMetadata(
+          expected.mapValues(OffsetAndMetadata(_)),
           timeoutIfSeek
         )
       there was one(offsetOps).seek(Map(p1 -> p1Pos, p2 -> p2Pos))
@@ -93,27 +93,27 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
   "fail if operation fails and there are relevant seekTo offsets" in
     new ctx(seekTo = Map(p1 -> SeekToOffset(p1Pos))) {
       val e = new RuntimeException(randomStr)
-      offsetOps.committed(any(), any()) throws e
+      offsetOps.committedWithMetadata(any(), any()) throws e
 
       committer.initializeOffsets(partitions) must throwA(e)
 
       reported must contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
     }
 
-  "report errors in `commit()`, but not fail" in
+  "report errors in `commitWithMetadata()`, but not fail" in
     new ctx {
       val e            = new RuntimeException(randomStr)
       givenCommittedOffsets(partitions)(Map(p1 -> randomInt))
       val p2Pos, p3Pos = randomInt.toLong
       givenPositions(p2 -> p2Pos, p3 -> p3Pos)
-      offsetOps.commit(any(), any()) throws e
+      offsetOps.commitWithMetadata(any(), any()) throws e
 
       committer.initializeOffsets(partitions)
 
       reported must contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
     }
 
-  "report errors in `commit()`, but not fail" in
+  "report errors in `commitWithMetadata()`, but not fail" in
     new ctx {
       val e = new RuntimeException(randomStr)
       givenCommittedOffsets(partitions)(Map(p1 -> randomInt))
@@ -124,71 +124,73 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       reported must contain(CommittedMissingOffsetsFailed(clientId, group, partitions, Map.empty, elapsed = Duration.ZERO, e))
     }
 
-  "rewind uncommitted offsets" in new ctx {
-    givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
-    givenPositions(p2 -> p2Pos, p3 -> p3Pos)
-    givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2 -> 1L)
+  "rewind uncommitted offsets" in
+    new ctx {
+      givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
+      givenPositions(p2                          -> p2Pos, p3 -> p3Pos)
+      givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2    -> 1L)
 
-    committer.initializeOffsets(partitions)
+      committer.initializeOffsets(partitions)
 
-    val missingOffsets = Map(
-      p1 -> p1Pos,
-      p3 -> p3Pos
-    )
-
-    val rewindedOffsets = Map(
-      p1 -> 0L,
-    )
-
-    there was
-      one(offsetOps).commit(
-        missingOffsets ++ rewindedOffsets,
-        timeout
+      val missingOffsets = Map(
+        p1 -> p1Pos,
+        p3 -> p3Pos
       )
-  }
 
-  "rewind to endOffsets for uncommitted partitions when offsetsForTimes return null offsets " in new ctx {
-    givenCommittedOffsets(partitions)(Map(p2 -> randomInt, p3 -> randomInt))
-    givenPositions(p3 -> p3Pos)
-    givenEndOffsets(partitions, timeout)(Map(p1 -> p1Pos))
-    givenOffsetsForTimes(Set(p1))(p1 -> None /*kafka SDK returned null*/)
-
-    committer.initializeOffsets(partitions)
-
-    val committedOffsets = Map(
-      p1 -> p1Pos,
-    )
-
-    there was
-      one(offsetOps).commit(
-        committedOffsets,
-        timeout
+      val rewindedOffsets = Map(
+        p1 -> 0L
       )
-  }
 
-  "not rewind uncommitted offsets when offset reset is earliest" in new ctx(offsetReset = OffsetReset.Earliest) {
-    givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
-    givenPositions(p2 -> p2Pos, p3 -> p3Pos)
-    givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2 -> 1L)
+      there was
+        one(offsetOps).commitWithMetadata(
+          (missingOffsets ++ rewindedOffsets).mapValues(OffsetAndMetadata(_)),
+          timeout
+        )
+    }
 
-    committer.initializeOffsets(partitions)
+  "rewind to endOffsets for uncommitted partitions when offsetsForTimes return null offsets " in
+    new ctx {
+      givenCommittedOffsets(partitions)(Map(p2 -> randomInt, p3 -> randomInt))
+      givenPositions(p3                -> p3Pos)
+      givenEndOffsets(partitions, timeout)(Map(p1 -> p1Pos))
+      givenOffsetsForTimes(Set(p1))(p1 -> None /*kafka SDK returned null*/ )
 
-    val missingOffsets = Map(
-      p1 -> p1Pos,
-      p3 -> p3Pos
-    )
+      committer.initializeOffsets(partitions)
 
-    val rewindedOffsets = Map(
-      p1 -> 0L,
-    )
-
-    there was
-      one(offsetOps).commit(
-        missingOffsets ++ rewindedOffsets,
-        timeout
+      val committedOffsets = Map(
+        p1 -> p1Pos
       )
-  }
 
+      there was
+        one(offsetOps).commitWithMetadata(
+          committedOffsets.mapValues(OffsetAndMetadata(_)),
+          timeout
+        )
+    }
+
+  "not rewind uncommitted offsets when offset reset is earliest" in
+    new ctx(offsetReset = OffsetReset.Earliest) {
+      givenCommittedOffsets(partitions)(Map(p2 -> randomInt))
+      givenPositions(p2                          -> p2Pos, p3 -> p3Pos)
+      givenOffsetsForTimes(epochTimeToRewind, p1 -> 0L, p2    -> 1L)
+
+      committer.initializeOffsets(partitions)
+
+      val missingOffsets = Map(
+        p1 -> p1Pos,
+        p3 -> p3Pos
+      )
+
+      val rewindedOffsets = Map(
+        p1 -> 0L
+      )
+
+      there was
+        one(offsetOps).commitWithMetadata(
+          (missingOffsets ++ rewindedOffsets).mapValues(OffsetAndMetadata(_)),
+          timeout
+        )
+    }
 
   class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty, offsetReset: OffsetReset = OffsetReset.Latest) extends Scope {
     private val metricsLogRef           = new AtomicReference(Seq.empty[GreyhoundMetric])
@@ -212,7 +214,8 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       if (seekTo == Map.empty) InitialOffsetsSeek.default else (_, _, _, _) => seekTo,
       rewindUncommittedOffsetsBy = zio.Duration.fromMillis(15 * 60 * 1000),
       clock,
-      offsetResetIsEarliest = offsetReset == OffsetReset.Earliest
+      offsetResetIsEarliest = offsetReset == OffsetReset.Earliest,
+      false
     )
 
     def randomOffsets(partitions: Set[TopicPartition]) = partitions.map(p => p -> randomInt.toLong).toMap
@@ -220,7 +223,7 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
     def givenCommittedOffsets(partitions: Set[TopicPartition], timeout: zio.Duration = timeout)(
       result: Map[TopicPartition, Long]
     ) = {
-      offsetOps.committed(partitions, timeout) returns result
+      offsetOps.committedWithMetadata(partitions, timeout) returns result.mapValues(OffsetAndMetadata(_))
     }
 
     def givenEndOffsets(partitions: Set[TopicPartition], timeout: zio.Duration = timeout)(result: Map[TopicPartition, Long]) = {
