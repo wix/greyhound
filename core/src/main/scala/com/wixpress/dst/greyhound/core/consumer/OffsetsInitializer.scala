@@ -2,7 +2,6 @@ package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.Clock
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed, SkippedGapsOnInitialization}
-import com.wixpress.dst.greyhound.core.consumer.OffsetsAndGaps.{firstGapOffset, parseGapsString}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, OffsetAndMetadata, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.{URIO, ZIO}
@@ -82,10 +81,7 @@ class OffsetsInitializer(
     val seekToEndPartitions                 = seekTo.collect { case (k, SeekTo.SeekToEnd) => k }.toSet
     val toPause                             = seekTo.collect { case (k, SeekTo.Pause) => k }
     val seekToEndOffsets                    = fetchEndOffsets(seekToEndPartitions, timeout).mapValues(OffsetAndMetadata.apply)
-    val gapsSmallestOffsets                 = currentCommittedOffsets
-      .collect { case (tp, Some(om)) => tp -> om }
-      .map(tpom => tpom._1 -> (firstGapOffset(tpom._2.metadata), tpom._2.metadata))
-      .collect { case (tp, (Some(offset), metadata)) => tp -> OffsetAndMetadata(offset, metadata) }
+    val gapsSmallestOffsets                 = OffsetsAndGaps.gapsSmallestOffsets(currentCommittedOffsets)
     val seekToGapsOffsets                   = if (parallelConsumer) gapsSmallestOffsets else Map.empty
     val toOffsets                           = seekToOffsets ++ seekToEndOffsets ++ seekToGapsOffsets
 
@@ -96,7 +92,7 @@ class OffsetsInitializer(
   private def reportSkippedGaps(currentCommittedOffsets: Map[TopicPartition, Option[OffsetAndMetadata]]) = {
     val skippedGaps = currentCommittedOffsets
       .collect { case (tp, Some(om)) => tp -> om }
-      .map(tpom => tpom._1 -> parseGapsString(tpom._2.metadata))
+      .map(tpom => tpom._1 -> OffsetsAndGaps.parseGapsString(tpom._2.metadata))
       .collect { case (tp, Some(gaps)) => tp -> gaps }
     reporter(SkippedGapsOnInitialization(clientId, group, skippedGaps))
   }
