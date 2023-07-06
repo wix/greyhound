@@ -8,6 +8,7 @@ import com.wixpress.dst.greyhound.core.{Offset, OffsetAndMetadata, TopicPartitio
 import zio._
 
 import java.util.Base64
+import scala.util.Try
 
 trait OffsetsAndGaps {
   def init(committedOffsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit]
@@ -111,11 +112,9 @@ object OffsetsAndGaps {
 
   def parseGapsString(rawOffsetAndGapsString: String): Option[OffsetAndGaps] = {
     val offsetAndGapsString             =
-      if (rawOffsetAndGapsString.nonEmpty)
-        new String(
-          GzipCompression.decompress(Base64.getDecoder.decode(rawOffsetAndGapsString)).getOrElse(Array.empty)
-        )
-      else ""
+      if (rawOffsetAndGapsString.nonEmpty) {
+        Try(new String(GzipCompression.decompress(Base64.getDecoder.decode(rawOffsetAndGapsString)).getOrElse(Array.empty))).getOrElse("")
+      } else ""
     val lastHandledOffsetSeparatorIndex = offsetAndGapsString.indexOf(LAST_HANDLED_OFFSET_SEPARATOR)
     if (lastHandledOffsetSeparatorIndex < 0)
       None
@@ -132,13 +131,19 @@ object OffsetsAndGaps {
     }
   }
 
-  def firstGapOffset(gapsString: String): Option[Offset] = {
+  private def firstGapOffset(gapsString: String): Option[Offset] = {
     val maybeOffsetAndGaps = parseGapsString(gapsString)
     maybeOffsetAndGaps match {
       case Some(offsetAndGaps) if offsetAndGaps.gaps.nonEmpty => Some(offsetAndGaps.gaps.minBy(_.start).start)
       case _                                                  => None
     }
   }
+
+  def gapsSmallestOffsets(offsets: Map[TopicPartition, Option[OffsetAndMetadata]]): Map[TopicPartition, OffsetAndMetadata] =
+    offsets
+      .collect { case (tp, Some(om)) => tp -> om }
+      .map(tpom => tpom._1 -> (firstGapOffset(tpom._2.metadata), tpom._2.metadata))
+      .collect { case (tp, (Some(offset), metadata)) => tp -> OffsetAndMetadata(offset, metadata) }
 }
 
 case class Gap(start: Offset, end: Offset) {
