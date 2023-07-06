@@ -192,6 +192,24 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
         )
     }
 
+  "commit offsets even when unknown metadata string is present in committed offsets" in
+    new ctx() {
+      givenCommittedOffsetsAndMetadata(partitions)(Map(p1 -> OffsetAndMetadata(randomInt, randomStr)))
+      givenPositions(p2 -> p2Pos, p3 -> p3Pos)
+
+      committer.initializeOffsets(partitions)
+
+      val missingOffsets = Map(
+        p2 -> p2Pos,
+        p3 -> p3Pos
+      )
+      there was
+        one(offsetOps).commitWithMetadata(
+          missingOffsets.mapValues(OffsetAndMetadata(_)),
+          timeout
+        )
+    }
+
   class ctx(val seekTo: Map[TopicPartition, SeekTo] = Map.empty, offsetReset: OffsetReset = OffsetReset.Latest) extends Scope {
     private val metricsLogRef           = new AtomicReference(Seq.empty[GreyhoundMetric])
     def reported                        = metricsLogRef.get
@@ -224,6 +242,12 @@ class OffsetsInitializerTest extends SpecificationWithJUnit with Mockito {
       result: Map[TopicPartition, Long]
     ) = {
       offsetOps.committedWithMetadata(partitions, timeout) returns result.mapValues(OffsetAndMetadata(_))
+    }
+
+    def givenCommittedOffsetsAndMetadata(partitions: Set[TopicPartition], timeout: zio.Duration = timeout)(
+      result: Map[TopicPartition, OffsetAndMetadata]
+    ) = {
+      offsetOps.committedWithMetadata(partitions, timeout) returns result
     }
 
     def givenEndOffsets(partitions: Set[TopicPartition], timeout: zio.Duration = timeout)(result: Map[TopicPartition, Long]) = {
