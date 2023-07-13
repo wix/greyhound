@@ -62,16 +62,23 @@ object RecordConsumer {
    * concurrent between partitions; order is guaranteed to be maintained within the same partition.
    */
   def make[R, E](
-                  config: RecordConsumerConfig,
-                  handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
-                  createConsumerOverride: Option[ConsumerConfig => RIO[GreyhoundMetrics with Scope, Consumer]] = None
+    config: RecordConsumerConfig,
+    handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
+    createConsumerOverride: Option[ConsumerConfig => RIO[GreyhoundMetrics with Scope, Consumer]] = None
   )(implicit trace: Trace, tag: Tag[Env]): ZIO[R with Env with Scope with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     ZIO
       .acquireRelease(
         for {
           consumerShutdown <- AwaitShutdown.make
           _                <- GreyhoundMetrics
-                                .report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers, config.consumerAttributes))
+                                .report(
+                                  CreatingConsumer(
+                                    config.clientId,
+                                    config.group,
+                                    config.bootstrapServers,
+                                    config.consumerAttributes ++ config.extraProperties
+                                  )
+                                )
 
           _                                    <- validateRetryPolicy(config)
           consumerSubscriptionRef              <- Ref.make[ConsumerSubscription](config.initialSubscription)
