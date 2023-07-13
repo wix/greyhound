@@ -19,7 +19,8 @@ object TestSupport {
     Chunk.fromArray(payload.getBytes),
     0L,
     payload.getBytes.length,
-    0L
+    0L,
+    ""
   )
 
   def records(topicCount: Int = 4, partitions: Int = 4, perPartition: Int = 3, hint: String = "") = {
