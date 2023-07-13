@@ -33,7 +33,7 @@ object RetryRecordHandler {
   ): RecordHandler[R with R2 with GreyhoundMetrics, Nothing, K, V] = {
 
     val nonBlockingHandler            =
-      NonBlockingRetryRecordHandler(handler, producer, retryConfig, subscription, nonBlockingRetryHelper, awaitShutdown)
+      NonBlockingRetryRecordHandler(handler, producer, retryConfig, subscription, nonBlockingRetryHelper, groupId, awaitShutdown)
     val blockingHandler               = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler, awaitShutdown)
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
@@ -53,17 +53,6 @@ object RetryRecordHandler {
 
   private def header[V, K, E, R, R2](record: ConsumerRecord[Any, Any], key: String)(implicit trace: Trace) =
     record.headers.get[String](key, StringSerde).catchAll(_ => ZIO.none)
-}
-
-object ZIOHelper {
-  def foreachWhile[R, E, A](as: Iterable[A])(f: A => ZIO[R, E, LastHandleResult])(implicit trace: Trace): ZIO[R, E, LastHandleResult] =
-    ZIO.succeed(as.iterator).flatMap { i =>
-      def loop: ZIO[R, E, LastHandleResult] =
-        if (i.hasNext) f(i.next).flatMap(result => if (result.shouldContinue) loop else ZIO.succeed(result))
-        else ZIO.succeed(LastHandleResult(lastHandleSucceeded = false, shouldContinue = false))
-
-      loop
-    }
 }
 
 case class LastHandleResult(lastHandleSucceeded: Boolean, shouldContinue: Boolean)

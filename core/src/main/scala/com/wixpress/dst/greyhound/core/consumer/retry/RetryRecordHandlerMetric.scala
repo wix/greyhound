@@ -20,7 +20,8 @@ object RetryRecordHandlerMetric {
   case class NoRetryOnNonRetryableFailure(partition: TopicPartition, offset: Long, cause: Exception)      extends RetryRecordHandlerMetric
   case object Silent                                                                                      extends RetryRecordHandlerMetric
 
-  case class WaitingBeforeRetry(retryTopic: Topic, retryAttempt: RetryAttempt, partition: Int, offset:Long, correlationId: Int) extends RetryRecordHandlerMetric
+  case class WaitingBeforeRetry(retryTopic: Topic, retryAttempt: RetryAttempt, partition: Int, offset: Long, correlationId: Int)
+      extends RetryRecordHandlerMetric
 
   case class DoneWaitingBeforeRetry(
     retryTopic: Topic,
