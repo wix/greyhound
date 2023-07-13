@@ -390,6 +390,41 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         }
       }
 
+    s"allow to override offsetReset with autoResetOffset from extra properties${parallelConsumerString(useParallelConsumer)}" in
+      ZIO.scoped {
+        for {
+          r <- getShared
+          TestResources(kafka, producer) = r
+          _ <- ZIO.debug(">>>> starting test: earliestTest")
+          topic <- kafka.createRandomTopic(prefix = "core-from-earliest")
+          group <- randomGroup
+
+          queue <- Queue.unbounded[ConsumerRecord[String, String]]
+          handler = RecordHandler(queue.offer(_: ConsumerRecord[String, String]))
+            .withDeserializers(StringSerde, StringSerde)
+            .ignore
+
+          record = ProducerRecord(topic, "bar", Some("foo"))
+          _ <- producer.produce(record, StringSerde, StringSerde)
+
+          message <- RecordConsumer
+            .make(
+              configFor(
+                kafka,
+                group,
+                topic,
+                mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+              )
+                .copy(offsetReset = Latest, extraProperties = Map("auto.offset.reset" -> "earliest")),
+              handler
+            )
+            .flatMap { _ => queue.take }
+            .timeout(10.seconds)
+        } yield {
+          message.get must (beRecordWithKey("foo") and beRecordWithValue("bar"))
+        }
+      }
+
     s"not lose messages while throttling after rebalance${parallelConsumerString(useParallelConsumer)}" in
       ZIO.scoped {
         for {
