@@ -412,7 +412,7 @@ object EventLoopConfig {
     startPaused = false,
     consumePartitionInParallel = false,
     maxParallelism = 1,
-    gapsSizeLimit = 256 // todo: calculate actual gaps limit based on the max metadata size
+    gapsSizeLimit = 500
   )
 }
 
