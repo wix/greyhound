@@ -1,8 +1,5 @@
 package com.wixpress.dst.greyhound.core
 
-import java.util.concurrent.{TimeUnit, TimeoutException}
-import java.util.regex.Pattern
-import java.util.regex.Pattern.compile
 import com.wixpress.dst.greyhound.core.Serdes._
 import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.PollingFailed
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
@@ -14,18 +11,18 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.producer.ProducerRecord
 import com.wixpress.dst.greyhound.core.testkit.RecordMatchers._
 import com.wixpress.dst.greyhound.core.testkit.{eventuallyTimeoutFail, eventuallyZ, AwaitableRef, BaseTestWithSharedEnv, TestMetrics}
-import com.wixpress.dst.greyhound.core.zioutils.CountDownLatch
-import com.wixpress.dst.greyhound.core.zioutils.Gate
+import com.wixpress.dst.greyhound.core.zioutils.{CountDownLatch, Gate}
 import com.wixpress.dst.greyhound.testenv.ITEnv
 import com.wixpress.dst.greyhound.testenv.ITEnv.{clientId, _}
 import com.wixpress.dst.greyhound.testkit.ManagedKafka
 import org.specs2.specification.core.Fragments
-import zio.Clock
-import zio.stm.{STM, TRef}
-import zio._
-import zio.{Clock, Console, _}
 import zio.Clock.sleep
-import zio.managed._
+import zio.{Clock, _}
+import zio.stm.{STM, TRef}
+
+import java.util.concurrent.{TimeUnit, TimeoutException}
+import java.util.regex.Pattern
+import java.util.regex.Pattern.compile
 
 class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
   sequential
@@ -390,36 +387,40 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         }
       }
 
-    s"allow to override offsetReset with autoResetOffset from extra properties${parallelConsumerString(useParallelConsumer)}" in
+    s"allow to override offsetReset with autoResetOffset from extra properties taking into account a non-zero rewindUncommittedOffsetsBy${parallelConsumerString(useParallelConsumer)}" in
       ZIO.scoped {
         for {
-          r <- getShared
+          r                             <- getShared
           TestResources(kafka, producer) = r
-          _ <- ZIO.debug(">>>> starting test: earliestTest")
-          topic <- kafka.createRandomTopic(prefix = "core-from-earliest")
-          group <- randomGroup
+          _                             <- ZIO.debug(">>>> starting test: earliestTest")
+          topic                         <- kafka.createRandomTopic(prefix = "core-from-earliest")
+          group                         <- randomGroup
 
-          queue <- Queue.unbounded[ConsumerRecord[String, String]]
+          queue  <- Queue.unbounded[ConsumerRecord[String, String]]
           handler = RecordHandler(queue.offer(_: ConsumerRecord[String, String]))
-            .withDeserializers(StringSerde, StringSerde)
-            .ignore
+                      .withDeserializers(StringSerde, StringSerde)
+                      .ignore
 
           record = ProducerRecord(topic, "bar", Some("foo"))
-          _ <- producer.produce(record, StringSerde, StringSerde)
+          _     <- producer.produce(record, StringSerde, StringSerde)
 
           message <- RecordConsumer
-            .make(
-              configFor(
-                kafka,
-                group,
-                topic,
-                mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
-              )
-                .copy(offsetReset = Latest, extraProperties = Map("auto.offset.reset" -> "earliest")),
-              handler
-            )
-            .flatMap { _ => queue.take }
-            .timeout(10.seconds)
+                       .make(
+                         configFor(
+                           kafka,
+                           group,
+                           topic,
+                           mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
+                         )
+                           .copy(
+                             offsetReset = Latest,                 // "default"
+                             extraProperties = Map("auto.offset.reset" -> "earliest"), // overriden by "custom properties"
+                             rewindUncommittedOffsetsBy = 1.millis // non-zero so that we can check that it's taken into account
+                           ),
+                         handler
+                       )
+                       .flatMap { _ => queue.take }
+                       .timeout(10.seconds)
         } yield {
           message.get must (beRecordWithKey("foo") and beRecordWithValue("bar"))
         }
