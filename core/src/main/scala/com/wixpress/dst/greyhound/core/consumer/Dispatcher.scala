@@ -56,7 +56,7 @@ object Dispatcher {
     maxParallelism: Int = 1,
     updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
     currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]] = _ => ZIO.succeed(Map.empty),
-    gapsSizeLimit: Int = 256,
+    gapsSizeLimit: Int = 500,
     init: Promise[Nothing, Unit]
   )(implicit trace: Trace): UIO[Dispatcher[R]] =
     for {
