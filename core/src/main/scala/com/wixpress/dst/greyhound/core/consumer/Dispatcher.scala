@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import java.util.concurrent.TimeUnit
-import com.wixpress.dst.greyhound.core.consumer.Dispatcher.Record
+import com.wixpress.dst.greyhound.core.consumer.Dispatcher.{Record, Records}
 import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric._
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult._
@@ -20,6 +20,8 @@ import java.lang.System.currentTimeMillis
 trait Dispatcher[-R] {
   def submit(record: Record): URIO[R with Env, SubmitResult]
 
+  def submitBatch(records: Records): URIO[R with Env, SubmitResult]
+
   def resumeablePartitions(paused: Set[TopicPartition]): URIO[Any, Set[TopicPartition]]
 
   def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit]
@@ -36,7 +38,8 @@ trait Dispatcher[-R] {
 }
 
 object Dispatcher {
-  type Record = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
+  type Record  = ConsumerRecord[Chunk[Byte], Chunk[Byte]]
+  type Records = Seq[Record]
 
   def make[R](
     group: Group,
@@ -48,12 +51,20 @@ object Dispatcher {
     delayResumeOfPausedPartition: Long = 0,
     consumerAttributes: Map[String, String] = Map.empty,
     workersShutdownRef: Ref[Map[TopicPartition, ShutdownPromise]],
-    startPaused: Boolean = false
+    startPaused: Boolean = false,
+    consumeInParallel: Boolean = false,
+    maxParallelism: Int = 1,
+    updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
+    currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]] = _ => ZIO.succeed(Map.empty),
+    gapsSizeLimit: Int = 500,
+    init: Promise[Nothing, Unit]
   )(implicit trace: Trace): UIO[Dispatcher[R]] =
     for {
-      p       <- Promise.make[Nothing, Unit]
-      state   <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
-      workers <- Ref.make(Map.empty[TopicPartition, Worker])
+      p         <- Promise.make[Nothing, Unit]
+      state     <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
+      initState <-
+        Ref.make[DispatcherInitState](if (consumeInParallel) DispatcherInitState.NotInitialized else DispatcherInitState.Initialized)
+      workers   <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
         for {
@@ -62,6 +73,28 @@ object Dispatcher {
           worker    <- workerFor(partition, record.offset)
           submitted <- worker.submit(record)
         } yield if (submitted) Submitted else Rejected
+
+      override def submitBatch(records: Records): URIO[R with Env, SubmitResult] =
+        for {
+          _                <- report(SubmittingRecordBatch(group, clientId, records.size, records, consumerAttributes))
+          currentInitState <- initState.get
+          _                <- currentInitState match {
+                                case DispatcherInitState.NotInitialized => init.await *> initState.set(DispatcherInitState.Initialized)
+                                case _                                  => ZIO.unit
+                              }
+          allSamePartition  = records.map(r => RecordTopicPartition(r)).distinct.size == 1
+          submitResult     <- if (allSamePartition) {
+                                val partition = RecordTopicPartition(records.head)
+                                for {
+                                  worker      <- workerFor(partition, records.head.offset)
+                                  currentGaps <- currentGaps(Set(partition))
+                                  submitted   <- worker.submitBatch(records, currentGaps)
+                                } yield submitted
+                              } else ZIO.succeed(SubmitBatchResult(success = false, Some(records.minBy(_.offset))))
+
+        } yield
+          if (allSamePartition && submitResult.success) Submitted
+          else RejectedBatch(submitResult.firstRejected.getOrElse(records.minBy(_.offset)))
 
       override def resumeablePartitions(paused: Set[TopicPartition]): URIO[Any, Set[TopicPartition]] =
         workers.get.flatMap { workers =>
@@ -93,13 +126,10 @@ object Dispatcher {
       override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] =
         workers
           .modify { workers =>
-            partitions.foldLeft((List.empty[(TopicPartition, Worker)], workers)) {
-              case ((revoked, remaining), partition) =>
-                remaining.get(partition) match {
-                  case Some(worker) => ((partition, worker) :: revoked, remaining - partition)
-                  case None         => (revoked, remaining)
-                }
-            }
+            val revoked   = workers.filterKeys(partitions.contains)
+            val remaining = workers -- partitions
+
+            (revoked, remaining)
           }
           .flatMap(shutdownWorkers)
 
@@ -133,7 +163,21 @@ object Dispatcher {
             case None         =>
               for {
                 _               <- report(StartingWorker(group, clientId, partition, offset, consumerAttributes))
-                worker          <- Worker.make(state, handleWithMetrics, highWatermark, group, clientId, partition, drainTimeout, consumerAttributes)
+                worker          <- Worker.make(
+                                     state,
+                                     handleWithMetrics,
+                                     highWatermark,
+                                     group,
+                                     clientId,
+                                     partition,
+                                     drainTimeout,
+                                     consumerAttributes,
+                                     consumeInParallel,
+                                     maxParallelism,
+                                     gapsSizeLimit,
+                                     updateBatch,
+                                     currentGaps
+                                   )
                 _               <- workers.update(_ + (partition -> worker))
                 shutdownPromise <- AwaitShutdown.make
                 _               <- workersShutdownRef.update(_.updated(partition, shutdownPromise))
@@ -152,15 +196,18 @@ object Dispatcher {
         ZIO
           .foreachParDiscard(workers) {
             case (partition, worker) =>
-              report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes)) *>
-                workersShutdownRef.get.flatMap(_.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)) *>
-                worker.shutdown
-                  .catchSomeCause {
-                    case _: Cause[InterruptedException] => ZIO.unit
-                  } // happens on revoke - must not fail on it so we have visibility to worker completion
-                  .timed
-                  .map(_._1)
-                  .flatMap(duration => report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes)))
+              for {
+                _                  <- report(StoppingWorker(group, clientId, partition, drainTimeout.toMillis, consumerAttributes))
+                workersShutdownMap <- workersShutdownRef.get
+                _                  <- workersShutdownMap.get(partition).fold(ZIO.unit)(promise => promise.onShutdown.shuttingDown)
+                duration           <- worker.shutdown
+                                        .catchSomeCause {
+                                          case _: Cause[InterruptedException] => ZIO.unit
+                                        } // happens on revoke - must not fail on it so we have visibility to worker completion
+                                        .timed
+                                        .map(_._1)
+                _                  <- report(WorkerStopped(group, clientId, partition, duration.toMillis, consumerAttributes))
+              } yield ()
           }
           .resurrect
           .ignore
@@ -178,10 +225,22 @@ object Dispatcher {
 
   }
 
+  sealed trait DispatcherInitState
+
+  object DispatcherInitState {
+
+    case object NotInitialized extends DispatcherInitState
+
+    case object Initialized extends DispatcherInitState
+
+  }
+
   case class Task(record: Record, complete: UIO[Unit])
 
   trait Worker {
     def submit(record: Record): URIO[Any, Boolean]
+
+    def submitBatch(records: Records, currentGaps: Map[TopicPartition, OffsetAndGaps]): URIO[Env, SubmitBatchResult]
 
     def expose: URIO[Any, WorkerExposedState]
 
@@ -201,14 +260,33 @@ object Dispatcher {
       clientId: ClientId,
       partition: TopicPartition,
       drainTimeout: Duration,
-      consumerAttributes: Map[String, String]
+      consumerAttributes: Map[String, String],
+      consumeInParallel: Boolean,
+      maxParallelism: Int,
+      gapsSizeLimit: Int,
+      updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
+      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]]
     )(implicit trace: Trace): URIO[R with Env, Worker] = for {
       queue         <- Queue.dropping[Record](capacity)
       internalState <- TRef.make(WorkerInternalState.empty).commit
       fiber         <-
       (reportWorkerRunningInInterval(every = 60.seconds, internalState)(partition, group, clientId).forkDaemon *>
-        pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes)
-          .repeatWhile(_ == true)).forkDaemon
+        (if (consumeInParallel)
+           pollBatch(
+             status,
+             internalState,
+             handle,
+             queue,
+             group,
+             clientId,
+             partition,
+             consumerAttributes,
+             maxParallelism,
+             updateBatch,
+             currentGaps
+           )
+         else pollOnce(status, internalState, handle, queue, group, clientId, partition, consumerAttributes))
+          .repeatWhile(_ == true)).interruptible.forkDaemon
     } yield new Worker {
       override def submit(record: Record): URIO[Any, Boolean] =
         queue
@@ -222,6 +300,15 @@ object Dispatcher {
                 )
             }
           )
+
+      override def submitBatch(
+        records: Records,
+        currentGaps: Map[TopicPartition, OffsetAndGaps]
+      ): URIO[Env, SubmitBatchResult] = {
+        val gapsSize = OffsetAndGaps.gapsSize(currentGaps)
+        if (gapsSize + records.size <= gapsSizeLimit) submitBatchToQueue(queue, records, internalState)
+        else submitBatchPartially(group, clientId, partition, consumerAttributes, gapsSizeLimit, queue, internalState, records, gapsSize)
+      }
 
       override def expose: URIO[Any, WorkerExposedState] = (queue.size zip internalState.get.commit)
         .flatMap {
@@ -240,7 +327,7 @@ object Dispatcher {
       override def shutdown: URIO[Any, Unit] =
         for {
           _       <- internalState.update(_.shutdown).commit
-          timeout <- fiber.join.ignore.disconnect.timeout(drainTimeout)
+          timeout <- fiber.join.ignore.interruptible.timeout(drainTimeout)
           _       <- ZIO.when(timeout.isEmpty)(fiber.interruptFork)
         } yield ()
 
@@ -249,6 +336,61 @@ object Dispatcher {
       override def waitForCurrentExecutionCompletion: UIO[Unit] =
         internalState.get.flatMap(state => STM.check(state.currentExecutionStarted.isEmpty)).commit
     }
+
+    private def submitBatchPartially[R](
+      group: Group,
+      clientId: ClientId,
+      partition: TopicPartition,
+      consumerAttributes: Map[ClientId, ClientId],
+      gapsSizeLimit: Int,
+      queue: Queue[Record],
+      internalState: TRef[WorkerInternalState],
+      records: Records,
+      gapsSize: Int
+    ) = {
+      if (gapsSize == gapsSizeLimit) { // no records can be submitted
+        report(
+          DroppedRecordsDueToGapsSizeLimit(records.size, records.minBy(_.offset).offset, group, partition, clientId, consumerAttributes)
+        ) *> ZIO.succeed(SubmitBatchResult(success = false, firstRejected = Some(records.minBy(_.offset))))
+      } else {
+        val sortedRecords     = records.sortBy(_.offset)
+        val recordsToSubmit   = sortedRecords.take(gapsSizeLimit - gapsSize)
+        val firstNotSubmitted =
+          sortedRecords
+            .take(gapsSizeLimit - gapsSize + 1)
+            .last // flow control in the calling function ensures this is safe, since records.size > gapsSizeLimit - gapsSize
+        report(
+          DroppedRecordsDueToGapsSizeLimit(recordsToSubmit.size, firstNotSubmitted.offset, group, partition, clientId, consumerAttributes)
+        ) *>
+          submitBatchToQueue(queue, recordsToSubmit, internalState).flatMap {
+            case SubmitBatchResult(true, _)              =>
+              ZIO.succeed(SubmitBatchResult(success = false, firstRejected = Some(firstNotSubmitted)))
+            case SubmitBatchResult(false, firstRejected) =>
+              ZIO.succeed(SubmitBatchResult(success = false, firstRejected = firstRejected))
+          }
+      }
+    }
+
+    private def submitBatchToQueue[R](
+      queue: Queue[Record],
+      records: Records,
+      internalState: TRef[WorkerInternalState]
+    ): URIO[Any, SubmitBatchResult] =
+      queue
+        .offerAll(records)
+        .tap(notInserted =>
+          ZIO.when(notInserted.nonEmpty) {
+            Clock
+              .currentTime(TimeUnit.MILLISECONDS)
+              .flatMap(now =>
+                internalState.update(s => if (s.reachedHighWatermarkSince.nonEmpty) s else s.reachedHighWatermark(now)).commit
+              )
+          }
+        )
+        .map(rejected => {
+          val isSuccess = rejected.isEmpty
+          SubmitBatchResult(isSuccess, if (isSuccess) None else Some(rejected.minBy(_.offset)))
+        })
 
     private def pollOnce[R](
       state: Ref[DispatcherState],
@@ -265,15 +407,61 @@ object Dispatcher {
           case DispatcherState.Running        =>
             queue.poll.flatMap {
               case Some(record) =>
-                report(TookRecordFromQueue(record, group, clientId, consumerAttributes)) *>
-                  ZIO
-                    .attempt(currentTimeMillis())
-                    .flatMap(t => internalState.updateAndGet(_.startedWith(t)).commit)
-                    .tapBoth(
-                      e => report(FailToUpdateCurrentExecutionStarted(record, group, clientId, consumerAttributes, e)),
-                      t => report(CurrentExecutionStartedEvent(partition, group, clientId, t.currentExecutionStarted))
-                    ) *> handle(record).interruptible.ignore *> isActive(internalState)
-              case None         => isActive(internalState).delay(5.millis)
+                for {
+                  _                  <- report(TookRecordFromQueue(record, group, clientId, consumerAttributes))
+                  clock              <- ZIO.clock
+                  executionStartTime <- clock.currentTime(TimeUnit.MILLISECONDS)
+                  _                  <- internalState
+                                          .updateAndGet(_.startedWith(executionStartTime))
+                                          .commit
+                  _                  <- report(CurrentExecutionStartedEvent(partition, group, clientId, Some(executionStartTime)))
+                  _                  <- handle(record).interruptible.ignore
+                  active             <- isActive(internalState)
+                } yield active
+              case None         =>
+                isActive(internalState).delay(5.millis)
+            }
+          case DispatcherState.Paused(resume) =>
+            for {
+              _      <- report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes))
+              _      <- resume.await.timeout(30.seconds)
+              active <- isActive(internalState)
+            } yield active
+          case DispatcherState.ShuttingDown   =>
+            ZIO.succeed(false)
+        }
+
+    private def pollBatch[R](
+      state: Ref[DispatcherState],
+      internalState: TRef[WorkerInternalState],
+      handle: Record => URIO[R, Any],
+      queue: Queue[Record],
+      group: Group,
+      clientId: ClientId,
+      partition: TopicPartition,
+      consumerAttributes: Map[String, String],
+      maxParallelism: Int,
+      updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit],
+      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]]
+    )(implicit trace: Trace): ZIO[R with GreyhoundMetrics, Any, Boolean] =
+      internalState.update(s => s.cleared).commit *>
+        state.get.flatMap {
+          case DispatcherState.Running        =>
+            queue.takeAll.flatMap {
+              case records if records.nonEmpty =>
+                handleBatch(
+                  records,
+                  internalState,
+                  handle,
+                  group,
+                  clientId,
+                  partition,
+                  consumerAttributes,
+                  maxParallelism,
+                  updateBatch,
+                  currentGaps
+                )
+              case _                           => isActive(internalState).delay(5.millis)
             }
           case DispatcherState.Paused(resume) =>
             report(WorkerWaitingForResume(group, clientId, partition, consumerAttributes)) *> resume.await.timeout(30.seconds) *>
@@ -281,6 +469,63 @@ object Dispatcher {
           case DispatcherState.ShuttingDown   =>
             ZIO.succeed(false)
         }
+    private def handleBatch[R](
+      records: Chunk[Record],
+      internalState: TRef[WorkerInternalState],
+      handle: Record => URIO[R, Any],
+      group: Group,
+      clientId: ClientId,
+      partition: TopicPartition,
+      consumerAttributes: Map[ClientId, ClientId],
+      maxParallelism: Int,
+      updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit],
+      currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]]
+    ): ZIO[R with GreyhoundMetrics, Throwable, Boolean] =
+      for {
+        _                <- report(TookAllRecordsFromQueue(records.size, records, group, clientId, consumerAttributes))
+        _                <- ZIO
+                              .attempt(currentTimeMillis())
+                              .flatMap(t => internalState.updateAndGet(_.startedWith(t)).commit)
+                              .tapBoth(
+                                e => report(FailToUpdateParallelCurrentExecutionStarted(records.size, group, clientId, consumerAttributes, e)),
+                                t => report(CurrentExecutionStartedEvent(partition, group, clientId, t.currentExecutionStarted))
+                              )
+        groupedRecords    = groupRecordsForParallelHandling(records, maxParallelism)
+        latestCommitGaps <- currentGaps(records.map(r => TopicPartition(r.topic, r.partition)).toSet)
+        _                <- report(InvokingHandlersInParallel(partition, numHandlers = Math.min(groupedRecords.size, maxParallelism))) *>
+                              ZIO
+                                .foreachParDiscard(groupedRecords)(sameKeyRecords =>
+                                  ZIO.foreach(sameKeyRecords) { record =>
+                                    if (shouldRecordBeHandled(record, latestCommitGaps)) {
+                                      handle(record).interruptible.ignore *> updateBatch(sameKeyRecords).interruptible
+                                    } else
+                                      report(SkippedPreviouslyHandledRecord(record, group, clientId, consumerAttributes))
+
+                                  }
+                                )
+                                .withParallelism(maxParallelism)
+        res              <- isActive(internalState)
+      } yield res
+  }
+
+  private def shouldRecordBeHandled(record: Record, gaps: Map[TopicPartition, OffsetAndGaps]): Boolean = {
+    gaps.get(TopicPartition(record.topic, record.partition)) match {
+      case Some(offsetAndGapsForPartition) if offsetAndGapsForPartition.gaps.nonEmpty =>
+        record.offset > offsetAndGapsForPartition.offset || offsetAndGapsForPartition.gaps.exists(_.contains(record.offset))
+      case _                                                                          => true
+    }
+  }
+
+  private def groupRecordsForParallelHandling(records: Chunk[Record], maxParallelism: Int): Iterable[Chunk[Record]] = {
+    val recordsByKey      = records.groupBy(_.key)
+    val withKeyGroups     = recordsByKey.collect { case (Some(_), records) => records }
+    val unusedParallelism = maxParallelism - withKeyGroups.size
+    val noKeyGroups       = recordsByKey.get(None) match {
+      case Some(records) =>
+        if (unusedParallelism > 0) records.grouped(Math.max(records.size / unusedParallelism, 1)).toIterable else Iterable(records)
+      case None          => Chunk.empty
+    }
+    withKeyGroups ++ noKeyGroups
   }
 
   private def reportWorkerRunningInInterval(
@@ -331,7 +576,11 @@ object SubmitResult {
 
   case object Rejected extends SubmitResult
 
+  case class RejectedBatch(firstRejected: Record) extends SubmitResult
+
 }
+
+case class SubmitBatchResult(success: Boolean, firstRejected: Option[Record]) extends SubmitResult
 
 sealed trait DispatcherMetric extends GreyhoundMetric
 
@@ -357,6 +606,14 @@ object DispatcherMetric {
   case class SubmittingRecord[K, V](group: Group, clientId: ClientId, record: ConsumerRecord[K, V], attributes: Map[String, String])
       extends DispatcherMetric
 
+  case class SubmittingRecordBatch[K, V](
+    group: Group,
+    clientId: ClientId,
+    numRecords: Int,
+    records: Records,
+    attributes: Map[String, String]
+  ) extends DispatcherMetric
+
   case class HandlingRecord[K, V](
     group: Group,
     clientId: ClientId,
@@ -374,8 +631,32 @@ object DispatcherMetric {
   ) extends DispatcherMetric
 
   case class TookRecordFromQueue(record: Record, group: Group, clientId: ClientId, attributes: Map[String, String]) extends DispatcherMetric
+  case class TookAllRecordsFromQueue(
+    numRecords: Int,
+    records: Chunk[Record],
+    group: Group,
+    clientId: ClientId,
+    attributes: Map[String, String]
+  ) extends DispatcherMetric
+
+  case class DroppedRecordsDueToGapsSizeLimit(
+    numRecords: Int,
+    firstDroppedOffset: Long,
+    group: Group,
+    partition: TopicPartition,
+    clientId: ClientId,
+    attributes: Map[String, String]
+  ) extends DispatcherMetric
+
   case class FailToUpdateCurrentExecutionStarted(
     record: Record,
+    group: Group,
+    clientId: ClientId,
+    attributes: Map[String, String],
+    e: Throwable
+  ) extends DispatcherMetric
+  case class FailToUpdateParallelCurrentExecutionStarted(
+    numRecords: Int,
     group: Group,
     clientId: ClientId,
     attributes: Map[String, String],
@@ -391,6 +672,11 @@ object DispatcherMetric {
     clientId: ClientId,
     currentExecutionStarted: Option[Long]
   ) extends DispatcherMetric
+
+  case class InvokingHandlersInParallel(partition: TopicPartition, numHandlers: Int) extends DispatcherMetric
+
+  case class SkippedPreviouslyHandledRecord(record: Record, group: Group, clientId: ClientId, attributes: Map[String, String])
+      extends DispatcherMetric
 
 }
 
