@@ -167,6 +167,8 @@ case class OffsetAndGaps(offset: Offset, gaps: Seq[Gap], committable: Boolean = 
     val plainGapsString = s"${offset.toString}${LAST_HANDLED_OFFSET_SEPARATOR}${gaps.sortBy(_.start).mkString(GAPS_STRING_SEPARATOR)}"
     Base64.getEncoder.encodeToString(GzipCompression.compress(plainGapsString.getBytes()))
   }
+
+  def plainGapsString: String = s"${offset.toString}${LAST_HANDLED_OFFSET_SEPARATOR}${gaps.sortBy(_.start).mkString(GAPS_STRING_SEPARATOR)}"
 }
 
 object OffsetAndGaps {
