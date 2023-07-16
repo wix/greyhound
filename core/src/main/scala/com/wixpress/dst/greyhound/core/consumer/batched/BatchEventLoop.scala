@@ -99,22 +99,21 @@ private[greyhound] class BatchEventLoopImpl[R](
         )
       )
 
-  private def pollAndHandle()(implicit trace: Trace): URIO[R, Unit] = for {
-    _       <- pauseAndResume().provide(ZLayer.succeed(capturedR))
-    records <-
-      consumer
-        .poll(config.fetchTimeout)
-        .provide(ZLayer.succeed(capturedR))
-        .catchAll(_ => ZIO.succeed(Nil))
-        .flatMap(records => seekRequests.get.map(seeks => records.filterNot(record => seeks.keys.toSet.contains(record.topicPartition))))
-    _       <- handleRecords(records).timed
-                 .tap { case (duration, _) => report(FullBatchHandled(clientId, group, records.toSeq, duration, consumerAttributes)) }
+  private def pollAndHandle()(implicit trace: Trace): URIO[R with GreyhoundMetrics, Unit] = for {
+    _          <- pauseAndResume().ignore
+    allRecords <- consumer
+                    .poll(config.fetchTimeout)
+                    .catchAll(_ => ZIO.succeed(Nil))
+    seeks      <- seekRequests.get.map(_.keySet)
+    records     = allRecords.filterNot(record => seeks.contains(record.topicPartition))
+    _          <- handleRecords(records).timed
+                    .tap { case (duration, _) => report(FullBatchHandled(clientId, group, records.toSeq, duration, consumerAttributes)) }
   } yield ()
 
   private def pauseAndResume()(implicit trace: Trace) = for {
     pr <- elState.shouldPauseAndResume()
-    _  <- ZIO.when(pr.toPause.nonEmpty)((consumer.pause(pr.toPause) *> elState.partitionsPaused(pr.toPause)).ignore)
-    _  <- ZIO.when(pr.toResume.nonEmpty)((consumer.resume(pr.toResume) *> elState.partitionsResumed(pr.toResume)).ignore)
+    _  <- ZIO.when(pr.toPause.nonEmpty)(consumer.pause(pr.toPause) *> elState.partitionsPaused(pr.toPause))
+    _  <- ZIO.when(pr.toResume.nonEmpty)(consumer.resume(pr.toResume) *> elState.partitionsResumed(pr.toResume))
   } yield ()
 
   private def handleRecords(polled: Records)(implicit trace: Trace): ZIO[R, Nothing, Unit] = {
@@ -512,10 +511,10 @@ private[greyhound] class BatchEventLoopState(
     partitionsPaused(pauseResume.toPause) *> partitionsResumed(pauseResume.toResume)
 
   def shouldPauseAndResume[R]()(implicit trace: Trace): URIO[R, PauseResume] = for {
-    pending <- allPending
+    pending <- allPending.map(_.keySet)
     paused  <- pausedPartitions
-    toPause  = pending.keySet -- paused
-    toResume = paused -- pending.keySet
+    toPause  = pending -- paused
+    toResume = paused -- pending
   } yield PauseResume(toPause, toResume)
 
   def appendPending(records: Consumer.Records)(implicit trace: Trace): UIO[Unit] = {
