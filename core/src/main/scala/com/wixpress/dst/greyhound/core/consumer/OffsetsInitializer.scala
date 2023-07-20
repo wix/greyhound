@@ -90,11 +90,13 @@ class OffsetsInitializer(
   }
 
   private def reportSkippedGaps(currentCommittedOffsets: Map[TopicPartition, Option[OffsetAndMetadata]]) = {
-    val skippedGaps = currentCommittedOffsets
+    val committedOffsetsAndGaps = currentCommittedOffsets
       .collect { case (tp, Some(om)) => tp -> om }
       .map(tpom => tpom._1 -> OffsetsAndGaps.parseGapsString(tpom._2.metadata))
-      .collect { case (tp, Some(gaps)) => tp -> gaps }
-    reporter(SkippedGapsOnInitialization(clientId, group, skippedGaps))
+      .collect { case (tp, Some(offsetAndGaps)) => tp -> offsetAndGaps }
+    val skippedGaps             = committedOffsetsAndGaps.collect { case (tp, offsetAndGaps) if offsetAndGaps.gaps.nonEmpty => tp -> offsetAndGaps }
+
+    reporter(SkippedGapsOnInitialization(clientId, group, skippedGaps, committedOffsetsAndGaps))
   }
 
   private def fetchEndOffsets(seekToEndPartitions: Set[TopicPartition], timeout: Duration) = {

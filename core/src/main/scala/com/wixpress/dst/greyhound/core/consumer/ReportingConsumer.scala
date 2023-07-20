@@ -414,6 +414,11 @@ object ConsumerMetric {
 
   case class ClosedConsumer(group: Group, clientId: ClientId, result: MetricResult[Throwable, Unit]) extends ConsumerMetric
 
-  case class SkippedGapsOnInitialization(clientId: ClientId, group: Group, gaps: Map[TopicPartition, OffsetAndGaps]) extends ConsumerMetric
+  case class SkippedGapsOnInitialization(
+    clientId: ClientId,
+    group: Group,
+    skippedGaps: Map[TopicPartition, OffsetAndGaps],
+    currentCommittedOffsetsAndGaps: Map[TopicPartition, OffsetAndGaps]
+  ) extends ConsumerMetric
 
 }
