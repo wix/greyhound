@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.Clock
-import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed, SkippedGapsOnInitialization}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed, FoundGapsOnInitialization, SkippedGapsOnInitialization}
 import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, OffsetAndMetadata, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
 import zio.{URIO, ZIO}
@@ -82,8 +82,11 @@ class OffsetsInitializer(
     val toPause                             = seekTo.collect { case (k, SeekTo.Pause) => k }
     val seekToEndOffsets                    = fetchEndOffsets(seekToEndPartitions, timeout).mapValues(OffsetAndMetadata.apply)
     val gapsSmallestOffsets                 = OffsetsAndGaps.gapsSmallestOffsets(currentCommittedOffsets)
-    val seekToGapsOffsets                   = if (parallelConsumer) gapsSmallestOffsets else Map.empty
-    val toOffsets                           = seekToOffsets ++ seekToEndOffsets ++ seekToGapsOffsets
+
+    if (gapsSmallestOffsets.nonEmpty) reporter(FoundGapsOnInitialization(clientId, group, gapsSmallestOffsets))
+
+    val seekToGapsOffsets = if (parallelConsumer) gapsSmallestOffsets else Map.empty
+    val toOffsets         = seekToOffsets ++ seekToEndOffsets ++ seekToGapsOffsets
 
     if (!parallelConsumer && gapsSmallestOffsets.nonEmpty) reportSkippedGaps(currentCommittedOffsets)
     PartitionActions(offsetSeeks = toOffsets, partitionsToPause = toPause.toSet)
