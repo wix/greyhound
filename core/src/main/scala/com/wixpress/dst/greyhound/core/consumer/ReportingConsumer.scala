@@ -421,4 +421,10 @@ object ConsumerMetric {
     currentCommittedOffsetsAndGaps: Map[TopicPartition, OffsetAndGaps]
   ) extends ConsumerMetric
 
+  case class FoundGapsOnInitialization(
+    clientId: ClientId,
+    group: Group,
+    gapsSmallestOffsets: Map[TopicPartition, OffsetAndMetadata]
+  ) extends ConsumerMetric
+
 }
