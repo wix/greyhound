@@ -497,10 +497,9 @@ object Dispatcher {
                                 .foreachParDiscard(groupedRecords)(sameKeyRecords =>
                                   ZIO.foreach(sameKeyRecords) { record =>
                                     if (shouldRecordBeHandled(record, latestCommitGaps)) {
-                                      handle(record).interruptible.ignore *> updateBatch(sameKeyRecords).interruptible
+                                      handle(record).interruptible.ignore *> updateBatch(Chunk(record)).interruptible
                                     } else
-                                      report(SkippedPreviouslyHandledRecord(record, group, clientId, consumerAttributes))
-
+                                      report(SkippedPreviouslyHandledRecord(record, group, clientId))
                                   }
                                 )
                                 .withParallelism(maxParallelism)
@@ -675,8 +674,11 @@ object DispatcherMetric {
 
   case class InvokingHandlersInParallel(partition: TopicPartition, numHandlers: Int) extends DispatcherMetric
 
-  case class SkippedPreviouslyHandledRecord(record: Record, group: Group, clientId: ClientId, attributes: Map[String, String])
-      extends DispatcherMetric
+  case class SkippedPreviouslyHandledRecord(
+    record: Record,
+    group: Group,
+    clientId: ClientId
+  ) extends DispatcherMetric
 
 }
 
