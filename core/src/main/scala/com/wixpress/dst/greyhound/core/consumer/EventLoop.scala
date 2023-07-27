@@ -222,8 +222,10 @@ object EventLoop {
           } yield delayedRebalanceEffect
         }
 
-        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
-          partitionsAssigned.succeed(partitions)
+        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
+          implicit trace: Trace
+        ): UIO[DelayedRebalanceEffect] =
+          partitionsAssigned.succeed(partitions).as(DelayedRebalanceEffect.unit)
       }
   }
 
