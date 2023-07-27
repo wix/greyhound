@@ -289,6 +289,7 @@ object Consumer {
                 rebalanceListener.onPartitionsAssigned(consumer, assigned)
               )
               .getOrThrowFiberFailure()
+              .run()
           }
         }
 

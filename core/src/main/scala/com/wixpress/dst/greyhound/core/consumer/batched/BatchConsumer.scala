@@ -91,12 +91,12 @@ object BatchConsumer {
 
                                  override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
                                    implicit trace: Trace
-                                 ): URIO[R1, Any] =
+                                 ): URIO[R1, DelayedRebalanceEffect] =
                                    for {
                                      allAssigned <- assigned.updateAndGet(_ => partitions)
                                      _           <- consumerSubscriptionRef.set(subscription)
                                      _           <- promise.succeed(allAssigned)
-                                   } yield ()
+                                   } yield DelayedRebalanceEffect.unit
                                }
         _                 <- subscribe[R1](subscription, rebalanceListener)(consumer)
         resubscribeTimeout = config.resubscribeTimeout
@@ -157,8 +157,10 @@ object BatchConsumer {
       ): URIO[Any, DelayedRebalanceEffect] =
         assignments.update(_ -- partitions).as(DelayedRebalanceEffect.unit)
 
-      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): URIO[Any, Any] =
-        assignments.update(_ ++ partitions)
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
+        implicit trace: Trace
+      ): URIO[Any, DelayedRebalanceEffect] =
+        assignments.update(_ ++ partitions).as(DelayedRebalanceEffect.unit)
     }
   }
 }
