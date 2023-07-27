@@ -243,8 +243,8 @@ object BatchEventLoop {
           state.partitionsRevoked(partitions).as(DelayedRebalanceEffect.unit)
         }
 
-        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
-          partitionsAssigned.succeed(())
+        override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[DelayedRebalanceEffect] =
+          partitionsAssigned.succeed(()).as(DelayedRebalanceEffect.unit)
       }
   }
 
