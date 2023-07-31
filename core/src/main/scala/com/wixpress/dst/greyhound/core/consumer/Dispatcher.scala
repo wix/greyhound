@@ -510,7 +510,7 @@ object Dispatcher {
   private def shouldRecordBeHandled(record: Record, gaps: Map[TopicPartition, OffsetAndGaps]): Boolean = {
     gaps.get(TopicPartition(record.topic, record.partition)) match {
       case Some(offsetAndGapsForPartition) if offsetAndGapsForPartition.gaps.nonEmpty =>
-        record.offset > offsetAndGapsForPartition.offset || offsetAndGapsForPartition.gaps.exists(_.contains(record.offset))
+        record.offset >= offsetAndGapsForPartition.offset || offsetAndGapsForPartition.gaps.exists(_.contains(record.offset))
       case _                                                                          => true
     }
   }
