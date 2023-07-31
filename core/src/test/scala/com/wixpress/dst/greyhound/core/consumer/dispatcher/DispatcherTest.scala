@@ -5,7 +5,7 @@ import com.wixpress.dst.greyhound.core.consumer.DispatcherMetric.RecordHandled
 import com.wixpress.dst.greyhound.core.consumer.RecordConsumer.Env
 import com.wixpress.dst.greyhound.core.consumer.SubmitResult.Rejected
 import com.wixpress.dst.greyhound.core.consumer.domain.ConsumerRecord
-import com.wixpress.dst.greyhound.core.consumer.{Dispatcher, SubmitResult}
+import com.wixpress.dst.greyhound.core.consumer.{Dispatcher, Gap, OffsetAndGaps, SubmitResult}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 import com.wixpress.dst.greyhound.core.testkit._
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
@@ -106,6 +106,36 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         _          <- TestClock.adjust(1.second)
         _          <- latch.await
       } yield ok) // if execution is not parallel, the latch will not be released
+    }
+
+  "consume records with parallel consumer when prior committed offset and gaps exist" in
+    new ctx {
+      val recordOffset2 = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 2L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
+      val recordOffset3 = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 3L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
+
+      val existingOffsetAndGap = Map(
+        TopicPartition(topic, partition) -> OffsetAndGaps(2L, Seq(Gap(0, 0)))
+      ) // simulate following situation: only offset 1 was consumed, so 0 is a gap
+
+      run(for {
+        handled <- Ref.make[Int](0)
+        ref     <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
+        init    <- getInit
+
+        dispatcher <- Dispatcher.make(
+                        "group",
+                        "clientId",
+                        _ => handled.update(_ + 1),
+                        lowWatermark,
+                        highWatermark,
+                        workersShutdownRef = ref,
+                        consumeInParallel = true,
+                        currentGaps = _ => ZIO.succeed(existingOffsetAndGap),
+                        init = init
+                      )
+        _          <- submitBatch(dispatcher, Seq(recordOffset2, recordOffset3))
+        numHandled <- handled.get
+      } yield numHandled must equalTo(2))
     }
 
   "reject records when high watermark is reached" in
