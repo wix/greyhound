@@ -333,7 +333,7 @@ object EventLoop {
       val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
       consumer
         .commitWithMetadata(offsetsAndMetadataToCommit)
-        .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndMetadata(offsetsAndMetadataToCommit))))
+        .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndGaps(committable))))
         .catchAll { t =>
           report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
         }
@@ -480,7 +480,7 @@ object EventLoopMetric {
     attributes: Map[String, String]
   ) extends EventLoopMetric
 
-  case class CommittedOffsetsAndMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]) extends EventLoopMetric
+  case class CommittedOffsetsAndGaps(offsetsAndGaps: Map[TopicPartition, OffsetAndGaps]) extends EventLoopMetric
 
   case class FailedToCommitOffsetsAndMetadata(t: Throwable, offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])
       extends EventLoopMetric
