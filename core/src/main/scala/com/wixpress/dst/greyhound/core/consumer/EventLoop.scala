@@ -213,7 +213,7 @@ object EventLoop {
           for {
             delayedRebalanceEffect <-
               if (useParallelConsumer)
-                initOffsetsAndGapsOnRebalance(partitions, consumer0, offsetsAndGaps).catchAll { t =>
+                initOffsetsAndGapsOnRebalance(partitions, consumer0, offsetsAndGaps, clientId, group).catchAll { t =>
                   report(FailedToUpdateGapsOnPartitionAssignment(partitions, t)).as(DelayedRebalanceEffect.unit)
                 }
               else DelayedRebalanceEffect.zioUnit
@@ -260,12 +260,19 @@ object EventLoop {
   private def initOffsetsAndGapsOnRebalance(
     partitions: Set[TopicPartition],
     consumer: Consumer,
-    offsetsAndGaps: OffsetsAndGaps
+    offsetsAndGaps: OffsetsAndGaps,
+    clientId: ClientId,
+    group: Group
   ): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
     ZIO.runtime[GreyhoundMetrics].map { rt =>
       DelayedRebalanceEffect {
         val committed = committedOffsetsAndGaps(consumer, partitions)
-        zio.Unsafe.unsafe { implicit s => rt.unsafe.run(offsetsAndGaps.init(committed)) }
+        zio.Unsafe.unsafe { implicit s =>
+          rt.unsafe.run(
+            offsetsAndGaps.init(committed) *>
+              report(InitializedOffsetsAndGaps(clientId, group, committed, consumer.config.consumerAttributes))
+          )
+        }
       }
     }
   }
@@ -458,9 +465,7 @@ object EventLoopMetric {
   case class CreatingPollOnceFiber(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
 
   case class AwaitingPartitionsAssignment(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
-
-  case class AwaitingOffsetsAndGapsInit(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
-
+  
   case class InitializedOffsetsAndGaps(
     clientId: ClientId,
     group: Group,
