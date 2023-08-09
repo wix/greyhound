@@ -46,6 +46,8 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
+  def committedOffsetsAndGaps(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, OffsetAndGaps]]
+
   def waitForCurrentRecordsCompletion: URIO[Any, Unit]
 
   def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Any, Map[TopicPartition, Offset]]
@@ -138,6 +140,15 @@ object RecordConsumer {
 
           override def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
             consumer.committedOffsets(partitions)
+
+          override def committedOffsetsAndGaps(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, OffsetAndGaps]] =
+            consumer
+              .committedOffsetsAndMetadata(partitions)
+              .map(
+                _.mapValues(om =>
+                  OffsetsAndGaps.parseGapsString(om.metadata).fold(OffsetAndGaps(om.offset - 1, committable = false))(identity)
+                )
+              )
 
           override def waitForCurrentRecordsCompletion: URIO[Any, Unit] = eventLoop.waitForCurrentRecordsCompletion
 
