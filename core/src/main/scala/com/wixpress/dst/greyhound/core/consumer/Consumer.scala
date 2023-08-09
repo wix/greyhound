@@ -47,6 +47,8 @@ trait Consumer {
 
   def commitOnRebalance(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect]
 
+  def committedOffsetsAndMetadataOnRebalance(partitions: Set[TopicPartition])(implicit trace: Trace): Map[TopicPartition, OffsetAndMetadata]
+
   def commitWithMetadataOnRebalance(offsets: Map[TopicPartition, OffsetAndMetadata])(
     implicit trace: Trace
   ): RIO[GreyhoundMetrics, DelayedRebalanceEffect]
@@ -185,6 +187,20 @@ object Consumer {
         // we can't actually call commit here, as it needs to be called from the same
         // thread, that triggered poll(), so we return the commit action as thunk
         ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
+      }
+
+      override def committedOffsetsAndMetadataOnRebalance(partitions: Set[TopicPartition])(
+        implicit trace: Trace
+      ): Map[TopicPartition, OffsetAndMetadata] = {
+        // unsafe function - should only be called from a RebalanceListener
+        consumer
+          .committed(kafkaPartitions(partitions))
+          .asScala
+          .collect {
+            case (tp: KafkaTopicPartition, om: KafkaOffsetAndMetadata) =>
+              (TopicPartition(tp), OffsetAndMetadata(om.offset, om.metadata))
+          }
+          .toMap
       }
 
       override def commitWithMetadataOnRebalance(
