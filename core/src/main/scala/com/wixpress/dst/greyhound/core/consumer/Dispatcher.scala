@@ -56,14 +56,11 @@ object Dispatcher {
     maxParallelism: Int = 1,
     updateBatch: Chunk[Record] => URIO[GreyhoundMetrics, Unit] = _ => ZIO.unit,
     currentGaps: Set[TopicPartition] => ZIO[GreyhoundMetrics, Nothing, Map[TopicPartition, OffsetAndGaps]] = _ => ZIO.succeed(Map.empty),
-    gapsSizeLimit: Int = 500,
-    init: Promise[Nothing, Unit]
+    gapsSizeLimit: Int = 500
   )(implicit trace: Trace): UIO[Dispatcher[R]] =
     for {
       p         <- Promise.make[Nothing, Unit]
       state     <- Ref.make[DispatcherState](if (startPaused) DispatcherState.Paused(p) else DispatcherState.Running)
-      initState <-
-        Ref.make[DispatcherInitState](if (consumeInParallel) DispatcherInitState.NotInitialized else DispatcherInitState.Initialized)
       workers   <- Ref.make(Map.empty[TopicPartition, Worker])
     } yield new Dispatcher[R] {
       override def submit(record: Record): URIO[R with Env, SubmitResult] =
@@ -77,11 +74,6 @@ object Dispatcher {
       override def submitBatch(records: Records): URIO[R with Env, SubmitResult] =
         for {
           _                <- report(SubmittingRecordBatch(group, clientId, records.size, records, consumerAttributes))
-          currentInitState <- initState.get
-          _                <- currentInitState match {
-                                case DispatcherInitState.NotInitialized => init.await *> initState.set(DispatcherInitState.Initialized)
-                                case _                                  => ZIO.unit
-                              }
           allSamePartition  = records.map(r => RecordTopicPartition(r)).distinct.size == 1
           submitResult     <- if (allSamePartition) {
                                 val partition = RecordTopicPartition(records.head)
@@ -222,16 +214,6 @@ object Dispatcher {
     case class Paused(resume: Promise[Nothing, Unit]) extends DispatcherState
 
     case object ShuttingDown extends DispatcherState
-
-  }
-
-  sealed trait DispatcherInitState
-
-  object DispatcherInitState {
-
-    case object NotInitialized extends DispatcherInitState
-
-    case object Initialized extends DispatcherInitState
 
   }
 
