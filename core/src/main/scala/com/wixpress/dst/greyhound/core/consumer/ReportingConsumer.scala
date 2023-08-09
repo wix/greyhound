@@ -50,7 +50,9 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
             }
             .map(_._2)).provideEnvironment(r)
 
-      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[DelayedRebalanceEffect] =
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
+        implicit trace: Trace
+      ): UIO[DelayedRebalanceEffect] =
         (report(PartitionsAssigned(clientId, group, partitions, config.consumerAttributes)) *>
           rebalanceListener.onPartitionsAssigned(consumer, partitions)).provideEnvironment(r)
     }
@@ -109,7 +111,12 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
       } else DelayedRebalanceEffect.zioUnit
     }
 
-  override def commitWithMetadataOnRebalance(offsets: Map[TopicPartition, OffsetAndMetadata]
+  override def committedOffsetsAndMetadataOnRebalance(partitions: NonEmptySet[TopicPartition])(
+    implicit trace: Trace
+  ): Map[TopicPartition, OffsetAndMetadata] = internal.committedOffsetsAndMetadataOnRebalance(partitions)
+
+  override def commitWithMetadataOnRebalance(
+    offsets: Map[TopicPartition, OffsetAndMetadata]
   )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
     ZIO.runtime[GreyhoundMetrics].flatMap { runtime =>
       if (offsets.nonEmpty) {

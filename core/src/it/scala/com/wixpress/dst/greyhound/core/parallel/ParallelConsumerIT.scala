@@ -155,30 +155,43 @@ class ParallelConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
       for {
         r                             <- getShared
         TestResources(kafka, producer) = r
-        topic                         <- kafka.createRandomTopic()
+        topic                         <- kafka.createRandomTopic(partitions = 1)
         group                         <- randomGroup
         cId                           <- clientId
+        tp                             = TopicPartition(topic, 0)
 
         regularConfig      = configFor(kafka, group, Set(topic))
         parallelConfig     = parallelConsumerConfig(kafka, topic, group, cId) // same group name for both consumers
-        queue             <- Queue.unbounded[ConsumerRecord[String, String]]
-        regularHandler     = RecordHandler((cr: ConsumerRecord[String, String]) => queue.offer(cr)).withDeserializers(StringSerde, StringSerde)
+        handledOffsets    <- Ref.make[Seq[Long]](Seq.empty)                   // keep track of handled offsets to make sure no duplicates are processed
+        regularHandler     = RecordHandler((cr: ConsumerRecord[String, String]) => handledOffsets.update(_ :+ cr.offset))
+                               .withDeserializers(StringSerde, StringSerde)
         longRunningHandler = RecordHandler((cr: ConsumerRecord[String, String]) =>
-                               (if (cr.offset % 2 == 0) ZIO.sleep(2.seconds) else ZIO.unit) *> queue.offer(cr)
+                               (if (cr.offset % 2 == 0) ZIO.sleep(2.seconds) else ZIO.unit) *> handledOffsets.update(_ :+ cr.offset)
                              ).withDeserializers(StringSerde, StringSerde)
 
-        records1    = producerRecords(topic, "1", partitions, 20)
-        records2    = producerRecords(topic, "2", partitions, 20)
-        numMessages = records1.size + records2.size
+        records1 = producerRecords(topic, "1", 1, 10)
+        records2 = producerRecords(topic, "2", 1, 10)
+        records3 = producerRecords(topic, "3", 1, 10)
+        records4 = producerRecords(topic, "4", 1, 10)
 
-        _ <- RecordConsumer.make(regularConfig, regularHandler)
-        _ <- produceRecords(producer, records1)
-        _ <- eventuallyZ(queue.size)(_ == records1.size)
-        _ <- ZIO.sleep(10.seconds)
-        _ <- RecordConsumer.make(parallelConfig, longRunningHandler).delay(3.seconds)
-        _ <- produceRecords(producer, records2)
-        _ <- ZIO.sleep(10.seconds)
-        _ <- eventuallyZ(queue.size, timeout = 20.seconds)(_ == numMessages)
+        regularConsumer1  <- RecordConsumer.make(regularConfig, regularHandler)
+        _                 <- produceRecords(producer, records1)
+        _                 <- eventuallyZ(handledOffsets.get)(_.sorted == records1.indices.map(_.toLong).sorted)
+        _                 <- regularConsumer1.shutdown()
+        parallelConsumer1 <- RecordConsumer.make(parallelConfig, longRunningHandler)
+        parallelConsumer2 <- RecordConsumer.make(parallelConfig, longRunningHandler)
+        _                 <- produceRecords(producer, records2)
+        _                 <- eventuallyZ(handledOffsets.get, timeout = 10.seconds)(_.sorted == (records1 ++ records2).indices.map(_.toLong).sorted)
+        parallelConsumer3 <- RecordConsumer.make(parallelConfig, longRunningHandler).delay(5.seconds)
+        _                 <- parallelConsumer1.shutdown() zipPar parallelConsumer2.shutdown()
+        _                 <- produceRecords(producer, records3)
+        _                 <-
+          eventuallyZ(handledOffsets.get, timeout = 10.seconds)(_.sorted == (records1 ++ records2 ++ records3).indices.map(_.toLong).sorted)
+        _                 <- produceRecords(producer, records4)
+        _                 <- eventuallyZ(handledOffsets.get, timeout = 10.seconds)(
+                               _.sorted == (records1 ++ records2 ++ records3 ++ records4).indices.map(_.toLong).sorted
+                             )
+        _                 <- eventuallyZ(parallelConsumer3.committedOffsetsAndGaps(Set(tp)), timeout = 10.seconds)(_.get(tp).exists(_.gaps.isEmpty))
       } yield ok
     }
   }
