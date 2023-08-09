@@ -29,9 +29,8 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
       run(for {
         promise    <- Promise.make[Nothing, Record]
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init       <- getInit
         dispatcher <-
-          Dispatcher.make("group", "clientId", promise.succeed, lowWatermark, highWatermark, workersShutdownRef = ref, init = init)
+          Dispatcher.make("group", "clientId", promise.succeed, lowWatermark, highWatermark, workersShutdownRef = ref)
         _          <- submit(dispatcher, record)
         handled    <- promise.await
       } yield handled must equalTo(record))
@@ -45,9 +44,8 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         latch      <- CountDownLatch.make(partitions)
         slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => Clock.sleep(1.second) *> latch.countDown }
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init       <- getInit
         dispatcher <-
-          Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark, workersShutdownRef = ref, init = init)
+          Dispatcher.make("group", "clientId", slowHandler, lowWatermark, highWatermark, workersShutdownRef = ref)
         _          <- ZIO.foreachDiscard(0 until partitions) { partition => submit(dispatcher, record.copy(partition = partition)) }
         _          <- TestClock.adjust(1.second)
         _          <- latch.await
@@ -63,7 +61,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         latch      <- CountDownLatch.make(numKeys)
         slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => Clock.sleep(1.second) *> latch.countDown }
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init       <- getInit
         dispatcher <- Dispatcher.make(
                         "group",
                         "clientId",
@@ -72,8 +69,7 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
                         highWatermark,
                         workersShutdownRef = ref,
                         consumeInParallel = true,
-                        maxParallelism = 8,
-                        init = init
+                        maxParallelism = 8
                       )
         // produce with unique keys to the same partition
         _          <- submitBatch(dispatcher, keys.map(key => record.copy(partition = 0, key = key)))
@@ -90,7 +86,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         latch      <- CountDownLatch.make(numRecords)
         slowHandler = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => Clock.sleep(1.second) *> latch.countDown }
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init       <- getInit
         dispatcher <- Dispatcher.make(
                         "group",
                         "clientId",
@@ -99,8 +94,7 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
                         highWatermark,
                         workersShutdownRef = ref,
                         consumeInParallel = true,
-                        maxParallelism = numRecords,
-                        init = init
+                        maxParallelism = numRecords
                       )
         _          <- submitBatch(dispatcher, (1 to numRecords).map(_ => record.copy(partition = 0, key = None)))
         _          <- TestClock.adjust(1.second)
@@ -120,8 +114,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
       run(for {
         handled <- Ref.make[Int](0)
         ref     <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init    <- getInit
-
         dispatcher <- Dispatcher.make(
                         "group",
                         "clientId",
@@ -130,8 +122,7 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
                         highWatermark,
                         workersShutdownRef = ref,
                         consumeInParallel = true,
-                        currentGaps = _ => ZIO.succeed(existingOffsetAndGap),
-                        init = init
+                        currentGaps = _ => ZIO.succeed(existingOffsetAndGap)
                       )
         _          <- submitBatch(dispatcher, Seq(recordOffset2, recordOffset3))
         numHandled <- handled.get
@@ -142,10 +133,9 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
     new ctx() {
       run(for {
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init       <- getInit
         dispatcher <-
           Dispatcher
-            .make[Any]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref, init = init)
+            .make[Any]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref)
         _          <- submit(dispatcher, record.copy(offset = 0L)) // Will be polled
         _          <- submit(dispatcher, record.copy(offset = 1L))
         _          <- submit(dispatcher, record.copy(offset = 2L))
@@ -160,10 +150,9 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
     new ctx(highWatermark = 5) {
       run(for {
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init       <- getInit
         dispatcher <-
           Dispatcher
-            .make[Any]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref, init = init)
+            .make[Any]("group", "clientId", _ => ZIO.never, lowWatermark, highWatermark, workersShutdownRef = ref)
         records     = (0 until 7).map(i => record.copy(offset = i.toLong))
         result     <- submitBatch(dispatcher, records)
       } yield result must beEqualTo(SubmitResult.RejectedBatch(record.copy(offset = 5L))))
@@ -174,7 +163,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
       val gapsSizeLimit = 5
       run(for {
         ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init       <- getInit
         dispatcher <-
           Dispatcher
             .make[Any](
@@ -184,7 +172,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
               lowWatermark,
               highWatermark,
               workersShutdownRef = ref,
-              init = init,
               gapsSizeLimit = gapsSizeLimit
             )
         records     = (0 until 7).map(i => record.copy(offset = i.toLong))
@@ -198,15 +185,13 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         for {
           queue      <- Queue.bounded[Record](1)
           ref        <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-          init       <- getInit
           dispatcher <- Dispatcher.make[Any](
                           "group",
                           "clientId",
                           record => queue.offer(record).flatMap(result => ZIO.succeed(println(s"queue.offer result: ${result}"))),
                           lowWatermark,
                           highWatermark,
-                          workersShutdownRef = ref,
-                          init = init
+                          workersShutdownRef = ref
                         )
           _          <- ZIO.foreachDiscard(0 to (highWatermark + 1)) { offset =>
                           submit(
@@ -231,7 +216,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         for {
           queue                                   <- Queue.bounded[Record](1)
           ref                                     <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-          init                                    <- getInit
           dispatcher                              <- Dispatcher.make[TestClock](
                                                        "group",
                                                        "clientId",
@@ -242,8 +226,7 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
                                                        lowWatermark,
                                                        highWatermark,
                                                        delayResumeOfPausedPartition = 6500,
-                                                       workersShutdownRef = ref,
-                                                       init = init
+                                                       workersShutdownRef = ref
                                                      )
           _                                       <- ZIO.foreachDiscard(0 to (highWatermark + 1)) { offset =>
                                                        submit(
@@ -297,7 +280,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
       run(for {
         ref                <- Ref.make(0)
         workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
-        init               <- getInit
         dispatcher         <-
           Dispatcher
             .make[Any](
@@ -306,8 +288,7 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
               _ => ref.update(_ + 1),
               lowWatermark,
               highWatermark,
-              workersShutdownRef = workersShutdownRef,
-              init = init
+              workersShutdownRef = workersShutdownRef
             )
         _                  <- pause(dispatcher)
         _                  <- submit(dispatcher, record) // Will be queued
@@ -322,10 +303,9 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
         promise            <- Promise.make[Nothing, Unit]
         handler             = { _: Record => Clock.sleep(1.second) *> ref.update(_ + 1) *> promise.succeed(()) }
-        init               <- getInit
         dispatcher         <-
           Dispatcher
-            .make[Any]("group", "clientId", handler, lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef, init = init)
+            .make[Any]("group", "clientId", handler, lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
         _                  <- submit(dispatcher, record) // Will be handled
         _                  <- TestMetrics.reported.flatMap(waitUntilRecordHandled(3.seconds))
         _                  <- pause(dispatcher)
@@ -343,10 +323,9 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
         workersShutdownRef <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
         promise            <- Promise.make[Nothing, Unit]
         handler             = { _: ConsumerRecord[Chunk[Byte], Chunk[Byte]] => ref.update(_ + 1) *> promise.succeed(()) }
-        init               <- getInit
         dispatcher         <-
           Dispatcher
-            .make("group", "clientId", handler, lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef, init = init)
+            .make("group", "clientId", handler, lowWatermark, highWatermark, workersShutdownRef = workersShutdownRef)
         _                  <- pause(dispatcher)
         _                  <- submit(dispatcher, record)
         _                  <- resume(dispatcher)
@@ -388,11 +367,6 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
     val record         = ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 0L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
 
     def getKeys(numKeys: Int) = (0 until numKeys).map(i => Some(Chunk.fromArray(s"key$i".getBytes)))
-
-    def getInit() = for {
-      init <- Promise.make[Nothing, Unit]
-      _    <- init.succeed(())
-    } yield init
   }
 
 }

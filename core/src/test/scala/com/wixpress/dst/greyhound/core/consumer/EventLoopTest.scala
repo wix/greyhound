@@ -149,6 +149,10 @@ trait EmptyConsumer extends Consumer {
   ): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
     DelayedRebalanceEffect.zioUnit
 
+  override def committedOffsetsAndMetadataOnRebalance(partitions: Set[TopicPartition])(
+    implicit trace: Trace
+  ): Map[TopicPartition, OffsetAndMetadata] = Map.empty
+
   override def commitWithMetadataOnRebalance(offsets: Map[TopicPartition, OffsetAndMetadata])(
     implicit trace: Trace
   ): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
