@@ -1,7 +1,7 @@
 package com.wixpress.dst.greyhound.core
 
 import com.wixpress.dst.greyhound.core.Serdes._
-import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.PollingFailed
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedOffsets, PollingFailed}
 import com.wixpress.dst.greyhound.core.consumer.EventLoop.Handler
 import com.wixpress.dst.greyhound.core.consumer.OffsetReset.{Earliest, Latest}
 import com.wixpress.dst.greyhound.core.consumer._
@@ -318,13 +318,15 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
         } yield test
       }
 
-    s"wait until queues are drained${parallelConsumerString(useParallelConsumer)}" in {
+    s"wait until queues are drained and commit on shutdown${parallelConsumerString(useParallelConsumer)}" in {
       for {
         r                             <- getShared
         TestResources(kafka, producer) = r
         _                             <- ZIO.debug(">>>> starting test: gracefulShutdownTest")
-        topic                         <- kafka.createRandomTopic(prefix = "core-wait-until")
+        topic                         <- kafka.createRandomTopic(partitions = 1, prefix = "core-wait-until")
         group                         <- randomGroup
+        cId                           <- clientId
+        tp                             = TopicPartition(topic, 0)
 
         ref                  <- Ref.make(0)
         startedHandling      <- Promise.make[Nothing, Unit]
@@ -340,15 +342,17 @@ class ConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
                      group,
                      topic,
                      mutateEventLoop = _.copy(consumePartitionInParallel = useParallelConsumer, maxParallelism = 8)
-                   ),
+                   ).copy(clientId = cId),
                    handler
                  )
                  .flatMap { _ => producer.produce(ProducerRecord(topic, Chunk.empty)) *> startedHandling.await }
              )
 
         handled <- ref.get
+        metrics <- TestMetrics.reported
       } yield {
-        handled must equalTo(1)
+        (handled must equalTo(1)) and
+          (metrics must contain(CommittedOffsets(cId, group, Map(tp -> 1L), calledOnRebalance = false, Map.empty)))
       }
     }
 
