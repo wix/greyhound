@@ -204,7 +204,7 @@ class DispatcherTest extends BaseTest[TestMetrics with TestClock] {
                           ConsumerRecord[Chunk[Byte], Chunk[Byte]](topic, partition, 6L, Headers.Empty, None, Chunk.empty, 0L, 0L, 0L, "")
                         ) // Will be dropped
           _          <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_.isEmpty)
-          _          <- ZIO.foreachDiscard(1 to 4)(_ => queue.take)
+          _          <- ZIO.foreachDiscard(1 to 5)(_ => queue.take)
           _          <- eventuallyZ(dispatcher.resumeablePartitions(Set(topicPartition)))(_ == Set(TopicPartition(topic, partition)))
         } yield ok
       )
