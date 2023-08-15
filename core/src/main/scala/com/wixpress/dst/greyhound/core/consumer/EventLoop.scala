@@ -89,15 +89,15 @@ object EventLoop {
       _                   <- report(AwaitingPartitionsAssignment(clientId, group, consumerAttributes))
       partitions          <- partitionsAssigned.await
       env                 <- ZIO.environment[Env]
-    } yield (dispatcher, fiber, offsets, positionsRef, running, rebalanceListener.provideEnvironment(env))
+    } yield (dispatcher, fiber, offsets, offsetsAndGaps, positionsRef, running, rebalanceListener.provideEnvironment(env))
 
     start
       .map {
-        case (dispatcher, fiber, offsets, positionsRef, running, listener) =>
+        case (dispatcher, fiber, offsets, offsetsAndGaps, positionsRef, running, listener) =>
           new EventLoop[GreyhoundMetrics] {
 
             override def stop: URIO[GreyhoundMetrics, Any] =
-              stopLoop(group, consumer, clientId, consumerAttributes, config, running, fiber, offsets, dispatcher)
+              stopLoop(group, consumer, clientId, consumerAttributes, config, running, fiber, offsets, offsetsAndGaps, dispatcher)
 
             override def pause(implicit trace: Trace): URIO[GreyhoundMetrics, Unit] =
               (report(PausingEventLoop(clientId, group, consumerAttributes)) *> running.set(Paused) *> dispatcher.pause).unit
@@ -132,6 +132,7 @@ object EventLoop {
     running: Ref[EventLoopState],
     fiber: Fiber.Runtime[Nothing, Boolean],
     offsets: Offsets,
+    offsetsAndGaps: OffsetsAndGaps,
     dispatcher: Dispatcher[R]
   ) =
     for {
@@ -139,7 +140,7 @@ object EventLoop {
       _       <- running.set(ShuttingDown)
       drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
       _       <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
-      _       <- commitOffsets(consumer, offsets)
+      _       <- if (config.consumePartitionInParallel) commitOffsetsAndGaps(consumer, offsetsAndGaps) else commitOffsets(consumer, offsets)
     } yield ()
 
   private def updatePositions(
@@ -327,7 +328,9 @@ object EventLoop {
   }
 
   private def commitOffsets(consumer: Consumer, offsets: Offsets): URIO[GreyhoundMetrics, Unit] =
-    offsets.committable.flatMap { committable => consumer.commit(committable).catchAll { _ => offsets.update(committable) } }
+    offsets.committable.flatMap { committable =>
+      consumer.commit(committable).catchAll { t => report(FailedToCommitOffsets(t, committable)) *> offsets.update(committable) }
+    }
 
   private def commitOffsetsAndGaps(consumer: Consumer, offsetsAndGaps: OffsetsAndGaps): URIO[GreyhoundMetrics, Unit] =
     offsetsAndGaps.getCommittableAndClear.flatMap { committable =>
@@ -465,7 +468,7 @@ object EventLoopMetric {
   case class CreatingPollOnceFiber(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
 
   case class AwaitingPartitionsAssignment(clientId: ClientId, group: Group, attributes: Map[String, String]) extends EventLoopMetric
-  
+
   case class InitializedOffsetsAndGaps(
     clientId: ClientId,
     group: Group,
@@ -477,6 +480,8 @@ object EventLoopMetric {
 
   case class FailedToCommitOffsetsAndMetadata(t: Throwable, offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])
       extends EventLoopMetric
+
+  case class FailedToCommitOffsets(t: Throwable, offsets: Map[TopicPartition, Offset]) extends EventLoopMetric
 
   case class HandledBatch(records: Records) extends EventLoopMetric
 }
