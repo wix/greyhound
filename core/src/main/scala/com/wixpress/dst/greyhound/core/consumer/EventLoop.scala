@@ -138,10 +138,34 @@ object EventLoop {
     for {
       _       <- report(StoppingEventLoop(clientId, group, consumerAttributes))
       _       <- running.set(ShuttingDown)
-      drained <- (fiber.join *> dispatcher.shutdown).timeout(config.drainTimeout)
+      drained <-
+      (joinFiberAndReport(group, clientId, consumerAttributes, fiber).interruptible *>
+        shutdownDispatcherAndReport(group, clientId, consumerAttributes, dispatcher))
+        .timeout(config.drainTimeout)
       _       <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
       _       <- if (config.consumePartitionInParallel) commitOffsetsAndGaps(consumer, offsetsAndGaps) else commitOffsets(consumer, offsets)
+      _       <- report(StoppedEventLoop(clientId, group, consumerAttributes))
     } yield ()
+
+  private def shutdownDispatcherAndReport[R](
+    group: Group,
+    clientId: ClientId,
+    consumerAttributes: Map[Group, Group],
+    dispatcher: Dispatcher[R]
+  ) =
+    dispatcher.shutdown.timed
+      .map(_._1)
+      .flatMap(duration => report(DispatcherStopped(clientId, group, duration.toMillis, consumerAttributes)))
+
+  private def joinFiberAndReport[R](
+    group: Group,
+    clientId: ClientId,
+    consumerAttributes: Map[Group, Group],
+    fiber: Fiber.Runtime[Nothing, Boolean]
+  ) =
+    fiber.join.timed
+      .map(_._1)
+      .flatMap(duration => report(JoinedPollOnceFiberBeforeDispatcherShutdown(clientId, group, duration.toMillis, consumerAttributes)))
 
   private def updatePositions(
     records: Consumer.Records,
@@ -433,6 +457,17 @@ object EventLoopMetric {
   case class ResumingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
   case class StoppingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
+
+  case class StoppedEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
+
+  case class JoinedPollOnceFiberBeforeDispatcherShutdown(
+    clientId: ClientId,
+    group: Group,
+    durationMs: Long,
+    attributes: Map[String, String] = Map.empty
+  ) extends EventLoopMetric
+
+  case class DispatcherStopped(group: Group, clientId: ClientId, durationMs: Long, attributes: Map[String, String]) extends EventLoopMetric
 
   case class DrainTimeoutExceeded(clientId: ClientId, group: Group, timeoutMs: Long, attributes: Map[String, String] = Map.empty)
       extends EventLoopMetric
