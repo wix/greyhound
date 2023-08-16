@@ -138,11 +138,13 @@ object Dispatcher {
         case state                          => (ZIO.unit, state)
       }.flatten
 
-      override def shutdown: URIO[GreyhoundMetrics, Unit] =
-        state.modify(state => (state, DispatcherState.ShuttingDown)).flatMap {
-          case DispatcherState.Paused(resume) => resume.succeed(()).unit
-          case _                              => ZIO.unit
-        } *> workers.get.flatMap(shutdownWorkers).ignore
+      override def shutdown: URIO[GreyhoundMetrics, Unit] = {
+        report(ShuttingDownDispatcher(group, clientId, consumerAttributes)) *>
+          state.modify(state => (state, DispatcherState.ShuttingDown)).flatMap {
+            case DispatcherState.Paused(resume) => resume.succeed(()).unit
+            case _                              => ZIO.unit
+          } *> workers.get.flatMap(shutdownWorkers).ignore 
+      }
 
       /**
        * This implementation is not fiber-safe. Since the worker is used per partition, and all operations performed on a single partition
@@ -580,6 +582,8 @@ object DispatcherMetric {
     drainTimeoutMs: Long,
     attributes: Map[String, String]
   ) extends DispatcherMetric
+
+  case class ShuttingDownDispatcher(group: Group, clientId: ClientId, attributes: Map[String, String]) extends DispatcherMetric
 
   case class WorkerStopped(group: Group, clientId: ClientId, partition: TopicPartition, durationMs: Long, attributes: Map[String, String])
       extends DispatcherMetric
