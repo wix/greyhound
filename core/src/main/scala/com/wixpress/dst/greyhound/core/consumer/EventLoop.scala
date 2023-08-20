@@ -85,6 +85,7 @@ object EventLoop {
       _                   <- report(CreatingPollOnceFiber(clientId, group, consumerAttributes))
       fiber               <- pollOnce(running, consumer, dispatcher, pausedPartitionsRef, positionsRef, offsets, config, clientId, group, offsetsAndGaps)
                                .repeatWhile(_ == true)
+                               .interruptible
                                .forkDaemon
       _                   <- report(AwaitingPartitionsAssignment(clientId, group, consumerAttributes))
       partitions          <- partitionsAssigned.await
@@ -142,7 +143,9 @@ object EventLoop {
       (joinFiberAndReport(group, clientId, consumerAttributes, fiber).interruptible *>
         shutdownDispatcherAndReport(group, clientId, consumerAttributes, dispatcher))
         .timeout(config.drainTimeout)
-      _       <- ZIO.when(drained.isEmpty)(report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)))
+      _       <- ZIO.when(drained.isEmpty)(
+                   report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)) *> fiber.interruptFork
+                 )
       _       <- if (config.consumePartitionInParallel) commitOffsetsAndGaps(consumer, offsetsAndGaps) else commitOffsets(consumer, offsets)
       _       <- report(StoppedEventLoop(clientId, group, consumerAttributes))
     } yield ()
@@ -356,16 +359,18 @@ object EventLoop {
       consumer.commit(committable).catchAll { t => report(FailedToCommitOffsets(t, committable)) *> offsets.update(committable) }
     }
 
-  private def commitOffsetsAndGaps(consumer: Consumer, offsetsAndGaps: OffsetsAndGaps): URIO[GreyhoundMetrics, Unit] =
+  private def commitOffsetsAndGaps(consumer: Consumer, offsetsAndGaps: OffsetsAndGaps): URIO[GreyhoundMetrics, Unit] = {
     offsetsAndGaps.getCommittableAndClear.flatMap { committable =>
       val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
-      consumer
-        .commitWithMetadata(offsetsAndMetadataToCommit)
-        .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndGaps(committable))))
-        .catchAll { t =>
-          report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
-        }
+      report(CommittingOffsetsAndGaps(consumer.config.groupId, committable)) *>
+        consumer
+          .commitWithMetadata(offsetsAndMetadataToCommit)
+          .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndGaps(committable))))
+          .catchAll { t =>
+            report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
+          }
     }
+  }
 
   private def commitOffsetsOnRebalance(
     consumer: Consumer,
@@ -459,6 +464,12 @@ object EventLoopMetric {
   case class StoppingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
   case class StoppedEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
+
+  case class CommittingOffsetsAndGaps(
+    groupId: Group,
+    offsetsAndGaps: Map[TopicPartition, OffsetAndGaps],
+    attributes: Map[String, String] = Map.empty
+  ) extends EventLoopMetric
 
   case class JoinedPollOnceFiberBeforeDispatcherShutdown(
     clientId: ClientId,
