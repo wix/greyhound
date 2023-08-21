@@ -139,9 +139,10 @@ object EventLoop {
     for {
       _       <- report(StoppingEventLoop(clientId, group, consumerAttributes))
       _       <- running.set(ShuttingDown)
+      _       <- running.get.flatMap(currentState => report(EventLoopStateOnShutdown(clientId, group, currentState, consumerAttributes)))
       drained <-
       (joinFiberAndReport(group, clientId, consumerAttributes, fiber).interruptible *>
-        shutdownDispatcherAndReport(group, clientId, consumerAttributes, dispatcher))
+        shutdownDispatcherAndReport(group, clientId, consumerAttributes, dispatcher)).disconnect.interruptible
         .timeout(config.drainTimeout)
       _       <- ZIO.when(drained.isEmpty)(
                    report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)) *> fiber.interruptFork
@@ -202,8 +203,8 @@ object EventLoop {
           _       <- ZIO.when(records.isEmpty)(ZIO.sleep(50.millis))
         } yield true
 
-      case ShuttingDown => ZIO.succeed(false)
-      case Paused       => ZIO.sleep(100.millis).as(true)
+      case ShuttingDown => report(PollOnceFiberShuttingDown(clientId, group, consumer.config.consumerAttributes)) *> ZIO.succeed(false)
+      case Paused       => report(PollOnceFiberPaused(clientId, group, consumer.config.consumerAttributes)) *> ZIO.sleep(100.millis).as(true)
     }
 
   private def listener(
@@ -462,6 +463,18 @@ object EventLoopMetric {
   case class ResumingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
   case class StoppingEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
+
+  case class EventLoopStateOnShutdown(
+    clientId: ClientId,
+    group: Group,
+    eventLoopState: EventLoopState,
+    attributes: Map[String, String] = Map.empty
+  ) extends EventLoopMetric
+
+  case class PollOnceFiberShuttingDown(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty)
+      extends EventLoopMetric
+
+  case class PollOnceFiberPaused(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
   case class StoppedEventLoop(clientId: ClientId, group: Group, attributes: Map[String, String] = Map.empty) extends EventLoopMetric
 
