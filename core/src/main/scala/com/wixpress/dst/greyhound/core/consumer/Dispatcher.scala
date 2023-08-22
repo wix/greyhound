@@ -115,15 +115,17 @@ object Dispatcher {
       override def waitForCurrentRecordsCompletion: UIO[Unit] =
         workers.get.flatMap(workers => ZIO.foreach(workers.values)(_.waitForCurrentExecutionCompletion)).unit
 
-      override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] =
-        workers
-          .modify { workers =>
-            val revoked   = workers.filterKeys(partitions.contains)
-            val remaining = workers -- partitions
+      override def revoke(partitions: Set[TopicPartition]): URIO[GreyhoundMetrics, Unit] = {
+        report(DispatcherRevokingPartitions(clientId, group, partitions, consumerAttributes)) *>
+          workers
+            .modify { workers =>
+              val revoked   = workers.filterKeys(partitions.contains)
+              val remaining = workers -- partitions
 
-            (revoked, remaining)
-          }
-          .flatMap(shutdownWorkers)
+              (revoked, remaining)
+            }
+            .flatMap(shutdownWorkers)
+      }
 
       override def pause: URIO[GreyhoundMetrics, Unit] = for {
         resume <- Promise.make[Nothing, Unit]
@@ -580,6 +582,13 @@ object DispatcherMetric {
     clientId: ClientId,
     partition: TopicPartition,
     drainTimeoutMs: Long,
+    attributes: Map[String, String]
+  ) extends DispatcherMetric
+
+  case class DispatcherRevokingPartitions(
+    clientId: ClientId,
+    group: Group,
+    partitions: Set[TopicPartition],
     attributes: Map[String, String]
   ) extends DispatcherMetric
 
