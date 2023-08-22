@@ -145,7 +145,8 @@ object EventLoop {
         shutdownDispatcherAndReport(group, clientId, consumerAttributes, dispatcher)).disconnect.interruptible
         .timeout(config.drainTimeout)
       _       <- ZIO.when(drained.isEmpty)(
-                   report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumerAttributes)) *> fiber.interruptFork
+                   report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, onShutdown = true, consumerAttributes)) *>
+                     fiber.interruptFork
                  )
       _       <- if (config.consumePartitionInParallel) commitOffsetsAndGaps(consumer, offsetsAndGaps) else commitOffsets(consumer, offsets)
       _       <- report(StoppedEventLoop(clientId, group, consumerAttributes))
@@ -229,7 +230,15 @@ object EventLoop {
             _                      <- pausedPartitionsRef.update(_ -- partitions)
             isRevokeTimedOut       <- dispatcher.revoke(partitions).timeout(config.drainTimeout).map(_.isEmpty)
             _                      <- ZIO.when(isRevokeTimedOut)(
-                                        report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, consumer.config.consumerAttributes))
+                                        report(
+                                          DrainTimeoutExceeded(
+                                            clientId,
+                                            group,
+                                            config.drainTimeout.toMillis,
+                                            onShutdown = false,
+                                            consumer.config.consumerAttributes
+                                          )
+                                        )
                                       )
             delayedRebalanceEffect <- if (useParallelConsumer) commitOffsetsAndGapsOnRebalance(consumer0, offsetsAndGaps)
                                       else commitOffsetsOnRebalance(consumer0, offsets)
@@ -361,15 +370,16 @@ object EventLoop {
     }
 
   private def commitOffsetsAndGaps(consumer: Consumer, offsetsAndGaps: OffsetsAndGaps): URIO[GreyhoundMetrics, Unit] = {
-    offsetsAndGaps.getCommittableAndClear.flatMap { committable =>
-      val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
-      report(CommittingOffsetsAndGaps(consumer.config.groupId, committable)) *>
-        consumer
-          .commitWithMetadata(offsetsAndMetadataToCommit)
-          .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndGaps(committable))))
-          .catchAll { t =>
-            report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
-          }
+    offsetsAndGaps.getCommittableAndClear.flatMap {
+      case (committable, offsetsAndGapsBefore, offsetsAndGapsAfter) =>
+        val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
+        report(CommittingOffsetsAndGaps(consumer.config.groupId, committable, offsetsAndGapsBefore, offsetsAndGapsAfter)) *>
+          consumer
+            .commitWithMetadata(offsetsAndMetadataToCommit)
+            .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndGaps(committable))))
+            .catchAll { t =>
+              report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
+            }
     }
   }
 
@@ -397,11 +407,13 @@ object EventLoop {
     offsetsAndGaps: OffsetsAndGaps
   ): URIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
     for {
-      committable <- offsetsAndGaps.getCommittableAndClear
-      tle         <- consumer
-                       .commitWithMetadataOnRebalance(OffsetsAndGaps.toOffsetsAndMetadata(committable))
-                       .catchAll { _ => offsetsAndGaps.setCommittable(committable) *> DelayedRebalanceEffect.zioUnit }
-      runtime     <- ZIO.runtime[Any]
+      committableResult                                       <- offsetsAndGaps.getCommittableAndClear
+      (committable, offsetsAndGapsBefore, offsetsAndGapsAfter) = committableResult
+      _                                                       <- report(CommittingOffsetsAndGaps(consumer.config.groupId, committable, offsetsAndGapsBefore, offsetsAndGapsAfter))
+      tle                                                     <- consumer
+                                                                   .commitWithMetadataOnRebalance(OffsetsAndGaps.toOffsetsAndMetadata(committable))
+                                                                   .catchAll { _ => offsetsAndGaps.setCommittable(committable) *> DelayedRebalanceEffect.zioUnit }
+      runtime                                                 <- ZIO.runtime[Any]
     } yield tle.catchAll { _ =>
       zio.Unsafe.unsafe { implicit s =>
         runtime.unsafe
@@ -481,6 +493,8 @@ object EventLoopMetric {
   case class CommittingOffsetsAndGaps(
     groupId: Group,
     offsetsAndGaps: Map[TopicPartition, OffsetAndGaps],
+    offsetsAndGapsBefore: Map[TopicPartition, OffsetAndGaps],
+    offsetsAndGapsAfter: Map[TopicPartition, OffsetAndGaps],
     attributes: Map[String, String] = Map.empty
   ) extends EventLoopMetric
 
@@ -493,8 +507,13 @@ object EventLoopMetric {
 
   case class DispatcherStopped(group: Group, clientId: ClientId, durationMs: Long, attributes: Map[String, String]) extends EventLoopMetric
 
-  case class DrainTimeoutExceeded(clientId: ClientId, group: Group, timeoutMs: Long, attributes: Map[String, String] = Map.empty)
-      extends EventLoopMetric
+  case class DrainTimeoutExceeded(
+    clientId: ClientId,
+    group: Group,
+    timeoutMs: Long,
+    onShutdown: Boolean,
+    attributes: Map[String, String] = Map.empty
+  ) extends EventLoopMetric
 
   case class HighWatermarkReached(partition: TopicPartition, onOffset: Offset, attributes: Map[String, String] = Map.empty)
       extends EventLoopMetric
