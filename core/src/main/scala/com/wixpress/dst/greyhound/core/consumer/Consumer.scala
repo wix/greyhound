@@ -289,12 +289,12 @@ object Consumer {
   case class InitialOffsetsAndMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]) extends com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 
   private def listener[R1](consumer: Consumer, onAssignFirstDo: Set[TopicPartition] => Unit, rebalanceListener: RebalanceListener[R1], unsafeOffsetOperations: UnsafeOffsetOperations) =
-    ZIO.runtime[R1].map { runtime =>
+    ZIO.runtime[R1 with GreyhoundMetrics].map { runtime =>
       new ConsumerRebalanceListener {
 
         def reportInitialOffsetsAndMetadata(partitions: Set[TopicPartition]) = {
           val offsetsAndMetadata = unsafeOffsetOperations.committedWithMetadata(partitions, 10.seconds)
-          report(InitialOffsetsAndMetadata(offsetsAndMetadata)).provide(GreyhoundMetrics.liveLayer)
+          report(InitialOffsetsAndMetadata(offsetsAndMetadata))
         }
 
         override def onPartitionsRevoked(partitions: util.Collection[KafkaTopicPartition]): Unit = {
