@@ -171,15 +171,8 @@ object Consumer {
               .toMap
           )
 
-      import java.time.format.DateTimeFormatter
-      import java.time.LocalDateTime
-      import java.time.ZoneOffset
-      private val podName = sys.env.get("POD_NAME")
-      private val dtf = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")
-      def metadata: Option[String] = if (config.enrichMetadata) podName.map(name => s">>> pod: $name, ts: ${dtf.format(LocalDateTime.now(ZoneOffset.UTC))}") else None
-
       override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
-        withConsumerBlocking(_.commitSync(kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, metadata.getOrElse(cfg.commitMetadataString)))))
+        withConsumerBlocking(_.commitSync(kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString()))))
       }
 
       override def commitWithMetadata(
@@ -191,7 +184,7 @@ object Consumer {
       override def commitOnRebalance(
         offsets: Map[TopicPartition, Offset]
       )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
-        val kOffsets = kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString))
+        val kOffsets = kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString()))
         // we can't actually call commit here, as it needs to be called from the same
         // thread, that triggered poll(), so we return the commit action as thunk
         ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
@@ -355,10 +348,9 @@ case class ConsumerConfig(
   initialSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
   consumerAttributes: Map[String, String] = Map.empty,
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
+  commitMetadataString: Unit => Metadata = _ => OffsetAndMetadata.NO_METADATA,
   rewindUncommittedOffsetsByMillis: Long = 0L,
   useParallelConsumer: Boolean = false,
-  enrichMetadata: Boolean = false
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = Map(
