@@ -21,7 +21,7 @@ class OffsetsAndGapsTestGapsTest extends BaseTestNoEnv {
       offsetGaps             <- OffsetsAndGaps.make
       _                      <- offsetGaps.update(topicPartition, Seq(1L, 3L, 7L))
       _                      <- offsetGaps.update(topicPartition, Seq(2L, 5L))
-      getCommittableAndClear <- offsetGaps.getCommittableAndClear.map(_._1)
+      getCommittableAndClear <- offsetGaps.getCommittableAndClear
     } yield getCommittableAndClear must havePair(topicPartition -> OffsetAndGaps(7L, Seq(Gap(0L, 0L), Gap(4L, 4L), Gap(6L, 6L))))
   }
 
@@ -30,7 +30,7 @@ class OffsetsAndGapsTestGapsTest extends BaseTestNoEnv {
       offsetGaps             <- OffsetsAndGaps.make
       _                      <- offsetGaps.update(topicPartition, Seq(1L, 3L, 7L))
       _                      <- offsetGaps.getCommittableAndClear
-      getCommittableAndClear <- offsetGaps.getCommittableAndClear.map(_._1)
+      getCommittableAndClear <- offsetGaps.getCommittableAndClear
     } yield getCommittableAndClear must beEmpty
   }
 
@@ -52,7 +52,7 @@ class OffsetsAndGapsTestGapsTest extends BaseTestNoEnv {
       _          <- offsetGaps.update(partition0, Seq(1L))
       _          <- offsetGaps.update(partition0, Seq(0L))
       _          <- offsetGaps.update(partition1, Seq(0L))
-      current    <- offsetGaps.getCommittableAndClear.map(_._1)
+      current    <- offsetGaps.getCommittableAndClear
     } yield current must havePairs(partition0 -> OffsetAndGaps(1L, Seq()), partition1 -> OffsetAndGaps(0L, Seq()))
   }
 
@@ -66,7 +66,7 @@ class OffsetsAndGapsTestGapsTest extends BaseTestNoEnv {
       _          <- offsetGaps.init(initialCommittedOffsets)
       _          <- offsetGaps.update(partition0, Seq(101L, 102L))
       _          <- offsetGaps.update(partition1, Seq(203L, 204L))
-      current    <- offsetGaps.getCommittableAndClear.map(_._1)
+      current    <- offsetGaps.getCommittableAndClear
     } yield current must havePairs(partition0 -> OffsetAndGaps(102L, Seq()), partition1 -> OffsetAndGaps(204L, Seq(Gap(201L, 202L))))
   }
 

@@ -13,8 +13,7 @@ import scala.util.Try
 trait OffsetsAndGaps {
   def init(committedOffsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit]
 
-  def getCommittableAndClear
-    : UIO[(Map[TopicPartition, OffsetAndGaps], Map[TopicPartition, OffsetAndGaps], Map[TopicPartition, OffsetAndGaps])]
+  def getCommittableAndClear: UIO[Map[TopicPartition, OffsetAndGaps]]
 
   def gapsForPartition(partition: TopicPartition): UIO[Seq[Gap]]
 
@@ -45,12 +44,11 @@ object OffsetsAndGaps {
         override def init(committedOffsets: Map[TopicPartition, OffsetAndGaps]): UIO[Unit] =
           ref.update(_ => committedOffsets)
 
-        override def getCommittableAndClear
-          : UIO[(Map[TopicPartition, OffsetAndGaps], Map[TopicPartition, OffsetAndGaps], Map[TopicPartition, OffsetAndGaps])] =
+        override def getCommittableAndClear: UIO[Map[TopicPartition, OffsetAndGaps]] =
           ref.modify(offsetsAndGaps => {
             val committable = offsetsAndGaps.filter(_._2.committable)
             val updated     = offsetsAndGaps.map { case (tp, og) => tp -> og.markCommitted }
-            ((committable, offsetsAndGaps, updated), updated)
+            (committable, updated)
           })
 
         override def gapsForPartition(partition: TopicPartition): UIO[Seq[Gap]] =
