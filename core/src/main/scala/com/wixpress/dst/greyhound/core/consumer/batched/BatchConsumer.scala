@@ -146,8 +146,7 @@ object BatchConsumer {
       config.consumerAttributes,
       config.decryptor,
       config.commitMetadataString,
-      config.rewindUncommittedOffsetsBy.toMillis,
-      enrichMetadata = config.enrichMetadata
+      config.rewindUncommittedOffsetsBy.toMillis
     )
   }
 
@@ -184,9 +183,8 @@ case class BatchConsumerConfig(
   initialOffsetsSeek: InitialOffsetsSeek = InitialOffsetsSeek.default,
   consumerAttributes: Map[String, String] = Map.empty,
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
+  commitMetadataString: Unit => Metadata = _ => OffsetAndMetadata.NO_METADATA,
   rewindUncommittedOffsetsBy: Duration = Duration.ZERO,
-  enrichMetadata: Boolean = false
 )
 
 object BatchConsumerConfig {
