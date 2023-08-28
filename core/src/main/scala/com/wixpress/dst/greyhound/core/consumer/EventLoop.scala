@@ -204,8 +204,8 @@ object EventLoop {
           _       <- ZIO.when(records.isEmpty)(ZIO.sleep(50.millis))
         } yield true
 
-      case ShuttingDown => report(PollOnceFiberShuttingDown(clientId, group, consumer.config.consumerAttributes)) *> ZIO.succeed(false)
-      case Paused       => report(PollOnceFiberPaused(clientId, group, consumer.config.consumerAttributes)) *> ZIO.sleep(100.millis).as(true)
+      case ShuttingDown => ZIO.succeed(false)
+      case Paused       => ZIO.sleep(100.millis).as(true)
     }
 
   private def listener(
@@ -370,16 +370,14 @@ object EventLoop {
     }
 
   private def commitOffsetsAndGaps(consumer: Consumer, offsetsAndGaps: OffsetsAndGaps): URIO[GreyhoundMetrics, Unit] = {
-    offsetsAndGaps.getCommittableAndClear.flatMap {
-      case (committable, offsetsAndGapsBefore, offsetsAndGapsAfter) =>
-        val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
-        report(CommittingOffsetsAndGaps(consumer.config.groupId, committable, offsetsAndGapsBefore, offsetsAndGapsAfter)) *>
-          consumer
-            .commitWithMetadata(offsetsAndMetadataToCommit)
-            .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndGaps(committable))))
-            .catchAll { t =>
-              report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
-            }
+    offsetsAndGaps.getCommittableAndClear.flatMap { committable =>
+      val offsetsAndMetadataToCommit = OffsetsAndGaps.toOffsetsAndMetadata(committable)
+      consumer
+        .commitWithMetadata(offsetsAndMetadataToCommit)
+        .tap(_ => ZIO.when(offsetsAndMetadataToCommit.nonEmpty)(report(CommittedOffsetsAndGaps(committable))))
+        .catchAll { t =>
+          report(FailedToCommitOffsetsAndMetadata(t, offsetsAndMetadataToCommit)) *> offsetsAndGaps.setCommittable(committable)
+        }
     }
   }
 
@@ -407,13 +405,11 @@ object EventLoop {
     offsetsAndGaps: OffsetsAndGaps
   ): URIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
     for {
-      committableResult                                       <- offsetsAndGaps.getCommittableAndClear
-      (committable, offsetsAndGapsBefore, offsetsAndGapsAfter) = committableResult
-      _                                                       <- report(CommittingOffsetsAndGaps(consumer.config.groupId, committable, offsetsAndGapsBefore, offsetsAndGapsAfter))
-      tle                                                     <- consumer
-                                                                   .commitWithMetadataOnRebalance(OffsetsAndGaps.toOffsetsAndMetadata(committable))
-                                                                   .catchAll { _ => offsetsAndGaps.setCommittable(committable) *> DelayedRebalanceEffect.zioUnit }
-      runtime                                                 <- ZIO.runtime[Any]
+      committable <- offsetsAndGaps.getCommittableAndClear
+      tle         <- consumer
+                       .commitWithMetadataOnRebalance(OffsetsAndGaps.toOffsetsAndMetadata(committable))
+                       .catchAll { _ => offsetsAndGaps.setCommittable(committable) *> DelayedRebalanceEffect.zioUnit }
+      runtime     <- ZIO.runtime[Any]
     } yield tle.catchAll { _ =>
       zio.Unsafe.unsafe { implicit s =>
         runtime.unsafe
@@ -493,8 +489,6 @@ object EventLoopMetric {
   case class CommittingOffsetsAndGaps(
     groupId: Group,
     offsetsAndGaps: Map[TopicPartition, OffsetAndGaps],
-    offsetsAndGapsBefore: Map[TopicPartition, OffsetAndGaps],
-    offsetsAndGapsAfter: Map[TopicPartition, OffsetAndGaps],
     attributes: Map[String, String] = Map.empty
   ) extends EventLoopMetric
 
