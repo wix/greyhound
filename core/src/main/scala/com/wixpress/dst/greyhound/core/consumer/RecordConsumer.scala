@@ -229,7 +229,6 @@ object RecordConsumer {
       config.commitMetadataString,
       config.rewindUncommittedOffsetsBy.toMillis,
       config.eventLoopConfig.consumePartitionInParallel,
-      config.enrichMetadata
     )
   }
 
@@ -343,10 +342,9 @@ case class RecordConsumerConfig(
   consumerAttributes: Map[String, String] = Map.empty,
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
   retryProducerAttributes: Map[String, String] = Map.empty,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
+  commitMetadataString: Unit => Metadata = _ => OffsetAndMetadata.NO_METADATA,
   rewindUncommittedOffsetsBy: Duration = 0.millis,
   createRetryTopics: Boolean = true,
-  enrichMetadata: Boolean = true
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
