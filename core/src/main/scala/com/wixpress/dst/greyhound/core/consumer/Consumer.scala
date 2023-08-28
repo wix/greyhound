@@ -173,9 +173,10 @@ object Consumer {
 
       import java.time.format.DateTimeFormatter
       import java.time.LocalDateTime
+      import java.time.ZoneOffset
       private val podName = sys.env.get("POD_NAME")
       private val dtf = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")
-      def metadata: Option[String] = if (config.enrichMetadata) podName.map(name => s">>> pod: $name, ts: ${dtf.format(LocalDateTime.now())}") else None
+      def metadata: Option[String] = if (config.enrichMetadata) podName.map(name => s">>> pod: $name, ts: ${dtf.format(LocalDateTime.now(ZoneOffset.UTC))}") else None
 
       override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
         withConsumerBlocking(_.commitSync(kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, metadata.getOrElse(cfg.commitMetadataString)))))
