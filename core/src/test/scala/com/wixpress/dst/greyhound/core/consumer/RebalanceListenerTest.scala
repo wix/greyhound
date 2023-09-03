@@ -24,8 +24,8 @@ class RebalanceListenerTest extends JUnitRunnableSpec {
                            log(s"$id.revoke $partitions").as(DelayedRebalanceEffect(unsafeLog(s"$id.revoke.tle $partitions")))
                          override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
                            implicit trace: Trace
-                         ): URIO[Any, Any] =
-                           log(s"$id.assigned $partitions")
+                         ): URIO[Any, DelayedRebalanceEffect] =
+                           log(s"$id.assigned $partitions").as(DelayedRebalanceEffect(unsafeLog(s"$id.assigned.tle $partitions")))
                        }
         l1l2       = listener("l1") *> listener("l2")
         partitions = Set(TopicPartition("topic", 0))
