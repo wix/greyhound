@@ -26,6 +26,7 @@ object RetryHeader {
   val Backoff       = DelayHeaders.Backoff
   val OriginalTopic = "GH_OriginalTopic"
   val RetryAttempt  = "GH_RetryAttempt"
+  val allHeaders    = Set(Submitted, Backoff, OriginalTopic, RetryAttempt)
 }
 
 case class RetryAttemptHeaders(
