@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.util.regex.Pattern
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
@@ -18,6 +17,7 @@ import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import zio._
 
+import java.util.regex.Pattern
 import scala.util.Random
 
 trait RecordConsumerProperties[+STATE] {
@@ -228,7 +228,7 @@ object RecordConsumer {
       config.decryptor,
       config.commitMetadataString,
       config.rewindUncommittedOffsetsBy.toMillis,
-      config.eventLoopConfig.consumePartitionInParallel,
+      config.eventLoopConfig.consumePartitionInParallel
     )
   }
 
@@ -345,6 +345,7 @@ case class RecordConsumerConfig(
   commitMetadataString: Unit => Metadata = _ => OffsetAndMetadata.NO_METADATA,
   rewindUncommittedOffsetsBy: Duration = 0.millis,
   createRetryTopics: Boolean = true,
+  produceWithoutShutdown: Boolean = false
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
