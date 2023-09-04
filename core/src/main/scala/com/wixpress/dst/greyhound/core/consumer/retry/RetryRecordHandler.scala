@@ -2,10 +2,10 @@ package com.wixpress.dst.greyhound.core.consumer.retry
 
 import com.wixpress.dst.greyhound.core.Serdes.StringSerde
 import com.wixpress.dst.greyhound.core.TopicPartition
-import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, ConsumerSubscription, RecordHandler}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.producer.ProducerR
+import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import zio._
 
 object RetryRecordHandler {
@@ -33,7 +33,16 @@ object RetryRecordHandler {
   ): RecordHandler[R with R2 with GreyhoundMetrics, Nothing, K, V] = {
 
     val nonBlockingHandler            =
-      NonBlockingRetryRecordHandler(handler, producer, retryConfig, subscription, nonBlockingRetryHelper, groupId, awaitShutdown)
+      NonBlockingRetryRecordHandler(
+        handler,
+        producer,
+        retryConfig,
+        subscription,
+        nonBlockingRetryHelper,
+        groupId,
+        awaitShutdown,
+        produceWithoutShutdown = false
+      )
     val blockingHandler               = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler, awaitShutdown)
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
