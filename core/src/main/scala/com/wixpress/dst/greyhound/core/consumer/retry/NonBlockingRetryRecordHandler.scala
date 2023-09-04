@@ -10,11 +10,9 @@ import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.producer.{ProducerR, ProducerRecord}
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.{Group, TopicPartition}
-
-import zio.Clock
+import zio.Clock.sleep
 import zio.Duration.fromScala
 import zio.{Chunk, UIO, ZIO}
-import zio.Clock.sleep
 
 trait NonBlockingRetryRecordHandler[V, K, R] {
   def handle(record: ConsumerRecord[K, V]): ZIO[GreyhoundMetrics with R, Nothing, Any]
@@ -32,7 +30,8 @@ private[retry] object NonBlockingRetryRecordHandler {
     subscription: ConsumerSubscription,
     nonBlockingRetryHelper: NonBlockingRetryHelper,
     groupId: Group,
-    awaitShutdown: TopicPartition => UIO[AwaitShutdown]
+    awaitShutdown: TopicPartition => UIO[AwaitShutdown],
+    produceWithoutShutdown: Boolean
   )(implicit evK: K <:< Chunk[Byte], evV: V <:< Chunk[Byte]): NonBlockingRetryRecordHandler[V, K, R] =
     new NonBlockingRetryRecordHandler[V, K, R] {
       override def handle(record: ConsumerRecord[K, V]): ZIO[GreyhoundMetrics with R, Nothing, Any] = {
@@ -91,25 +90,32 @@ private[retry] object NonBlockingRetryRecordHandler {
         }
       }
 
-      private def producerToRetryTopic[E1](
+      private def producerToRetryTopic(
         retryAttempt: Option[RetryAttempt],
         retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]],
         record: ConsumerRecord[_, _]
       ) = {
-        awaitShutdown(record.topicPartition).flatMap(
-          _.interruptOnShutdown(
-            retryConfig
-              .produceEncryptor(record)
-              .flatMap(_.encrypt(retryRecord))
-              .flatMap(producer.produce)
-              .tapError(e =>
-                report(RetryProduceFailedWillRetry(retryRecord.topic, retryAttempt, retryConfig.produceRetryBackoff.toMillis, record, e)) *>
-                  sleep(fromScala(retryConfig.produceRetryBackoff))
-              )
-              .eventually
-              .ignore
+        if (produceWithoutShutdown)
+          produceToRetryInternal(retryAttempt, retryRecord, record)
+        else
+          awaitShutdown(record.topicPartition).flatMap(_.interruptOnShutdown(produceToRetryInternal(retryAttempt, retryRecord, record)))
+      }
+
+      private def produceToRetryInternal(
+        retryAttempt: Option[RetryAttempt],
+        retryRecord: ProducerRecord[Chunk[Byte], Chunk[Byte]],
+        record: ConsumerRecord[_, _]
+      ) = {
+        retryConfig
+          .produceEncryptor(record)
+          .flatMap(_.encrypt(retryRecord))
+          .flatMap(producer.produce)
+          .tapError(e =>
+            report(RetryProduceFailedWillRetry(retryRecord.topic, retryAttempt, retryConfig.produceRetryBackoff.toMillis, record, e)) *>
+              sleep(fromScala(retryConfig.produceRetryBackoff))
           )
-        )
+          .eventually
+          .ignore
       }
     }
 }
