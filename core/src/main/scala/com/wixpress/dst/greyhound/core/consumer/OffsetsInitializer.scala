@@ -1,12 +1,10 @@
 package com.wixpress.dst.greyhound.core.consumer
 
 import java.time.Clock
-import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed}
-import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, TopicPartition}
+import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.{CommittedMissingOffsets, CommittedMissingOffsetsFailed, FoundGapsOnInitialization, SkippedGapsOnInitialization}
+import com.wixpress.dst.greyhound.core.{ClientId, Group, Offset, OffsetAndMetadata, TopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.{GreyhoundMetric, GreyhoundMetrics}
-
 import zio.{URIO, ZIO}
-
 import zio._
 
 /**
@@ -24,61 +22,84 @@ class OffsetsInitializer(
   initialSeek: InitialOffsetsSeek,
   rewindUncommittedOffsetsBy: Duration,
   clock: Clock = Clock.systemUTC,
-  offsetResetIsEarliest: Boolean
+  offsetResetIsEarliest: Boolean,
+  parallelConsumer: Boolean
 ) {
   def initializeOffsets(partitions: Set[TopicPartition]): Unit = {
     val hasSeek          = initialSeek != InitialOffsetsSeek.default
     val effectiveTimeout = if (hasSeek) timeoutIfSeek else timeout
 
     withReporting(partitions, rethrow = hasSeek) {
-      val committed                            = offsetOperations.committed(partitions, effectiveTimeout)
+      val committed                            = offsetOperations.committedWithMetadata(partitions, effectiveTimeout)
       val beginning                            = offsetOperations.beginningOffsets(partitions, effectiveTimeout)
       val endOffsets                           = offsetOperations.endOffsets(partitions, effectiveTimeout)
-      val PartitionActions(toOffsets, toPause) = calculateTargetOffsets(partitions, beginning, committed, endOffsets, effectiveTimeout)
+      val PartitionActions(toOffsets, toPause) =
+        calculateTargetOffsets(partitions, beginning, committed, endOffsets, effectiveTimeout, parallelConsumer)
       val notCommitted                         = partitions -- committed.keySet -- toOffsets.keySet
 
       offsetOperations.pause(toPause)
       val rewindUncommittedOffsets =
         if (offsetResetIsEarliest || notCommitted.isEmpty || rewindUncommittedOffsetsBy.isZero) Map.empty
-        else offsetOperations.offsetsForTimes(notCommitted, clock.millis() - rewindUncommittedOffsetsBy.toMillis, effectiveTimeout)
-          .map{case (tp, maybeRewindedOffset) => (tp, maybeRewindedOffset.orElse(endOffsets.get(tp)).getOrElse(0L))}
+        else
+          offsetOperations
+            .offsetsForTimes(notCommitted, clock.millis() - rewindUncommittedOffsetsBy.toMillis, effectiveTimeout)
+            .map { case (tp, maybeRewindedOffset) => (tp, maybeRewindedOffset.orElse(endOffsets.get(tp)).getOrElse(0L)) }
 
       val positions =
-        notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap ++ toOffsets ++ rewindUncommittedOffsets
+        notCommitted.map(tp => tp -> offsetOperations.position(tp, effectiveTimeout)).toMap.mapValues(OffsetAndMetadata.apply) ++
+          toOffsets ++ rewindUncommittedOffsets.mapValues(OffsetAndMetadata.apply)
 
       if ((toOffsets ++ rewindUncommittedOffsets).nonEmpty) {
-        offsetOperations.seek(toOffsets ++ rewindUncommittedOffsets)
+        offsetOperations.seek(toOffsets.mapValues(_.offset) ++ rewindUncommittedOffsets)
       }
 
       if (positions.nonEmpty) {
-        offsetOperations.commit(positions, effectiveTimeout)
+        offsetOperations.commitWithMetadata(positions, effectiveTimeout)
       }
-      positions
+      positions.mapValues(_.offset)
     }
   }
 
-  case class PartitionActions(offsetSeeks: Map[TopicPartition, Offset], partitionsToPause: Set[TopicPartition])
+  case class PartitionActions(offsetSeeks: Map[TopicPartition, OffsetAndMetadata], partitionsToPause: Set[TopicPartition])
 
   private def calculateTargetOffsets(
     partitions: Set[TopicPartition],
     beginning: Map[TopicPartition, Offset],
-    committed: Map[TopicPartition, Offset],
+    committed: Map[TopicPartition, OffsetAndMetadata],
     endOffsets: Map[TopicPartition, Offset],
-    timeout: Duration
+    timeout: Duration,
+    parallelConsumer: Boolean
   ): PartitionActions = {
+    val currentCommittedOffsets             = partitions.map((_, None)).toMap ++ committed.mapValues(Some.apply)
     val seekTo: Map[TopicPartition, SeekTo] = initialSeek.seekOffsetsFor(
       assignedPartitions = partitions,
       beginningOffsets = partitions.map((_, None)).toMap ++ beginning.mapValues(Some.apply),
       endOffsets = partitions.map((_, None)).toMap ++ endOffsets.mapValues(Some.apply),
-      currentCommittedOffsets = partitions.map((_, None)).toMap ++ committed.mapValues(Some.apply)
+      currentCommittedOffsets = currentCommittedOffsets.mapValues(_.map(_.offset))
     )
-    val seekToOffsets                       = seekTo.collect { case (k, v: SeekTo.SeekToOffset) => k -> v.offset }
+    val seekToOffsets                       = seekTo.collect { case (k, v: SeekTo.SeekToOffset) => k -> OffsetAndMetadata(v.offset) }
     val seekToEndPartitions                 = seekTo.collect { case (k, SeekTo.SeekToEnd) => k }.toSet
     val toPause                             = seekTo.collect { case (k, SeekTo.Pause) => k }
-    val seekToEndOffsets                    = fetchEndOffsets(seekToEndPartitions, timeout)
-    val toOffsets                           = seekToOffsets ++ seekToEndOffsets
+    val seekToEndOffsets                    = fetchEndOffsets(seekToEndPartitions, timeout).mapValues(OffsetAndMetadata.apply)
+    val gapsSmallestOffsets                 = OffsetsAndGaps.gapsSmallestOffsets(currentCommittedOffsets)
 
+    if (gapsSmallestOffsets.nonEmpty) reporter(FoundGapsOnInitialization(clientId, group, gapsSmallestOffsets))
+
+    val seekToGapsOffsets = if (parallelConsumer) gapsSmallestOffsets else Map.empty
+    val toOffsets         = seekToOffsets ++ seekToEndOffsets ++ seekToGapsOffsets
+
+    if (!parallelConsumer && gapsSmallestOffsets.nonEmpty) reportSkippedGaps(currentCommittedOffsets)
     PartitionActions(offsetSeeks = toOffsets, partitionsToPause = toPause.toSet)
+  }
+
+  private def reportSkippedGaps(currentCommittedOffsets: Map[TopicPartition, Option[OffsetAndMetadata]]) = {
+    val committedOffsetsAndGaps = currentCommittedOffsets
+      .collect { case (tp, Some(om)) => tp -> om }
+      .map(tpom => tpom._1 -> OffsetsAndGaps.parseGapsString(tpom._2.metadata))
+      .collect { case (tp, Some(offsetAndGaps)) => tp -> offsetAndGaps }
+    val skippedGaps             = committedOffsetsAndGaps.collect { case (tp, offsetAndGaps) if offsetAndGaps.gaps.nonEmpty => tp -> offsetAndGaps }
+
+    reporter(SkippedGapsOnInitialization(clientId, group, skippedGaps, committedOffsetsAndGaps))
   }
 
   private def fetchEndOffsets(seekToEndPartitions: Set[TopicPartition], timeout: Duration) = {
@@ -149,7 +170,8 @@ object OffsetsInitializer {
     initialSeek: InitialOffsetsSeek,
     clock: Clock = Clock.systemUTC,
     rewindUncommittedOffsetsBy: Duration,
-    offsetResetIsEarliest: Boolean
+    offsetResetIsEarliest: Boolean,
+    parallelConsumer: Boolean
   )(implicit trace: Trace): URIO[GreyhoundMetrics, OffsetsInitializer] = for {
     metrics <- ZIO.environment[GreyhoundMetrics].map(_.get)
     runtime <- ZIO.runtime[Any]
@@ -163,6 +185,7 @@ object OffsetsInitializer {
     initialSeek: InitialOffsetsSeek,
     rewindUncommittedOffsetsBy,
     clock,
-    offsetResetIsEarliest
+    offsetResetIsEarliest,
+    parallelConsumer
   )
 }

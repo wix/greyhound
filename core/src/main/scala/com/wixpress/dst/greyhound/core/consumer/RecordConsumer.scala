@@ -1,6 +1,5 @@
 package com.wixpress.dst.greyhound.core.consumer
 
-import java.util.regex.Pattern
 import com.wixpress.dst.greyhound.core._
 import com.wixpress.dst.greyhound.core.admin.{AdminClient, AdminClientConfig}
 import com.wixpress.dst.greyhound.core.consumer.ConsumerConfigFailedValidation.InvalidRetryConfigForPatternSubscription
@@ -18,6 +17,7 @@ import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown
 import com.wixpress.dst.greyhound.core.zioutils.AwaitShutdown.ShutdownPromise
 import zio._
 
+import java.util.regex.Pattern
 import scala.util.Random
 
 trait RecordConsumerProperties[+STATE] {
@@ -46,6 +46,8 @@ trait RecordConsumer[-R] extends Resource[R] with RecordConsumerProperties[Recor
 
   def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]]
 
+  def committedOffsetsAndGaps(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, OffsetAndGaps]]
+
   def waitForCurrentRecordsCompletion: URIO[Any, Unit]
 
   def offsetsForTimes(topicPartitionsOnTimestamp: Map[TopicPartition, Long]): RIO[Any, Map[TopicPartition, Offset]]
@@ -63,31 +65,41 @@ object RecordConsumer {
    */
   def make[R, E](
     config: RecordConsumerConfig,
-    handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]]
+    handler: RecordHandler[R, E, Chunk[Byte], Chunk[Byte]],
+    createConsumerOverride: Option[ConsumerConfig => RIO[GreyhoundMetrics with Scope, Consumer]] = None
   )(implicit trace: Trace, tag: Tag[Env]): ZIO[R with Env with Scope with GreyhoundMetrics, Throwable, RecordConsumer[R with Env]] =
     ZIO
       .acquireRelease(
         for {
           consumerShutdown <- AwaitShutdown.make
           _                <- GreyhoundMetrics
-                                .report(CreatingConsumer(config.clientId, config.group, config.bootstrapServers, config.consumerAttributes))
+                                .report(
+                                  CreatingConsumer(
+                                    config.clientId,
+                                    config.group,
+                                    config.bootstrapServers,
+                                    config.consumerAttributes ++ config.extraProperties
+                                  )
+                                )
 
           _                                    <- validateRetryPolicy(config)
           consumerSubscriptionRef              <- Ref.make[ConsumerSubscription](config.initialSubscription)
           nonBlockingRetryHelper                = NonBlockingRetryHelper(config.group, config.retryConfig)
-          consumer                             <- Consumer.make(consumerConfig(config))
+          consumer                             <- createConsumerOverride.getOrElse(Consumer.make _)(consumerConfig(config))
           (initialSubscription, topicsToCreate) = config.retryConfig.fold((config.initialSubscription, Set.empty[Topic]))(policy =>
                                                     maybeAddRetryTopics(policy, config, nonBlockingRetryHelper)
                                                   )
-          _                                    <- AdminClient
-                                                    .make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes)
-                                                    .tap(client =>
-                                                      client.createTopics(
-                                                        topicsToCreate.map(topic =>
-                                                          TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))
+          _                                    <- ZIO.when(config.createRetryTopics)(
+                                                    AdminClient
+                                                      .make(AdminClientConfig(config.bootstrapServers, config.kafkaAuthProperties), config.consumerAttributes)
+                                                      .tap(client =>
+                                                        client.createTopics(
+                                                          topicsToCreate.map(topic =>
+                                                            TopicConfig(topic, partitions = 1, replicationFactor = 1, cleanupPolicy = CleanupPolicy.Delete(86400000L))
+                                                          )
                                                         )
                                                       )
-                                                    )
+                                                  )
           blockingState                        <- Ref.make[Map[BlockingTarget, BlockingState]](Map.empty)
           blockingStateResolver                 = BlockingStateResolver(blockingState)
           workersShutdownRef                   <- Ref.make[Map[TopicPartition, ShutdownPromise]](Map.empty)
@@ -129,6 +141,15 @@ object RecordConsumer {
           override def committedOffsets(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, Offset]] =
             consumer.committedOffsets(partitions)
 
+          override def committedOffsetsAndGaps(partitions: Set[TopicPartition]): RIO[Env, Map[TopicPartition, OffsetAndGaps]] =
+            consumer
+              .committedOffsetsAndMetadata(partitions)
+              .map(
+                _.mapValues(om =>
+                  OffsetsAndGaps.parseGapsString(om.metadata).fold(OffsetAndGaps(om.offset - 1, committable = false))(identity)
+                )
+              )
+
           override def waitForCurrentRecordsCompletion: URIO[Any, Unit] = eventLoop.waitForCurrentRecordsCompletion
 
           override def state(implicit trace: Trace): UIO[RecordConsumerExposedState] = for {
@@ -158,12 +179,12 @@ object RecordConsumer {
 
                                       override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
                                         implicit trace: Trace
-                                      ): URIO[R1, Any] =
+                                      ): URIO[R1, DelayedRebalanceEffect] =
                                         for {
                                           allAssigned <- assigned.updateAndGet(_ => partitions)
                                           _           <- consumerSubscriptionRef.set(subscription)
                                           _           <- promise.succeed(allAssigned)
-                                        } yield ()
+                                        } yield DelayedRebalanceEffect.unit
                                     }
 
               _                 <- subscribe[R1](subscription, rebalanceListener)(consumer)
@@ -206,7 +227,8 @@ object RecordConsumer {
       config.consumerAttributes,
       config.decryptor,
       config.commitMetadataString,
-      config.rewindUncommittedOffsetsBy.toMillis
+      config.rewindUncommittedOffsetsBy.toMillis,
+      config.eventLoopConfig.consumePartitionInParallel
     )
   }
 
@@ -320,8 +342,10 @@ case class RecordConsumerConfig(
   consumerAttributes: Map[String, String] = Map.empty,
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
   retryProducerAttributes: Map[String, String] = Map.empty,
-  commitMetadataString: Metadata = OffsetAndMetadata.NO_METADATA,
-  rewindUncommittedOffsetsBy: Duration = 0.millis
+  commitMetadataString: Unit => Metadata = _ => OffsetAndMetadata.NO_METADATA,
+  rewindUncommittedOffsetsBy: Duration = 0.millis,
+  createRetryTopics: Boolean = true,
+  produceWithoutShutdown: Boolean = false
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = extraProperties
