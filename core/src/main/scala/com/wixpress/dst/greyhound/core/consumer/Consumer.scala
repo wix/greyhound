@@ -6,7 +6,7 @@ import com.wixpress.dst.greyhound.core.consumer.ConsumerMetric.ClosedConsumer
 import com.wixpress.dst.greyhound.core.consumer.domain.{ConsumerRecord, Decryptor, NoOpDecryptor, RecordTopicPartition}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
-import org.apache.kafka.clients.consumer.{ConsumerRebalanceListener, KafkaConsumer, ConsumerConfig => KafkaConsumerConfig, OffsetAndMetadata => KafkaOffsetAndMetadata}
+import org.apache.kafka.clients.consumer.{ConsumerConfig => KafkaConsumerConfig, ConsumerRebalanceListener, KafkaConsumer, OffsetAndMetadata => KafkaOffsetAndMetadata}
 import org.apache.kafka.common.serialization.Deserializer
 import org.apache.kafka.common.{TopicPartition => KafkaTopicPartition}
 import zio.ZIO.attemptBlocking
@@ -93,25 +93,25 @@ object Consumer {
   }
 
   def make(cfg: ConsumerConfig)(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, Consumer] = for {
-    semaphore          <- Semaphore.make(1)
-    consumer           <- makeConsumer(cfg, semaphore)
-    metrics            <- ZIO.environment[GreyhoundMetrics]
+    semaphore             <- Semaphore.make(1)
+    consumer              <- makeKafkaConsumer(cfg, semaphore)
+    metrics               <- ZIO.environment[GreyhoundMetrics]
     // we commit missing offsets to current position on assign - otherwise messages may be lost, in case of `OffsetReset.Latest`,
     // if a partition with no committed offset is revoked during processing
     // we also may want to seek forward to some given initial offsets
     unsafeOffsetOperations = UnsafeOffsetOperations.make(consumer)
-    offsetsInitializer <- OffsetsInitializer
-                            .make(
-                              cfg.clientId,
-                              cfg.groupId,
-                              unsafeOffsetOperations,
-                              timeout = 10.seconds,
-                              timeoutIfSeek = 10.seconds,
-                              initialSeek = cfg.initialSeek,
-                              rewindUncommittedOffsetsBy = cfg.rewindUncommittedOffsetsByMillis.millis,
-                              offsetResetIsEarliest = cfg.offsetResetIsEarliest,
-                              parallelConsumer = cfg.useParallelConsumer
-                            )
+    offsetsInitializer    <- OffsetsInitializer
+                               .make(
+                                 cfg.clientId,
+                                 cfg.groupId,
+                                 unsafeOffsetOperations,
+                                 timeout = 10.seconds,
+                                 timeoutIfSeek = 10.seconds,
+                                 initialSeek = cfg.initialSeek,
+                                 rewindUncommittedOffsetsBy = cfg.rewindUncommittedOffsetsByMillis.millis,
+                                 offsetResetIsEarliest = cfg.offsetResetIsEarliest,
+                                 parallelConsumer = cfg.useParallelConsumer
+                               )
   } yield {
     new Consumer {
       override def subscribePattern[R1](topicStartsWith: Pattern, rebalanceListener: RebalanceListener[R1])(
@@ -280,9 +280,15 @@ object Consumer {
     }
   }
 
-  case class InitialOffsetsAndMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata]) extends com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
+  case class InitialOffsetsAndMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])
+      extends com.wixpress.dst.greyhound.core.metrics.GreyhoundMetric
 
-  private def listener[R1](consumer: Consumer, onAssignFirstDo: Set[TopicPartition] => Unit, rebalanceListener: RebalanceListener[R1], unsafeOffsetOperations: UnsafeOffsetOperations) =
+  private def listener[R1](
+    consumer: Consumer,
+    onAssignFirstDo: Set[TopicPartition] => Unit,
+    rebalanceListener: RebalanceListener[R1],
+    unsafeOffsetOperations: UnsafeOffsetOperations
+  ) =
     ZIO.runtime[R1 with GreyhoundMetrics].map { runtime =>
       new ConsumerRebalanceListener {
 
@@ -323,7 +329,7 @@ object Consumer {
       }
     }
 
-  private def makeConsumer(
+  def makeKafkaConsumer(
     config: ConsumerConfig,
     semaphore: Semaphore
   )(implicit trace: Trace): RIO[GreyhoundMetrics with Scope, KafkaConsumer[Chunk[Byte], Chunk[Byte]]] = {
@@ -350,7 +356,7 @@ case class ConsumerConfig(
   decryptor: Decryptor[Any, Throwable, Chunk[Byte], Chunk[Byte]] = new NoOpDecryptor,
   commitMetadataString: Unit => Metadata = _ => OffsetAndMetadata.NO_METADATA,
   rewindUncommittedOffsetsByMillis: Long = 0L,
-  useParallelConsumer: Boolean = false,
+  useParallelConsumer: Boolean = false
 ) extends CommonGreyhoundConfig {
 
   override def kafkaProps: Map[String, String] = Map(
