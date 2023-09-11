@@ -41,12 +41,18 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
         implicit trace: Trace
       ): UIO[DelayedRebalanceEffect] =
         (report(PartitionsRevoked(clientId, group, partitions, config.consumerAttributes)) *>
-          rebalanceListener.onPartitionsRevoked(consumer, partitions)
-            .timed.tap { case (duration, _) => report(PartitionsRevokedComplete(clientId, group, partitions, config.consumerAttributes, duration.toMillis)) }
-            .map(_._2)
-          ).provideEnvironment(r)
+          rebalanceListener
+            .onPartitionsRevoked(consumer, partitions)
+            .timed
+            .tap {
+              case (duration, _) =>
+                report(PartitionsRevokedComplete(clientId, group, partitions, config.consumerAttributes, duration.toMillis))
+            }
+            .map(_._2)).provideEnvironment(r)
 
-      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(implicit trace: Trace): UIO[Any] =
+      override def onPartitionsAssigned(consumer: Consumer, partitions: Set[TopicPartition])(
+        implicit trace: Trace
+      ): UIO[DelayedRebalanceEffect] =
         (report(PartitionsAssigned(clientId, group, partitions, config.consumerAttributes)) *>
           rebalanceListener.onPartitionsAssigned(consumer, partitions)).provideEnvironment(r)
     }
@@ -105,6 +111,46 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
       } else DelayedRebalanceEffect.zioUnit
     }
 
+  override def committedOffsetsAndMetadataOnRebalance(partitions: NonEmptySet[TopicPartition])(
+    implicit trace: Trace
+  ): Map[TopicPartition, OffsetAndMetadata] = internal.committedOffsetsAndMetadataOnRebalance(partitions)
+
+  override def commitWithMetadataOnRebalance(
+    offsets: Map[TopicPartition, OffsetAndMetadata]
+  )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] =
+    ZIO.runtime[GreyhoundMetrics].flatMap { runtime =>
+      if (offsets.nonEmpty) {
+        report(CommittingOffsetsWithMetadata(clientId, group, offsets, calledOnRebalance = true, attributes = config.consumerAttributes)) *>
+          internal
+            .commitWithMetadataOnRebalance(offsets)
+            .tapError { error =>
+              report(CommitWithMetadataFailed(clientId, group, error, offsets, calledOnRebalance = true, attributes = config.consumerAttributes))
+            }
+            .map(
+              _.tapError { error => // handle commit errors in ThreadLockedEffect
+                zio.Unsafe.unsafe { implicit s =>
+                  runtime.unsafe
+                    .run(
+                      report(
+                        CommitWithMetadataFailed(clientId, group, error, offsets, calledOnRebalance = true, attributes = config.consumerAttributes)
+                      )
+                    )
+                    .getOrThrowFiberFailure()
+                }
+              } *>
+                DelayedRebalanceEffect(
+                  zio.Unsafe.unsafe { implicit s =>
+                    runtime.unsafe
+                      .run(
+                        report(CommittedOffsetsWithMetadata(clientId, group, offsets, calledOnRebalance = true, attributes = config.consumerAttributes))
+                      )
+                      .getOrThrowFiberFailure()
+                  }
+                )
+            )
+      } else DelayedRebalanceEffect.zioUnit
+    }
+
   override def commit(offsets: Map[TopicPartition, Offset])(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
     ZIO
       .when(offsets.nonEmpty) {
@@ -113,6 +159,34 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
         ) *> internal.commit(offsets).tapError { error => report(CommitFailed(clientId, group, error, offsets)) } *>
           report(
             CommittedOffsets(clientId, group, offsets, calledOnRebalance = false, attributes = config.consumerAttributes)
+          )
+      }
+      .unit
+  }
+
+  override def commitWithMetadata(offsetsAndMetadata: Map[TopicPartition, OffsetAndMetadata])(
+    implicit trace: Trace
+  ): RIO[GreyhoundMetrics, Unit] = {
+    val offsets = offsetsAndMetadata.map { case (tp, om) => tp -> om.offset }
+    ZIO
+      .when(offsetsAndMetadata.nonEmpty) {
+        report(
+          CommittingOffsets(
+            clientId,
+            group,
+            offsets,
+            calledOnRebalance = false,
+            attributes = config.consumerAttributes
+          )
+        ) *> internal.commitWithMetadata(offsetsAndMetadata).tapError { error => report(CommitFailed(clientId, group, error, offsets)) } *>
+          report(
+            CommittedOffsets(
+              clientId,
+              group,
+              offsets,
+              calledOnRebalance = false,
+              attributes = config.consumerAttributes
+            )
           )
       }
       .unit
@@ -154,6 +228,9 @@ case class ReportingConsumer(clientId: ClientId, group: Group, internal: Consume
 
   override def committedOffsets(partitions: Set[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] =
     internal.committedOffsets(partitions)
+
+  override def committedOffsetsAndMetadata(partitions: NonEmptySet[TopicPartition])(implicit trace: Trace): RIO[Any, Map[TopicPartition, OffsetAndMetadata]] =
+    internal.committedOffsetsAndMetadata(partitions)
 
   override def position(topicPartition: TopicPartition)(implicit trace: Trace): Task[Offset] =
     internal.position(topicPartition)
@@ -197,10 +274,26 @@ object ConsumerMetric {
     attributes: Map[String, String] = Map.empty
   ) extends ConsumerMetric
 
+  case class CommittingOffsetsWithMetadata(
+    clientId: ClientId,
+    group: Group,
+    offsets: Map[TopicPartition, OffsetAndMetadata],
+    calledOnRebalance: Boolean,
+    attributes: Map[String, String] = Map.empty
+  ) extends ConsumerMetric
+
   case class CommittedOffsets(
     clientId: ClientId,
     group: Group,
     offsets: Map[TopicPartition, Offset],
+    calledOnRebalance: Boolean,
+    attributes: Map[String, String] = Map.empty
+  ) extends ConsumerMetric
+
+  case class CommittedOffsetsWithMetadata(
+    clientId: ClientId,
+    group: Group,
+    offsets: Map[TopicPartition, OffsetAndMetadata],
     calledOnRebalance: Boolean,
     attributes: Map[String, String] = Map.empty
   ) extends ConsumerMetric
@@ -241,11 +334,13 @@ object ConsumerMetric {
     attributes: Map[String, String] = Map.empty
   ) extends ConsumerMetric
 
-  case class PartitionsRevokedComplete(clientId: ClientId,
-                                       group: Group,
-                                       partitions: Set[TopicPartition],
-                                       attributes: Map[String, String] = Map.empty,
-                                       durationMs: Long) extends ConsumerMetric
+  case class PartitionsRevokedComplete(
+    clientId: ClientId,
+    group: Group,
+    partitions: Set[TopicPartition],
+    attributes: Map[String, String] = Map.empty,
+    durationMs: Long
+  ) extends ConsumerMetric
 
   case class SubscribeFailed(clientId: ClientId, group: Group, error: Throwable, attributes: Map[String, String] = Map.empty)
       extends ConsumerMetric
@@ -258,6 +353,15 @@ object ConsumerMetric {
     group: Group,
     error: Throwable,
     offsets: Map[TopicPartition, Offset],
+    calledOnRebalance: Boolean = false,
+    attributes: Map[String, String] = Map.empty
+  ) extends ConsumerMetric
+
+  case class CommitWithMetadataFailed(
+    clientId: ClientId,
+    group: Group,
+    error: Throwable,
+    offsets: Map[TopicPartition, OffsetAndMetadata],
     calledOnRebalance: Boolean = false,
     attributes: Map[String, String] = Map.empty
   ) extends ConsumerMetric
@@ -316,5 +420,18 @@ object ConsumerMetric {
   ) extends ConsumerMetric
 
   case class ClosedConsumer(group: Group, clientId: ClientId, result: MetricResult[Throwable, Unit]) extends ConsumerMetric
+
+  case class SkippedGapsOnInitialization(
+    clientId: ClientId,
+    group: Group,
+    skippedGaps: Map[TopicPartition, OffsetAndGaps],
+    currentCommittedOffsetsAndGaps: Map[TopicPartition, OffsetAndGaps]
+  ) extends ConsumerMetric
+
+  case class FoundGapsOnInitialization(
+    clientId: ClientId,
+    group: Group,
+    gapsSmallestOffsets: Map[TopicPartition, OffsetAndMetadata]
+  ) extends ConsumerMetric
 
 }
