@@ -26,7 +26,8 @@ object RetryRecordHandler {
     subscription: ConsumerSubscription,
     blockingState: Ref[Map[BlockingTarget, BlockingState]],
     nonBlockingRetryHelper: NonBlockingRetryHelper,
-    awaitShutdown: TopicPartition => UIO[AwaitShutdown] = _ => ZIO.succeed(AwaitShutdown.never)(zio.Trace.empty)
+    awaitShutdown: TopicPartition => UIO[AwaitShutdown] = _ => ZIO.succeed(AwaitShutdown.never)(zio.Trace.empty),
+    produceWithoutShutdown: Boolean = false
   )(
     implicit evK: K <:< Chunk[Byte],
     evV: V <:< Chunk[Byte]
@@ -41,9 +42,18 @@ object RetryRecordHandler {
         nonBlockingRetryHelper,
         groupId,
         awaitShutdown,
-        produceWithoutShutdown = false
+        produceWithoutShutdown = produceWithoutShutdown
       )
-    val blockingHandler               = BlockingRetryRecordHandler(groupId, handler, retryConfig, blockingState, nonBlockingHandler, awaitShutdown)
+    val blockingHandler               =
+      BlockingRetryRecordHandler(
+        groupId,
+        handler,
+        retryConfig,
+        blockingState,
+        nonBlockingHandler,
+        awaitShutdown,
+        interruptOnShutdown = !produceWithoutShutdown
+      )
     val blockingAndNonBlockingHandler = BlockingAndNonBlockingRetryRecordHandler(groupId, blockingHandler, nonBlockingHandler)
 
     new RecordHandler[R with R2 with GreyhoundMetrics, Nothing, K, V] {
