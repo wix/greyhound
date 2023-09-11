@@ -22,7 +22,8 @@ private[retry] object BlockingRetryRecordHandler {
     retryConfig: RetryConfig,
     blockingState: Ref[Map[BlockingTarget, BlockingState]],
     nonBlockingHandler: NonBlockingRetryRecordHandler[V, K, R],
-    awaitShutdown: TopicPartition => UIO[AwaitShutdown]
+    awaitShutdown: TopicPartition => UIO[AwaitShutdown],
+    interruptOnShutdown: Boolean
   ): BlockingRetryRecordHandler[V, K, R] = new BlockingRetryRecordHandler[V, K, R] {
     val blockingStateResolver = BlockingStateResolver(blockingState)
     case class PollResult(pollAgain: Boolean, blockHandling: Boolean) // TODO: switch to state enum
@@ -51,11 +52,15 @@ private[retry] object BlockingRetryRecordHandler {
           start            <- currentTime(TimeUnit.MILLISECONDS)
           continueBlocking <-
             if (interval.toMillis > 100L) {
-              awaitShutdown(record.topicPartition).flatMap(
-                _.interruptOnShutdown(
-                  pollBlockingStateWithSuspensions(record, interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
-                ).reporting(r => DoneBlockingBeforeRetry(record.topic, record.partition, record.offset, r.duration, r.failed))
-              )
+              (if (interruptOnShutdown) {
+                 awaitShutdown(record.topicPartition).flatMap(
+                   _.interruptOnShutdown(
+                     pollBlockingStateWithSuspensions(record, interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
+                   )
+                 )
+               } else {
+                 pollBlockingStateWithSuspensions(record, interval, start).repeatWhile(result => result.pollAgain).map(_.blockHandling)
+               }).reporting(r => DoneBlockingBeforeRetry(record.topic, record.partition, record.offset, r.duration, r.failed))
             } else {
               for {
                 shouldBlock <- blockingStateResolver.resolve(record)

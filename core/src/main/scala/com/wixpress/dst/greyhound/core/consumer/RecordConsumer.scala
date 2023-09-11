@@ -278,7 +278,8 @@ object RecordConsumer {
               config.initialSubscription,
               blockingState,
               nonBlockingRetryHelper,
-              awaitShutdown
+              awaitShutdown,
+              config.produceWithoutShutdown
             )
           )
       case None              =>
