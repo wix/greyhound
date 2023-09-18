@@ -182,7 +182,7 @@ object AdminClient {
           val configsByTopic = configs.map(c => c.name -> c).toMap
           attemptBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
             ZIO
-              .foreach(result.values.asScala.toSeq) {
+              .foreachPar(result.values.asScala.toSeq) {
                 case (topic, topicResult) =>
                   topicResult.asZio.unit
                     .reporting(res =>
