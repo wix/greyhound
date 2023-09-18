@@ -212,6 +212,7 @@ class BatchedConsumerIT extends BaseTestWithSharedEnv[Env, TestResources] {
               ) *>
                 barrier
                   .offer(())
+                  .interruptible
                   // we can't block here, otherwise rebalance won't happen - so we just fail
                   .timeoutFail(new RuntimeException("queue full"))(1.second)
                   .tapError(_ => ZIO.succeed(println(s"[$id] timed out waiting on barrier")))
