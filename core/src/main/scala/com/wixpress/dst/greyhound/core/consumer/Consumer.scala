@@ -184,7 +184,8 @@ object Consumer {
       override def commitOnRebalance(
         offsets: Map[TopicPartition, Offset]
       )(implicit trace: Trace): RIO[GreyhoundMetrics, DelayedRebalanceEffect] = {
-        val kOffsets = kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, cfg.commitMetadataString() + " --- ON REBALANCE"))
+        val commitMetadataString = if (cfg.commitMetadataString().isEmpty) OffsetAndMetadata.NO_METADATA else s"${cfg.commitMetadataString()} --- ON REBALANCE"
+        val kOffsets = kafkaOffsetsAndMetaData(toOffsetsAndMetadata(offsets, commitMetadataString))
         // we can't actually call commit here, as it needs to be called from the same
         // thread, that triggered poll(), so we return the commit action as thunk
         ZIO.succeed(DelayedRebalanceEffect(consumer.commitSync(kOffsets)))
