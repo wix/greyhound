@@ -144,11 +144,11 @@ object EventLoop {
       (joinFiberAndReport(group, clientId, consumerAttributes, fiber).interruptible *>
         shutdownDispatcherAndReport(group, clientId, consumerAttributes, dispatcher)).disconnect.interruptible
         .timeout(config.drainTimeout)
-      _       <- ZIO.when(drained.isEmpty)(
+      _       <- if (drained.isEmpty)
                    report(DrainTimeoutExceeded(clientId, group, config.drainTimeout.toMillis, onShutdown = true, consumerAttributes)) *>
                      fiber.interruptFork
-                 )
-      _       <- if (config.consumePartitionInParallel) commitOffsetsAndGaps(consumer, offsetsAndGaps) else commitOffsets(consumer, offsets)
+                 else if (config.consumePartitionInParallel) commitOffsetsAndGaps(consumer, offsetsAndGaps)
+                 else commitOffsets(consumer, offsets)
       _       <- report(StoppedEventLoop(clientId, group, consumerAttributes))
     } yield ()
 
@@ -229,7 +229,7 @@ object EventLoop {
           for {
             _                      <- pausedPartitionsRef.update(_ -- partitions)
             isRevokeTimedOut       <- dispatcher.revoke(partitions).timeout(config.drainTimeout).map(_.isEmpty)
-            _                      <- ZIO.when(isRevokeTimedOut)(
+            delayedRebalanceEffect <- if (isRevokeTimedOut)
                                         report(
                                           DrainTimeoutExceeded(
                                             clientId,
@@ -238,9 +238,8 @@ object EventLoop {
                                             onShutdown = false,
                                             consumer.config.consumerAttributes
                                           )
-                                        )
-                                      )
-            delayedRebalanceEffect <- if (useParallelConsumer) commitOffsetsAndGapsOnRebalance(consumer0, offsetsAndGaps)
+                                        ).as(DelayedRebalanceEffect.unit)
+                                      else if (useParallelConsumer) commitOffsetsAndGapsOnRebalance(consumer0, offsetsAndGaps)
                                       else commitOffsetsOnRebalance(consumer0, offsets)
           } yield delayedRebalanceEffect
         }
