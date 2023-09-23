@@ -1,31 +1,39 @@
 package com.wixpress.dst.greyhound.core.admin
 
-import java.util
 import com.wixpress.dst.greyhound.core
 import com.wixpress.dst.greyhound.core.admin.AdminClient.isTopicExistsError
+import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
+import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreated, TopicPartitionsIncreased}
 import com.wixpress.dst.greyhound.core.admin.TopicPropertiesResult.{TopicDoesnExistException, TopicProperties}
 import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics
+import com.wixpress.dst.greyhound.core.metrics.GreyhoundMetrics._
 import com.wixpress.dst.greyhound.core.zioutils.KafkaFutures._
-import com.wixpress.dst.greyhound.core.{CommonGreyhoundConfig, GHThrowable, Group, GroupTopicPartition, OffsetAndMetadata, Topic, TopicConfig, TopicPartition}
+import com.wixpress.dst.greyhound.core._
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
-import org.apache.kafka.clients.admin.{AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig, AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, NewPartitions, NewTopic, TopicDescription}
+import org.apache.kafka.clients.admin.{AdminClient => KafkaAdminClient, AdminClientConfig => KafkaAdminClientConfig, AlterConfigOp, Config, ConfigEntry, ListConsumerGroupOffsetsOptions, ListConsumerGroupOffsetsSpec, NewPartitions, NewTopic, OffsetSpec}
+import org.apache.kafka.common
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.TOPIC
 import org.apache.kafka.common.errors.{InvalidTopicException, TopicExistsException, UnknownTopicOrPartitionException}
-import zio.{IO, RIO, Scope, Trace, ZIO}
-import GreyhoundMetrics._
-import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.TopicCreateResult.fromExit
-import com.wixpress.dst.greyhound.core.admin.AdminClientMetric.{TopicConfigUpdated, TopicCreated, TopicPartitionsIncreased}
-import org.apache.kafka.common
-
-import scala.collection.JavaConverters._
 import zio.ZIO.attemptBlocking
+import zio.{IO, RIO, Scope, Trace, ZIO}
+
+import java.util
+import scala.collection.JavaConverters._
 
 trait AdminClient {
   def shutdown(implicit trace: Trace): RIO[Any, Unit]
 
   def listTopics()(implicit trace: Trace): RIO[Any, Set[String]]
+
+  def listEndOffsets(
+    tps: Set[TopicPartition]
+  )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
+
+  def listBeginningOffsets(
+    tps: Set[TopicPartition]
+  )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]]
 
   def topicExists(topic: String)(implicit trace: Trace): RIO[Any, Boolean]
 
@@ -40,11 +48,19 @@ trait AdminClient {
 
   def propertiesFor(topics: Set[Topic])(implicit trace: Trace): RIO[Any, Map[Topic, TopicPropertiesResult]]
 
+  def commit(group: Group, commits: Map[TopicPartition, OffsetAndMetadata])(
+    implicit trace: Trace
+  ): ZIO[Any, Throwable, Unit]
+
   def listGroups()(implicit trace: Trace): RIO[Any, Set[String]]
 
-  def groupOffsets(groups: Set[String])(implicit trace: Trace): RIO[Any, Map[GroupTopicPartition, PartitionOffset]]
+  def groupOffsets(groups: Set[Group])(implicit trace: Trace): RIO[Any, Map[GroupTopicPartition, PartitionOffset]]
 
-  def groupState(groups: Set[String])(implicit trace: Trace): RIO[Any, Map[String, GroupState]]
+  def groupOffsetsSpecific(requestedTopicPartitions: Map[Group, Set[TopicPartition]])(
+    implicit trace: Trace
+  ): RIO[Any, Map[GroupTopicPartition, PartitionOffset]]
+
+  def groupState(groups: Set[Group])(implicit trace: Trace): RIO[Any, Map[String, GroupState]]
 
   def deleteTopic(topic: Topic)(implicit trace: Trace): RIO[Any, Unit]
 
@@ -54,13 +70,12 @@ trait AdminClient {
     implicit trace: Trace
   ): RIO[Any, Map[TopicPartition, OffsetAndMetadata]]
 
+  def consumerGroupsOffsets(
+    groups: Map[Group, Option[Set[TopicPartition]]]
+  )(implicit trace: Trace): RIO[Any, Map[Group, Map[TopicPartition, OffsetAndMetadata]]]
+
   def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[Any with GreyhoundMetrics, Unit]
 
-  /**
-   * @param useNonIncrementalAlter
-   *   \- [[org.apache.kafka.clients.admin.AdminClient.incrementalAlterConfigs()]] is not supported by older brokers (< 2.3), so if this is
-   *   true, use the deprecated non incremental alter
-   */
   def updateTopicConfigProperties(
     topic: Topic,
     configProperties: Map[String, ConfigPropOp],
@@ -167,11 +182,16 @@ object AdminClient {
           val configsByTopic = configs.map(c => c.name -> c).toMap
           attemptBlocking(client.createTopics(configs.map(toNewTopic).asJava)).flatMap { result =>
             ZIO
-              .foreach(result.values.asScala.toSeq) {
+              .foreachPar(result.values.asScala.toSeq) {
                 case (topic, topicResult) =>
                   topicResult.asZio.unit
                     .reporting(res =>
-                      TopicCreated(topic, configsByTopic(topic).partitions, attributes, res.mapExit(fromExit(isTopicExistsError)))
+                      TopicCreated(
+                        topic,
+                        configsByTopic(topic).partitions,
+                        attributes,
+                        res.mapExit(fromExit(isTopicExistsError))
+                      )
                     )
                     .either
                     .map(topic -> _.left.toOption.filterNot(ignoreErrors))
@@ -184,15 +204,20 @@ object AdminClient {
           attemptBlocking(client.describeCluster())
             .flatMap(_.nodes().asZio.map(_.size))
 
-        override def propertiesFor(topics: Set[Topic])(implicit trace: Trace): RIO[Any, Map[Topic, TopicPropertiesResult]] =
+        override def propertiesFor(
+          topics: Set[Topic]
+        )(implicit trace: Trace): RIO[Any, Map[Topic, TopicPropertiesResult]] =
           (describeConfigs(client, topics) zipPar describePartitions(client, topics)).map {
             case (configsPerTopic, partitionsAndReplicationPerTopic) =>
               partitionsAndReplicationPerTopic
                 .map(pair => pair -> configsPerTopic.getOrElse(pair._1, TopicPropertiesResult.TopicDoesnExist(pair._1)))
                 .map {
-                  case ((topic, TopicProperties(_, partitions, _, replication)), TopicProperties(_, _, propertiesMap, _)) =>
+                  case (
+                        (topic, TopicProperties(_, partitions, _, replication)),
+                        TopicProperties(_, _, propertiesMap, _)
+                      ) =>
                     topic -> TopicPropertiesResult(topic, partitions, propertiesMap, replication)
-                  case ((topic, _), _)                                                                                    => topic -> TopicPropertiesResult.TopicDoesnExist(topic)
+                  case ((topic, _), _) => topic -> TopicPropertiesResult.TopicDoesnExist(topic)
                 }
           }
 
@@ -200,6 +225,36 @@ object AdminClient {
           result <- attemptBlocking(client.listTopics())
           topics <- result.names().asZio
         } yield topics.asScala.toSet
+
+        override def listBeginningOffsets(
+          tps: Set[TopicPartition]
+        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
+          val j: java.util.Map[org.apache.kafka.common.TopicPartition, OffsetSpec] =
+            tps.map { tp => (tp.asKafka, OffsetSpec.earliest()) }.toMap.asJava
+
+          for {
+            result  <- attemptBlocking(client.listOffsets(j))
+            results <- result.all.asZio.map(_.asScala.toMap.map {
+                         case (tp, offset) =>
+                           (TopicPartition.fromKafka(tp), offset.offset())
+                       })
+          } yield results
+        }
+
+        override def listEndOffsets(
+          tps: Set[TopicPartition]
+        )(implicit trace: Trace): RIO[Any, Map[TopicPartition, Offset]] = {
+          val j: java.util.Map[org.apache.kafka.common.TopicPartition, OffsetSpec] =
+            tps.map { tp => (tp.asKafka, OffsetSpec.latest()) }.toMap.asJava
+
+          for {
+            result  <- attemptBlocking(client.listOffsets(j))
+            results <- result.all.asZio.map(_.asScala.toMap.map {
+                         case (tp, offset) =>
+                           (TopicPartition.fromKafka(tp), offset.offset())
+                       })
+          } yield results
+        }
 
         private def toNewTopic(config: TopicConfig): NewTopic =
           new NewTopic(config.name, config.partitions, config.replicationFactor.toShort)
@@ -210,7 +265,49 @@ object AdminClient {
           groups <- result.valid().asZio
         } yield groups.asScala.map(_.groupId()).toSet
 
-        override def groupOffsets(groups: Set[String])(implicit trace: Trace): RIO[Any, Map[GroupTopicPartition, PartitionOffset]] =
+        override def commit(group: Group, commits: Map[TopicPartition, OffsetAndMetadata])(
+          implicit trace: Trace
+        ): ZIO[Any, Throwable, Unit] =
+          attemptBlocking(
+            client
+              .alterConsumerGroupOffsets(group, commits.map { case (tp, offset) => (tp.asKafka, offset.asKafka) }.asJava)
+          ).unit
+
+        override def groupOffsetsSpecific(
+          requestedTopicPartitions: Map[Group, Set[TopicPartition]]
+        )(implicit trace: Trace): RIO[Any, Map[GroupTopicPartition, PartitionOffset]] =
+          for {
+            result      <- ZIO.flatten(
+                             ZIO
+                               .attemptBlocking(
+                                 client.listConsumerGroupOffsets(
+                                   requestedTopicPartitions
+                                     .mapValues(tps => new ListConsumerGroupOffsetsSpec().topicPartitions(tps.map(_.asKafka).asJavaCollection))
+                                     .asJava
+                                 )
+                               )
+                               .map(_.all.asZio)
+                           )
+            rawOffsets   = result.asScala.toMap.mapValues(_.asScala.toMap)
+            offset       =
+              rawOffsets.map {
+                case (group, offsets) =>
+                  offsets
+                    .map {
+                      case (tp, offset) =>
+                        (
+                          GroupTopicPartition(group, TopicPartition.fromKafka(tp)),
+                          PartitionOffset(Option(offset).map(_.offset()).getOrElse(-1L))
+                        )
+                    }
+                    .filter { case (_, o) => o.offset >= 0 }
+              }
+            groupOffsets = offset.foldLeft(Map.empty[GroupTopicPartition, PartitionOffset])((x, y) => x ++ y)
+          } yield groupOffsets
+
+        override def groupOffsets(
+          groups: Set[String]
+        )(implicit trace: Trace): RIO[Any, Map[GroupTopicPartition, PartitionOffset]] =
           for {
             result           <- ZIO.foreach(groups)(group => attemptBlocking(group -> client.listConsumerGroupOffsets(group)))
             // TODO: remove ._1 , ._2
@@ -245,7 +342,9 @@ object AdminClient {
             .unit
         }
 
-        override def describeConsumerGroups(groupIds: Set[Group])(implicit trace: Trace): RIO[Any, Map[Group, ConsumerGroupDescription]] = {
+        override def describeConsumerGroups(
+          groupIds: Set[Group]
+        )(implicit trace: Trace): RIO[Any, Map[Group, ConsumerGroupDescription]] = {
           for {
             desc <- attemptBlocking(client.describeConsumerGroups(groupIds.asJava).all())
             all  <- desc.asZio
@@ -259,13 +358,40 @@ object AdminClient {
           val maybePartitions: util.List[common.TopicPartition] = onlyPartitions.map(_.map(_.asKafka).toList.asJava).orNull
           for {
             desc <- attemptBlocking(
-                      client.listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions))
+                      client
+                        .listConsumerGroupOffsets(groupId, new ListConsumerGroupOffsetsOptions().topicPartitions(maybePartitions))
                     )
             res  <- attemptBlocking(desc.partitionsToOffsetAndMetadata().get())
           } yield res.asScala.toMap.map { case (tp, om) => (TopicPartition(tp), OffsetAndMetadata(om)) }
         }
 
-        override def increasePartitions(topic: Topic, newCount: Int)(implicit trace: Trace): RIO[GreyhoundMetrics, Unit] = {
+        override def consumerGroupsOffsets(
+          groups: Map[Group, Option[Set[TopicPartition]]]
+        )(implicit trace: Trace): RIO[Any, Map[Group, Map[TopicPartition, OffsetAndMetadata]]] =
+          for {
+            desc <-
+              attemptBlocking(
+                client
+                  .listConsumerGroupOffsets(
+                    groups
+                      .mapValues(tps => new ListConsumerGroupOffsetsSpec().topicPartitions(tps.map(_.map(_.asKafka).toList.asJava).orNull))
+                      .asJava
+                  )
+              )
+            res  <- attemptBlocking(groups.map(g => (g._1, desc.partitionsToOffsetAndMetadata(g._1).get())))
+          } yield res.map {
+            case (group, o) =>
+              (
+                group,
+                o.asScala.toSeq
+                  .map(om => (TopicPartition.fromKafka(om._1), OffsetAndMetadata(om._2.offset(), om._2.metadata())))
+                  .toMap
+              )
+          }
+
+        override def increasePartitions(topic: Topic, newCount: Int)(
+          implicit trace: Trace
+        ): RIO[GreyhoundMetrics, Unit] = {
           attemptBlocking(client.createPartitions(Map(topic -> NewPartitions.increaseTo(newCount)).asJava))
             .flatMap(_.all().asZio)
             .unit
@@ -344,7 +470,10 @@ object AdminClient {
         .map(_.toMap)
     }
 
-  private def describePartitions(client: KafkaAdminClient, topics: Set[Topic]): RIO[Any, Map[Topic, TopicPropertiesResult]] =
+  private def describePartitions(
+    client: KafkaAdminClient,
+    topics: Set[Topic]
+  ): RIO[Any, Map[Topic, TopicPropertiesResult]] =
     attemptBlocking(client.describeTopics(topics.asJavaCollection))
       .flatMap { result =>
         ZIO
@@ -362,7 +491,8 @@ object AdminClient {
                     )
                 }
                 .catchSome {
-                  case _: UnknownTopicOrPartitionException => ZIO.succeed(topic -> TopicPropertiesResult.TopicDoesnExist(topic))
+                  case _: UnknownTopicOrPartitionException =>
+                    ZIO.succeed(topic -> TopicPropertiesResult.TopicDoesnExist(topic))
                 }
           })
           .map(_.toMap)
